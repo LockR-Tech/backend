@@ -1,0 +1,30 @@
+server:
+  port: ${SERVER_PORT:8761}
+
+spring:
+  application:
+    name: discovery-server
+
+eureka:
+  client:
+    register-with-eureka: false
+    fetch-registry: false
+  server:
+    enable-self-preservation: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,sbom
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:unknown},%X{correlationId:-}]"

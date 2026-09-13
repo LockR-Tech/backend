@@ -1,0 +1,69 @@
+server:
+  port: ${SERVER_PORT:8082}
+spring:
+  application:
+    name: user-service
+  cloud:
+    openfeign:
+      circuitbreaker:
+        enabled: ${SPRING_CLOUD_OPENFEIGN_CIRCUITBREAKER_ENABLED:true}
+        group:
+          enabled: ${SPRING_CLOUD_OPENFEIGN_CIRCUITBREAKER_GROUP_ENABLED:true}
+      client:
+        config:
+          default:
+            connectTimeout: ${APP_FEIGN_CONNECT_TIMEOUT_MS:2000}
+            readTimeout: ${APP_FEIGN_READ_TIMEOUT_MS:5000}
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:15432/user_db}
+    username: ${SPRING_DATASOURCE_USERNAME:user_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:user_pass}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: user_schema
+  flyway:
+    enabled: true
+    create-schemas: true
+    schemas: user_schema
+    default-schema: user_schema
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,sbom
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:unknown},%X{correlationId:-}]"
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        register-health-indicator: true
+        sliding-window-size: ${APP_RESILIENCE4J_CB_SLIDING_WINDOW_SIZE:20}
+        minimum-number-of-calls: ${APP_RESILIENCE4J_CB_MINIMUM_CALLS:10}
+        failure-rate-threshold: ${APP_RESILIENCE4J_CB_FAILURE_RATE_THRESHOLD:50}
+        wait-duration-in-open-state: ${APP_RESILIENCE4J_CB_WAIT_DURATION:30s}
+        permitted-number-of-calls-in-half-open-state: ${APP_RESILIENCE4J_CB_HALF_OPEN_CALLS:3}
+        slow-call-duration-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_DURATION:4s}
+        slow-call-rate-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_RATE_THRESHOLD:80}

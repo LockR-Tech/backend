@@ -1,0 +1,196 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          discovery:
+            locator:
+              # PHẢI để false. Locator sinh thêm route /{service-id}/** song song
+              # với các route khai báo bên dưới; dạng đường dẫn đó lọt qua cả chốt
+              # chặn /internal lẫn RBAC theo tiền tố trong JwtGatewayFilter
+              # (vd /user-service/api/admin/users trả về toàn bộ user với bất kỳ
+              # token hợp lệ nào). Mọi route hợp lệ đều đã khai báo tường minh.
+              enabled: false
+              lower-case-service-id: true
+          routes:
+            - id: auth-service
+              uri: lb://auth-service
+              predicates:
+                - Path=/api/auth/**,/api/admin/auth/**,/internal/auth/**
+            - id: user-service
+              uri: lb://user-service
+              predicates:
+                - Path=/api/user/**,/api/users/**,/api/admin/users,/api/admin/users/**,/api/admin/audit-logs,/api/admin/audit-logs/**,/internal/users/**
+            - id: order-service
+              uri: lb://order-service
+              predicates:
+                - Path=/api/orders/**,/api/admin/orders,/api/admin/orders/**,/api/admin/scheduler,/api/admin/scheduler/**,/internal/orders/**
+            - id: order-service-maintenance-drone
+              uri: lb://order-service
+              predicates:
+                - Path=/api/maintenance/drone-orders/**
+            - id: locker-service
+              uri: lb://locker-service
+              predicates:
+                - Path=/api/lockers/**,/api/boxes/**,/api/drone-deliveries,/api/drone-deliveries/**,/api/admin/lockers,/api/admin/lockers/**,/api/admin/drones,/api/admin/drones/**,/internal/lockers/**,/internal/boxes/**,/api/maintenance/**
+
+            - id: payment-service
+              uri: lb://payment-service
+              predicates:
+                - Path=/api/payments/**,/api/admin/payments,/api/admin/payments/**,/internal/payments/**,/payments/vnpay/callback,/api/wallet,/api/wallet/**,/api/admin/wallet/**
+            - id: notification-service
+              uri: lb://notification-service
+              predicates:
+                - Path=/api/notifications/**,/api/admin/notifications,/api/admin/notifications/**,/internal/notifications/**,/internal/fcm-tokens/**
+            - id: notification-websocket
+              uri: lb:ws://notification-service
+              predicates:
+                - Path=/ws,/ws/**
+            - id: iot-service
+              uri: lb://iot-service
+              predicates:
+                - Path=/api/iot/**,/internal/iot/**,/api/admin/iot/**,/api/technician/**
+            - id: store-service
+              uri: lb://store-service
+              predicates:
+                - Path=/api/stores/**,/api/admin/stores,/api/admin/stores/**,/internal/stores/**
+            - id: loyalty-service
+              uri: lb://loyalty-service
+              predicates:
+                - Path=/api/loyalty/**,/api/admin/loyalty,/api/admin/loyalty/**,/internal/loyalty/**
+            - id: docs-auth-service
+              uri: lb://auth-service
+              predicates:
+                - Path=/v3/api-docs/auth-service
+              filters:
+                - RewritePath=/v3/api-docs/auth-service, /v3/api-docs
+            - id: docs-user-service
+              uri: lb://user-service
+              predicates:
+                - Path=/v3/api-docs/user-service
+              filters:
+                - RewritePath=/v3/api-docs/user-service, /v3/api-docs
+            - id: docs-order-service
+              uri: lb://order-service
+              predicates:
+                - Path=/v3/api-docs/order-service
+              filters:
+                - RewritePath=/v3/api-docs/order-service, /v3/api-docs
+            - id: docs-locker-service
+              uri: lb://locker-service
+              predicates:
+                - Path=/v3/api-docs/locker-service
+              filters:
+                - RewritePath=/v3/api-docs/locker-service, /v3/api-docs
+            - id: docs-payment-service
+              uri: lb://payment-service
+              predicates:
+                - Path=/v3/api-docs/payment-service
+              filters:
+                - RewritePath=/v3/api-docs/payment-service, /v3/api-docs
+            - id: docs-notification-service
+              uri: lb://notification-service
+              predicates:
+                - Path=/v3/api-docs/notification-service
+              filters:
+                - RewritePath=/v3/api-docs/notification-service, /v3/api-docs
+            - id: docs-iot-service
+              uri: lb://iot-service
+              predicates:
+                - Path=/v3/api-docs/iot-service
+              filters:
+                - RewritePath=/v3/api-docs/iot-service, /v3/api-docs
+            - id: docs-store-service
+              uri: lb://store-service
+              predicates:
+                - Path=/v3/api-docs/store-service
+              filters:
+                - RewritePath=/v3/api-docs/store-service, /v3/api-docs
+            - id: docs-loyalty-service
+              uri: lb://loyalty-service
+              predicates:
+                - Path=/v3/api-docs/loyalty-service
+              filters:
+                - RewritePath=/v3/api-docs/loyalty-service, /v3/api-docs
+            - id: promotions
+              uri: lb://order-service
+              predicates:
+                - Path=/api/promotions/**,/api/admin/promotions,/api/admin/promotions/**
+            - id: admin-dashboard
+              uri: lb://order-service
+              predicates:
+                - Path=/api/admin/dashboard/**
+
+          # Global CORS. Origins are env-driven so production domains can be added
+          # without a code change: set APP_CORS_ALLOWED_ORIGINS (comma-separated)
+          # in the server .env, e.g.
+          #   APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,https://lockerly.tech,https://admin.lockerly.tech
+          # NOTE: must live under spring.cloud.gateway.server.webflux.globalcors.
+          # The old spring.cloud.gateway.globalcors prefix is deprecated since
+          # gateway 4.3.0 and no longer binds, so CORS headers were never applied.
+          globalcors:
+            corsConfigurations:
+              "[/**]":
+                allowedOrigins: "${APP_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001}"
+                allowedMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+                allowedHeaders: "*"
+                allowCredentials: true
+                maxAge: 3600
+app:
+  security:
+    jwt:
+      secret: ${APP_SECURITY_JWT_SECRET:laundry-locker-microservices-secret-key-change-me-please-32chars}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,metrics,prometheus,sbom
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+  swagger-ui:
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:true}
+    urls:
+      - name: api-gateway
+        url: /v3/api-docs
+      - name: auth-service
+        url: /v3/api-docs/auth-service
+      - name: user-service
+        url: /v3/api-docs/user-service
+      - name: order-service
+        url: /v3/api-docs/order-service
+      - name: locker-service
+        url: /v3/api-docs/locker-service
+      - name: payment-service
+        url: /v3/api-docs/payment-service
+      - name: notification-service
+        url: /v3/api-docs/notification-service
+      - name: iot-service
+        url: /v3/api-docs/iot-service
+      - name: store-service
+        url: /v3/api-docs/store-service
+      - name: loyalty-service
+        url: /v3/api-docs/loyalty-service
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:unknown},%X{correlationId:-}]"

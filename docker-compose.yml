@@ -1,0 +1,357 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ll-ms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - laundry-ms-network
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: ll-ms-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 15s
+      timeout: 20s
+      retries: 20
+      start_period: 60s
+    networks:
+      - laundry-ms-network
+
+  discovery-server:
+    build:
+      context: .
+      dockerfile: discovery-server/Dockerfile
+    container_name: ll-ms-discovery-server
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8761
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    ports:
+      - "127.0.0.1:8761:8761"
+    networks:
+      - laundry-ms-network
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    container_name: ll-ms-api-gateway
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8080
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      APP_SECURITY_JWT_SECRET: laundry-locker-microservices-secret-key-change-me-please-32chars
+      # Comma-separated allowed CORS origins; override in the server .env to add the
+      # production domain (e.g. http://localhost:3000,http://localhost:3001,https://lockerly.tech).
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+      JAVA_OPTS: "-Xms64m -Xmx320m -XX:+UseContainerSupport"
+    # Cổng duy nhất của hệ thống mở ra ngoài. 9 service nghiệp vụ KHÔNG publish
+    # port lên host: mọi lời gọi phải đi qua gateway để chịu xác thực JWT + RBAC.
+    # Chúng vẫn gọi lẫn nhau bình thường qua mạng Docker (Eureka + lb://).
+    # Cần debug thẳng một service: docker compose exec <service> sh, hoặc tạm thêm
+    # lại khối ports rồi bỏ đi sau.
+    ports:
+      - "${API_GATEWAY_PORT:-18080}:8080"
+    depends_on:
+      - discovery-server
+    networks:
+      - laundry-ms-network
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
+    container_name: ll-ms-auth-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: auth_user
+      SPRING_DATASOURCE_PASSWORD: auth_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      # SMTP overridable từ env/.env trên server để gửi OTP qua email thật.
+      # Mặc định localhost:1025 (mail-catcher dev, không auth/TLS) → giữ nguyên hành vi cũ.
+      # Gửi thật qua Gmail: đặt SPRING_MAIL_HOST=smtp.gmail.com, PORT=587,
+      # USERNAME=<gmail>, PASSWORD=<app password 16 ký tự>, SMTP_AUTH=true, STARTTLS=true.
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-localhost}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-1025}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-noreply@laundry.test}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:-}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SPRING_MAIL_SMTP_AUTH:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_SMTP_STARTTLS:-false}
+      # From/sender address. Một số relay (Brevo) bắt From phải là sender đã verify,
+      # khác với SMTP login → đặt APP_MAIL_FROM=<email đã verify>. Trống thì dùng SMTP username.
+      APP_MAIL_FROM: ${APP_MAIL_FROM:-}
+      MANAGEMENT_HEALTH_MAIL_ENABLED: false
+      # Firebase Admin service-account JSON (nội dung file, 1 dòng) để verify ID token
+      # cho POST /api/auth/firebase (đăng nhập/đăng ký mobile qua phone/Google).
+      # Trống thì FirebaseConfig fail-soft (chỉ log warn, không init) — endpoint sẽ lỗi cho tới khi đặt.
+      FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
+      # Seed tài khoản ADMIN đầu tiên (idempotent). Dev mặc định như dưới;
+      # production PHẢI override BOOTSTRAP_ADMIN_* trong .env và đổi mật khẩu.
+      APP_BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@lockerly.local}
+      APP_BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin@123456}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      APP_SECURITY_JWT_SECRET: laundry-locker-microservices-secret-key-change-me-please-32chars
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  user-service:
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+    container_name: ll-ms-user-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8082
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/user_db
+      SPRING_DATASOURCE_USERNAME: user_user
+      SPRING_DATASOURCE_PASSWORD: user_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  order-service:
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
+    container_name: ll-ms-order-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8083
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/order_db
+      SPRING_DATASOURCE_USERNAME: order_user
+      SPRING_DATASOURCE_PASSWORD: order_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  locker-service:
+    build:
+      context: .
+      dockerfile: locker-service/Dockerfile
+    container_name: ll-ms-locker-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8084
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/locker_db
+      SPRING_DATASOURCE_USERNAME: locker_user
+      SPRING_DATASOURCE_PASSWORD: locker_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
+    container_name: ll-ms-payment-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8086
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_db
+      SPRING_DATASOURCE_USERNAME: payment_user
+      SPRING_DATASOURCE_PASSWORD: payment_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      # VNPay — override in the server .env for a real merchant; defaults = sandbox/demo.
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-DEMO}
+      VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-demo-secret}
+      VNPAY_PAY_URL: ${VNPAY_PAY_URL:-https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+      VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-http://localhost:8080/api/payments/vnpay/return}
+      # MoMo — optional; set partner-code/access-key/secret-key in the server .env to enable MoMo checkout.
+      MOMO_PARTNER_CODE: ${MOMO_PARTNER_CODE:-DEMO}
+      MOMO_ACCESS_KEY: ${MOMO_ACCESS_KEY:-demo}
+      MOMO_SECRET_KEY: ${MOMO_SECRET_KEY:-demo-secret}
+      MOMO_ENDPOINT: ${MOMO_ENDPOINT:-https://test-payment.momo.vn/v2/gateway/api/create}
+      MOMO_REDIRECT_URL: ${MOMO_REDIRECT_URL:-http://localhost:8080/api/payments/momo/return}
+      MOMO_IPN_URL: ${MOMO_IPN_URL:-http://localhost:8080/api/payments/momo/callback}
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: ll-ms-notification-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8087
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_db
+      SPRING_DATASOURCE_USERNAME: notification_user
+      SPRING_DATASOURCE_PASSWORD: notification_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  iot-service:
+    build:
+      context: .
+      dockerfile: iot-service/Dockerfile
+    container_name: ll-ms-iot-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8088
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/iot_db
+      SPRING_DATASOURCE_USERNAME: iot_user
+      SPRING_DATASOURCE_PASSWORD: iot_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  store-service:
+    build:
+      context: .
+      dockerfile: store-service/Dockerfile
+    container_name: ll-ms-store-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8089
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/store_db
+      SPRING_DATASOURCE_USERNAME: store_user
+      SPRING_DATASOURCE_PASSWORD: store_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+  loyalty-service:
+    build:
+      context: .
+      dockerfile: loyalty-service/Dockerfile
+    container_name: ll-ms-loyalty-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8092
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loyalty_db
+      SPRING_DATASOURCE_USERNAME: loyalty_user
+      SPRING_DATASOURCE_PASSWORD: loyalty_pass
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
+volumes:
+  postgres_data:
+
+networks:
+  laundry-ms-network:
+    driver: bridge

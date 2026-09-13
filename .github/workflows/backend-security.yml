@@ -1,0 +1,139 @@
+name: Backend Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+      - "feat/**"
+      - "fix/**"
+      - "chore/**"
+  schedule:
+    - cron: "25 20 * * 0"
+
+concurrency:
+  group: backend-security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          fail-on-scopes: development, runtime
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+
+      - name: Build for analysis
+        run: mvn -B -DskipTests package
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: backend-sbom.cdx.json
+
+      - name: Upload backend SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-sbom-cyclonedx
+          path: backend-sbom.cdx.json
+
+  container-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - api-gateway
+          - auth-service
+          - discovery-server
+          - user-service
+          - order-service
+          - locker-service
+          - payment-service
+          - notification-service
+          - iot-service
+          - store-service
+          - loyalty-service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Package backend jars
+        run: mvn -B -DskipTests package
+
+      - name: Build image for scan
+        run: |
+          docker build \
+            --build-arg MODULE=${{ matrix.module }} \
+            -f ${{ matrix.module }}/Dockerfile \
+            -t laundry-locker-${{ matrix.module }}:${{ github.sha }} .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: laundry-locker-${{ matrix.module }}:${{ github.sha }}
+          format: table
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
