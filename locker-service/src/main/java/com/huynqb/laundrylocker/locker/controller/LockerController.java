@@ -196,6 +196,11 @@ public class LockerController {
         return ApiResponse.ok(lockerService.myRatingAverage(userId));
     }
 
+    @GetMapping("/api/maintenance/my-performance")
+    public ApiResponse<Map<String, Object>> maintenanceMyPerformance(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(lockerService.technicianPerformance(userId));
+    }
+
     @GetMapping("/api/maintenance/reports/{id}/logs")
     public ApiResponse<List<RepairLogResponse>> maintenanceReportLogs(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.repairLogs(id));
@@ -390,8 +395,29 @@ public class LockerController {
     }
 
     @GetMapping("/api/admin/lockers/reports")
-    public ApiResponse<List<LockerReportResponse>> adminReports(@RequestParam(required = false) Long userId) {
+    public ApiResponse<List<LockerReportResponse>> adminReports(
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) Long technicianId) {
+        if (technicianId != null) {
+            return ApiResponse.ok(lockerService.assignedReports(technicianId));
+        }
         return ApiResponse.ok(userId == null ? lockerService.allReports() : lockerService.myReports(userId));
+    }
+
+    @PutMapping("/api/admin/lockers/reports/{id}/assign")
+    public ApiResponse<LockerReportResponse> adminAssignReport(
+            @PathVariable Long id, @RequestParam Long technicianId) {
+        return ApiResponse.ok("REPORT_ASSIGNED", "Report assigned to technician", lockerService.assignReport(id, technicianId));
+    }
+
+    @PutMapping("/api/admin/lockers/reports/{id}/unassign")
+    public ApiResponse<LockerReportResponse> adminUnassignReport(@PathVariable Long id) {
+        return ApiResponse.ok("REPORT_UNASSIGNED", "Report unassigned", lockerService.unassignReport(id));
+    }
+
+    @GetMapping("/api/admin/lockers/technicians/{id}/performance")
+    public ApiResponse<Map<String, Object>> adminTechnicianPerformance(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.technicianPerformance(id));
     }
 
     @PutMapping("/api/admin/lockers/reports/{id}/resolve")
