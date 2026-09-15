@@ -113,6 +113,7 @@ jobs:
             "$AZURE_VM_USER@$AZURE_VM_HOST:/tmp/"
 
       - name: Deploy on Azure VM
+        id: deploy
         env:
           AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST }}
           AZURE_VM_USER: ${{ secrets.AZURE_VM_USER }}
@@ -130,9 +131,22 @@ jobs:
         run: |
           API=https://api.locker-drone.tech
           fail=0
+          # Service vừa đăng ký Eureka thì gateway còn mất tới ~30s để làm mới danh
+          # sách instance, nên lần gọi đầu hay trả 503 dù deploy đã tốt. Thử lại tối
+          # đa 10 lần, cách 10s, và chỉ báo đỏ khi hết lượt vẫn sai.
           check() { # tên, url, mã mong đợi
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$2" || echo 000)
-            if [ "$code" = "$3" ]; then echo "- ✅ $1 → $code"; else echo "- ❌ $1 → $code (mong đợi $3)"; fail=1; fi
+            attempt=1
+            while [ "$attempt" -le 10 ]; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$2" || echo 000)
+              [ "$code" = "$3" ] && break
+              attempt=$((attempt + 1))
+              sleep 10
+            done
+            if [ "$code" = "$3" ]; then
+              echo "- ✅ $1 → $code$([ "$attempt" -gt 1 ] && echo " (sau $attempt lần thử)")"
+            else
+              echo "- ❌ $1 → $code (mong đợi $3, đã thử $((attempt - 1)) lần)"; fail=1
+            fi
           }
           {
             echo "### Nghiệm thu"
@@ -160,7 +174,13 @@ jobs:
             echo "| API | https://api.locker-drone.tech |"
             echo ""
             [ -f verify.md ] && cat verify.md
-            if [ "${{ job.status }}" != "success" ]; then
+            if [ "${{ steps.verify.outcome }}" = "failure" ] && [ "${{ steps.deploy.outcome }}" = "success" ]; then
+              echo ""
+              echo "### Bản mới ĐÃ lên VM nhưng nghiệm thu qua domain không đạt — **không có rollback**"
+              echo "Kiểm tra bằng tay trước khi quyết định rollback:"
+              echo "- \`curl -s -o /dev/null -w '%{http_code}' https://api.locker-drone.tech/api/lockers\` — 200 nghĩa là chỉ chậm khởi động"
+              echo "- Vẫn sai ⇒ xem \`docker compose logs <service>\` trên VM, rollback theo release-deploy § 5"
+            elif [ "${{ job.status }}" != "success" ]; then
               echo ""
               echo "### Deploy THẤT BẠI — script đã tự rollback về bản \`.previous\`"
               echo "Nguyên nhân hay gặp:"
@@ -188,10 +208,13 @@ jobs:
               echo "|---|---|---|---|---|"
             } > "$LOG"
           fi
+          RUN_LINK="[run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           if [ "${{ job.status }}" = "success" ]; then
             NOTE="health 200 · public 200 · admin 401 · bypass 404"
+          elif [ "${{ steps.verify.outcome }}" = "failure" ] && [ "${{ steps.deploy.outcome }}" = "success" ]; then
+            NOTE="**NGHIỆM THU KHÔNG ĐẠT** — $RUN_LINK; bản mới đã lên VM, **không rollback**, cần kiểm tra bằng tay"
           else
-            NOTE="**THẤT BẠI** — [run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}); đã rollback"
+            NOTE="**THẤT BẠI** — $RUN_LINK; đã rollback"
           fi
           SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
           ROW="| $(date -u '+%Y-%m-%d %H:%M') | ${{ job.status }} | [\`$SHORT\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) | @${{ github.actor }} | $NOTE |"
