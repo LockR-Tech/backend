@@ -13,11 +13,11 @@ import com.huynqb.laundrylocker.iot.repository.AccessAttemptRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxHardwareStatusRepository;
 import com.huynqb.laundrylocker.iot.repository.DeviceStatusRepository;
+import com.huynqb.laundrylocker.iot.settings.IotRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,13 +38,8 @@ public class IotService {
     private final OrderClient orderClient;
     private final LockerClient lockerClient;
     private final LockerMqttService lockerMqttService;
-
-    @Value("${app.iot.lockout.max-attempts:5}")
-    private int lockoutMaxAttempts;
-
-    @Value("${app.iot.lockout.minutes:15}")
-    private int lockoutMinutes;
-
+    /// Chống dò mã và thời gian chờ tủ phản hồi do admin cấu hình (ADR-0005).
+    private final IotRules rules;
 
     @Transactional
     public DeviceStatusResponse updateStatus(DeviceStatusRequest request) {
@@ -66,7 +61,7 @@ public class IotService {
         }
         try {
             com.fasterxml.jackson.databind.JsonNode node = lockerMqttService.sendUnlockCommandAsync(request.lockerId(), request.boxId())
-                    .get(20, java.util.concurrent.TimeUnit.SECONDS);
+                    .get(rules.unlockWaitSeconds(), java.util.concurrent.TimeUnit.SECONDS);
 
             if (node.has("status") && "FAILED".equals(node.get("status").asText())) {
                 logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "FAILED", "Hardware failed to open");
@@ -100,7 +95,7 @@ public class IotService {
     public Map<String, Object> forceUnlock(ForceUnlockRequest request) {
         try {
             com.fasterxml.jackson.databind.JsonNode node = lockerMqttService.sendUnlockCommandAsync(request.lockerId(), request.boxId())
-                    .get(20, java.util.concurrent.TimeUnit.SECONDS);
+                    .get(rules.unlockWaitSeconds(), java.util.concurrent.TimeUnit.SECONDS);
             if (node.has("status") && "FAILED".equals(node.get("status").asText())) {
                 logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "FAILED", "Hardware failed to open");
                 return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Hardware failed to open");
@@ -144,7 +139,7 @@ public class IotService {
         try {
             com.fasterxml.jackson.databind.JsonNode node =
                     lockerMqttService.sendUnlockCommandAsync(request.lockerId(), boxId)
-                            .get(20, java.util.concurrent.TimeUnit.SECONDS);
+                            .get(rules.unlockWaitSeconds(), java.util.concurrent.TimeUnit.SECONDS);
             if (node.has("status") && "FAILED".equals(node.get("status").asText())) {
                 logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "FAILED", "Hardware failed to open");
                 return Map.of("accepted", false, "boxId", boxId, "message", "Hardware failed to open");
@@ -197,8 +192,8 @@ public class IotService {
         AccessAttempt attempt = accessAttemptRepository.findById(boxId).orElseGet(AccessAttempt::new);
         attempt.setBoxId(boxId);
         attempt.setFailedCount(attempt.getFailedCount() + 1);
-        if (attempt.getFailedCount() >= lockoutMaxAttempts) {
-            attempt.setLockedUntil(LocalDateTime.now().plusMinutes(lockoutMinutes));
+        if (attempt.getFailedCount() >= rules.lockoutMaxAttempts()) {
+            attempt.setLockedUntil(LocalDateTime.now().plusMinutes(rules.lockoutMinutes()));
         }
         attempt.setUpdatedAt(LocalDateTime.now());
         accessAttemptRepository.save(attempt);

@@ -35,6 +35,10 @@ spring:
     port: ${SPRING_RABBITMQ_PORT:5672}
     username: ${SPRING_RABBITMQ_USERNAME:guest}
     password: ${SPRING_RABBITMQ_PASSWORD:guest}
+app:
+  # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005) — /api/admin/settings/iot.
+  settings:
+    scope: iot
 eureka:
   client:
     service-url:
