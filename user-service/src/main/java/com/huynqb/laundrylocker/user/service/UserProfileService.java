@@ -56,6 +56,17 @@ public class UserProfileService {
                                         "USER_NOT_FOUND", "No user with phone " + phoneNumber));
     }
 
+    /// Tra cứu theo lô cho các màn hình báo cáo admin (order/payment-service ghép
+    /// tên khách). Id không tồn tại bị bỏ qua thay vì lỗi cả lô.
+    @Transactional(readOnly = true)
+    public List<UserSummary> getMany(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        List<Long> distinct = ids.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        return userProfileRepository.findAllById(distinct).stream().map(this::toSummary).toList();
+    }
+
     @Transactional(readOnly = true)
     public List<UserSummary> list() {
         return userProfileRepository.findAll().stream().map(this::toSummary).toList();
