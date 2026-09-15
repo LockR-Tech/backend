@@ -11,11 +11,11 @@ import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.*;
 import com.huynqb.laundrylocker.locker.model.*;
 import com.huynqb.laundrylocker.locker.repository.*;
+import com.huynqb.laundrylocker.locker.settings.LockerRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -44,25 +44,11 @@ public class LockerService {
     private final IotClient iotClient;
     private final UserClient userClient;
     private final ReportAttachmentService attachmentService;
-
-    /// SLA: số giờ tối đa để xử lý một phiếu bảo trì trước khi bị coi là quá hạn.
-    @Value("${app.maintenance.sla-hours:4}")
-    private int slaHours;
-
-    /// Bật sau khi app mobile có bước chụp ảnh nghiệm thu ⇒ KTV không hoàn tất được phiếu thiếu ảnh.
-    @Value("${app.maintenance.require-resolution-photo:false}")
-    private boolean requireResolutionPhoto;
-
-    /// Backstop TTL cho ô RESERVED — order-service sweep mỗi 15 phút đã release
-    /// ô khi auto-cancel đơn quá `app.order.auto-cancel-hours` (mặc định 24h);
-    /// cửa sổ này nên >= con số đó để không bao giờ release sớm hơn order-service.
-    @Value("${app.locker.reserved-ttl-hours:24}")
-    private int reservedTtlHours;
-
     private final RabbitTemplate rabbitTemplate;
-
-    /// #7 Nguong pin toi thieu de cho phep drone cat canh (IN_FLIGHT).
-    private static final int DRONE_LOW_BATTERY_PERCENT = 20;
+    /// SLA, ngưỡng chế tài KTV, giới hạn ảnh, TTL ô RESERVED, pin drone… admin cấu hình trên web
+    /// (ADR-0005), không còn @Value/hằng số cứng. TTL ô RESERVED nên ≥ `app.order.auto-cancel-hours`
+    /// để không bao giờ nhả ô sớm hơn order-service.
+    private final LockerRules rules;
 
     /// #6 Trang thai hop le cua bai dap drone.
     private static final java.util.Set<String> LANDING_PAD_STATUSES =
@@ -148,7 +134,7 @@ public class LockerService {
                     "DRONE_CELL_RESTRICTED", "This cell is reserved for drone deliveries only");
         }
         box.setStatus("RESERVED");
-        box.setReservedUntil(LocalDateTime.now().plusHours(reservedTtlHours));
+        box.setReservedUntil(LocalDateTime.now().plusHours(rules.reservedTtlHours()));
         LockerBox saved = boxRepository.save(box);
         syncBoxStateQuietly(saved, "RESERVED");
         return toSummary(saved);
@@ -240,7 +226,7 @@ public class LockerService {
         reportRepository.save(report);
         attachmentService.attach(
                 report, AttachmentStage.REPORT, attachments, userId, null,
-                ReportAttachmentService.MAX_REPORTER_PER_REQUEST);
+                rules.reportPhotosPerRequestReporter());
         publishBoxFault(box, reason);
         syncBoxStateQuietly(box, "FAULT");
         return toCell(box);
@@ -414,7 +400,7 @@ public class LockerService {
         LockerReport saved = reportRepository.save(report);
         attachmentService.attach(
                 saved, AttachmentStage.REPORT, request.attachments(), userId, null,
-                ReportAttachmentService.MAX_REPORTER_PER_REQUEST);
+                rules.reportPhotosPerRequestReporter());
         return toReport(saved);
     }
 
@@ -504,12 +490,13 @@ public class LockerService {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "REPORT_NOT_CLAIMABLE", "Report is not open for claiming");
         }
-        // Kiểm tra chế tài vi phạm SLA: nếu KTV đang có từ 3 phiếu trễ hạn trở lên, chặn nhận việc mới
+        // Kiểm tra chế tài vi phạm SLA: KTV đang giữ từ N phiếu trễ hạn trở lên (admin cấu hình) thì chặn nhận việc mới
+        int slaHours = rules.slaHours();
         long overdueCount = reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
                 .filter(r -> "IN_PROGRESS".equalsIgnoreCase(r.getStatus()))
                 .filter(r -> r.getCreatedAt() != null && java.time.LocalDateTime.now().isAfter(r.getCreatedAt().plusHours(slaHours)))
                 .count();
-        if (overdueCount >= 3) {
+        if (overdueCount >= rules.technicianClaimBlockOverdue()) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "TECHNICIAN_SLA_RESTRICTED",
                     "Kỹ thuật viên đang có " + overdueCount + " sự cố trễ hạn SLA. Vui lòng xử lý dứt điểm các ca tồn đọng trước khi nhận việc mới.");
@@ -556,21 +543,24 @@ public class LockerService {
         int total = allAssigned.size();
         long inProgress = allAssigned.stream().filter(r -> "IN_PROGRESS".equalsIgnoreCase(r.getStatus())).count();
         long resolved = allAssigned.stream().filter(r -> "RESOLVED".equalsIgnoreCase(r.getStatus())).count();
+        int slaHours = rules.slaHours();
         long overdue = allAssigned.stream()
                 .filter(r -> !"RESOLVED".equalsIgnoreCase(r.getStatus()))
                 .filter(r -> r.getCreatedAt() != null && java.time.LocalDateTime.now().isAfter(r.getCreatedAt().plusHours(slaHours)))
                 .count();
 
-        // Xác định bậc chế tài (Penalty Level)
+        // Xác định bậc chế tài (Penalty Level) theo ngưỡng admin cấu hình
+        LockerRules.PenaltyThresholds thresholds = rules.penaltyThresholds();
         String penaltyLevel;
         String penaltyReason;
-        if (overdue >= 5) {
+        if (overdue >= thresholds.suspended()) {
             penaltyLevel = "SUSPENDED";
-            penaltyReason = "Vi phạm nghiêm trọng: có từ 5 phiếu trễ hạn SLA. Đề xuất đình chỉ công tác & khóa tài khoản.";
-        } else if (overdue >= 3) {
+            penaltyReason = "Vi phạm nghiêm trọng: có từ " + thresholds.suspended()
+                    + " phiếu trễ hạn SLA. Đề xuất đình chỉ công tác & khóa tài khoản.";
+        } else if (overdue >= thresholds.restricted()) {
             penaltyLevel = "RESTRICTED";
             penaltyReason = "Hạn chế nhận việc: có " + overdue + " phiếu trễ hạn SLA. Tạm ngưng phân công mới.";
-        } else if (overdue >= 1) {
+        } else if (overdue >= thresholds.warning()) {
             penaltyLevel = "WARNING";
             penaltyReason = "Cảnh báo SLA: có " + overdue + " phiếu trễ hạn SLA cần đẩy nhanh tiến độ.";
         } else {
@@ -620,7 +610,7 @@ public class LockerService {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         attachResolutionEvidence(report, userId, admin, request);
-        if (requireResolutionPhoto && !admin && !attachmentService.hasStage(report.getId(), AttachmentStage.RESOLUTION)) {
+        if (rules.requireResolutionPhoto() && !admin && !attachmentService.hasStage(report.getId(), AttachmentStage.RESOLUTION)) {
             throw new BusinessException(
                     "RESOLUTION_PHOTO_REQUIRED", "Take at least one acceptance photo before resolving the report");
         }
@@ -668,7 +658,7 @@ public class LockerService {
         RepairLog saved = repairLogRepository.save(log);
         List<ReportAttachmentResponse> savedAttachments = attachmentService.attach(
                 report, AttachmentStage.PROGRESS, attachments, actorUserId, saved.getId(),
-                ReportAttachmentService.MAX_STAFF_PER_REQUEST);
+                rules.reportPhotosPerRequestStaff());
         return toRepairLog(saved, savedAttachments);
     }
 
@@ -707,7 +697,7 @@ public class LockerService {
         }
         attachmentService.attach(
                 report, AttachmentStage.RESOLUTION, request.attachments(), actorUserId, repairLogId,
-                ReportAttachmentService.MAX_STAFF_PER_REQUEST);
+                rules.reportPhotosPerRequestStaff());
     }
 
     // ---- L5: bảo trì phòng ngừa (lịch kiểm tra định kỳ) ----
@@ -869,7 +859,7 @@ public class LockerService {
         // #7 An toan: khong cho cat canh khi pin qua thap.
         if (DroneStatus.IN_FLIGHT.equals(status)
                 && unit.getBatteryPercent() != null
-                && unit.getBatteryPercent() <= DRONE_LOW_BATTERY_PERCENT) {
+                && unit.getBatteryPercent() <= rules.droneLowBatteryPercent()) {
             throw new BusinessException(
                     "DRONE_BATTERY_TOO_LOW",
                     "Battery is too low to fly (" + unit.getBatteryPercent() + "%), needs charging first");
@@ -1135,6 +1125,7 @@ public class LockerService {
     private LockerReportResponse toReport(LockerReport report, List<ReportAttachmentResponse> attachments) {
         LockerUnit locker = lockerRepository.findById(report.getLockerId()).orElse(null);
         LockerBox box = report.getBoxId() == null ? null : boxRepository.findById(report.getBoxId()).orElse(null);
+        int slaHours = rules.slaHours();
         LocalDateTime slaDueAt =
                 report.getCreatedAt() == null ? null : report.getCreatedAt().plusHours(slaHours);
         boolean overdue =

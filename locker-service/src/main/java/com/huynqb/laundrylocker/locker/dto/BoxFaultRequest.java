@@ -7,5 +7,6 @@ import java.util.List;
 
 public record BoxFaultRequest(
         @Size(max = 2000) String reason,
-        @Size(max = 5) List<@Valid ReportAttachmentRequest> attachments) {
+        // Số ảnh tối đa theo cấu hình admin (app.maintenance.report-photos-per-request-reporter), kiểm trong service.
+        List<@Valid ReportAttachmentRequest> attachments) {
 }

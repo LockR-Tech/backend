@@ -11,5 +11,6 @@ import java.util.List;
 public record ReportAttachmentsRequest(
         String stage,
         @Size(max = 2000) String note,
-        @NotEmpty @Size(max = 10) List<@Valid ReportAttachmentRequest> attachments) {
+        // Số ảnh tối đa theo cấu hình admin (người báo / KTV-admin), kiểm trong ReportAttachmentService.
+        @NotEmpty List<@Valid ReportAttachmentRequest> attachments) {
 }

@@ -12,6 +12,9 @@ import com.huynqb.laundrylocker.locker.model.DroneStatus;
 import com.huynqb.laundrylocker.locker.model.DroneUnit;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
 import com.huynqb.laundrylocker.locker.repository.*;
+import com.huynqb.laundrylocker.locker.settings.LockerRules;
+import com.huynqb.laundrylocker.locker.settings.TestLockerRules;
+import com.huynqb.laundrylocker.common.settings.BusinessSettings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -59,8 +63,11 @@ class LockerServiceDroneFleetTest {
 
     private LockerService service;
 
+    private BusinessSettings settings;
+
     @BeforeEach
     void setUp() {
+        settings = TestLockerRules.settings(Map.of());
         service =
                 new LockerService(
                         lockerRepository,
@@ -74,7 +81,8 @@ class LockerServiceDroneFleetTest {
                         iotClient,
                         userClient,
                         attachmentService,
-                        rabbitTemplate);
+                        rabbitTemplate,
+                        new LockerRules(settings));
 
         when(droneUnitRepository.save(any(DroneUnit.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0, DroneUnit.class));
@@ -133,6 +141,22 @@ class LockerServiceDroneFleetTest {
 
         assertEquals("DRONE_OWNERSHIP_REQUIRED", ex.getCode());
         verifyNoInteractions(droneMaintenanceLogRepository);
+    }
+
+    @Test
+    void takeOffBatteryThresholdFollowsAdminSetting() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+        settings.update(Map.of("app.locker.drone-low-battery-percent", 85), null);
+
+        BusinessException ex =
+                assertThrows(
+                        BusinessException.class,
+                        () -> service.updateDroneStatus(1L, DroneStatus.IN_FLIGHT, null, 42L));
+
+        assertEquals("DRONE_BATTERY_TOO_LOW", ex.getCode());
+
+        settings.update(Map.of("app.locker.drone-low-battery-percent", 50), null);
+        assertEquals(DroneStatus.IN_FLIGHT, service.updateDroneStatus(1L, DroneStatus.IN_FLIGHT, null, 42L).status());
     }
 
     @Test

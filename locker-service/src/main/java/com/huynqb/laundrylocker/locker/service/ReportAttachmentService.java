@@ -14,6 +14,7 @@ import com.huynqb.laundrylocker.locker.model.ReportAttachment;
 import com.huynqb.laundrylocker.locker.repository.LockerReportRepository;
 import com.huynqb.laundrylocker.locker.repository.RepairLogRepository;
 import com.huynqb.laundrylocker.locker.repository.ReportAttachmentRepository;
+import com.huynqb.laundrylocker.locker.settings.LockerRules;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -38,17 +39,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ReportAttachmentService {
 
-    /// Ảnh người báo gửi kèm một lần tạo phiếu.
-    static final int MAX_REPORTER_PER_REQUEST = 5;
-    /// Ảnh KTV/admin gửi trong một lần.
-    static final int MAX_STAFF_PER_REQUEST = 10;
-    static final int MAX_REPORT_STAGE_PER_REPORT = 10;
-    static final int MAX_PER_REPORT = 30;
-
     private final ReportAttachmentRepository attachmentRepository;
     private final LockerReportRepository reportRepository;
     private final RepairLogRepository repairLogRepository;
     private final CloudinaryMediaStorage mediaStorage;
+    /// Giới hạn số ảnh mỗi lần gửi / mỗi phiếu do admin cấu hình (ADR-0005).
+    private final LockerRules rules;
 
     // ---- Dùng bên trong transaction của LockerService ----
 
@@ -66,14 +62,16 @@ public class ReportAttachmentService {
         if (requests.size() > perRequestLimit) {
             throw limitExceeded("At most " + perRequestLimit + " images per request");
         }
+        int maxPerReport = rules.reportPhotosTotal();
         long total = attachmentRepository.countByReportId(report.getId());
-        if (total + requests.size() > MAX_PER_REPORT) {
-            throw limitExceeded("A report can hold at most " + MAX_PER_REPORT + " images");
+        if (total + requests.size() > maxPerReport) {
+            throw limitExceeded("A report can hold at most " + maxPerReport + " images");
         }
+        int maxReporterPerReport = rules.reportPhotosReporterTotal();
         if (stage == AttachmentStage.REPORT
                 && attachmentRepository.countByReportIdAndStage(report.getId(), stage) + requests.size()
-                        > MAX_REPORT_STAGE_PER_REPORT) {
-            throw limitExceeded("A report can hold at most " + MAX_REPORT_STAGE_PER_REPORT + " reporter images");
+                        > maxReporterPerReport) {
+            throw limitExceeded("A report can hold at most " + maxReporterPerReport + " reporter images");
         }
         Set<String> seen = new HashSet<>();
         List<ReportAttachment> entities = new ArrayList<>(requests.size());
@@ -168,7 +166,7 @@ public class ReportAttachmentService {
         if ("RESOLVED".equalsIgnoreCase(report.getStatus())) {
             throw new BusinessException("REPORT_ALREADY_RESOLVED", "Report is already resolved");
         }
-        return attach(report, AttachmentStage.REPORT, requests, userId, null, MAX_REPORTER_PER_REQUEST);
+        return attach(report, AttachmentStage.REPORT, requests, userId, null, rules.reportPhotosPerRequestReporter());
     }
 
     /// KTV (người được giao) hoặc ADMIN thêm ảnh xác nhận / quá trình / nghiệm thu.
@@ -196,7 +194,7 @@ public class ReportAttachmentService {
             log.setNote(note.trim());
             repairLogId = repairLogRepository.save(log).getId();
         }
-        return attach(report, parsed, requests, actorUserId, repairLogId, MAX_STAFF_PER_REQUEST);
+        return attach(report, parsed, requests, actorUserId, repairLogId, rules.reportPhotosPerRequestStaff());
     }
 
     /// Người upload xoá được khi phiếu chưa đóng; ADMIN xoá được mọi lúc (ảnh nhạy cảm, nhầm phiếu).

@@ -8,5 +8,6 @@ import java.util.List;
 
 public record RepairLogRequest(
         @NotBlank @Size(max = 2000) String note,
-        @Size(max = 10) List<@Valid ReportAttachmentRequest> attachments) {
+        // Số ảnh tối đa theo cấu hình admin (app.maintenance.report-photos-per-request-staff), kiểm trong service.
+        List<@Valid ReportAttachmentRequest> attachments) {
 }
