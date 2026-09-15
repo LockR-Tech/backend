@@ -30,6 +30,10 @@ spring:
     create-schemas: true
     schemas: loyalty_schema
     default-schema: loyalty_schema
+app:
+  # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005) — /api/admin/settings/loyalty.
+  settings:
+    scope: loyalty
 eureka:
   client:
     service-url:
