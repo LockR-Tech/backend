@@ -46,6 +46,16 @@ public class StoreService {
         return repository.findAll().stream().map(this::toResponse).toList();
     }
 
+    /// Tra cứu theo lô cho báo cáo admin; `ids` rỗng/null ⇒ toàn bộ cửa hàng.
+    @Transactional(readOnly = true)
+    public List<StoreResponse> getMany(java.util.Collection<Long> ids) {
+        List<Long> distinct =
+                ids == null ? List.of() : ids.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        return (distinct.isEmpty() ? repository.findAll() : repository.findAllById(distinct)).stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public List<StoreResponse> adminList(String search, String status) {
         String q = search == null ? null : search.toLowerCase();
