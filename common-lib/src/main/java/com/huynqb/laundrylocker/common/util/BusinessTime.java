@@ -32,6 +32,8 @@ import java.time.temporal.TemporalAdjusters;
 public final class BusinessTime {
 
     public static final ZoneId DEFAULT_BUSINESS_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    /// Số ngày tối đa (tính cả hai đầu) của một khoảng báo cáo.
+    public static final int MAX_RANGE_DAYS = 366;
 
     private final ZoneId storageZone;
     private final ZoneId businessZone;
@@ -107,7 +109,7 @@ public final class BusinessTime {
         if (end.isBefore(start)) {
             throw new BusinessException("INVALID_DATE_RANGE", "to must not be before from");
         }
-        if (start.plusDays(366).isBefore(end)) {
+        if (java.time.temporal.ChronoUnit.DAYS.between(start, end) + 1 > MAX_RANGE_DAYS) {
             throw new BusinessException("INVALID_DATE_RANGE", "date range must not exceed 366 days");
         }
         return new DateRange(start, end);

@@ -62,5 +62,9 @@ class BusinessTimeTest {
                 assertThrows(BusinessException.class, () -> time.dateRange("2026-09-10", "2026-09-01")).getCode());
         assertEquals("INVALID_DATE",
                 assertThrows(BusinessException.class, () -> time.parseFrom("15/09/2026")).getCode());
+        // 2025-01-01..2026-01-01 = 366 ngày: hợp lệ; thêm một ngày thì vượt giới hạn.
+        assertEquals(366, time.dateRange("2025-01-01", "2026-01-01").days());
+        assertEquals("INVALID_DATE_RANGE",
+                assertThrows(BusinessException.class, () -> time.dateRange("2025-01-01", "2026-01-02")).getCode());
     }
 }
