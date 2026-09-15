@@ -226,6 +226,25 @@ public class LockerService {
         report.setUserId(userId == null ? 0L : userId);
         report.setTitle("Box " + box.getBoxNumber() + " fault");
         report.setDescription(StringUtils.hasText(reason) ? reason : "Reported faulty");
+
+        if (userId != null && userId > 0) {
+            UserSummary reporter = lookupUserQuietly(userId);
+            boolean isTech = reporter != null && (
+                    (reporter.roles() != null && (reporter.roles().contains("TECHNICIAN")
+                            || reporter.roles().contains("ROLE_TECHNICIAN")
+                            || reporter.roles().contains("MAINTENANCE")))
+                    || (reporter.fullName() != null && (reporter.fullName().toLowerCase().contains("kỹ thuật viên")
+                            || reporter.fullName().toLowerCase().contains("ktv")
+                            || reporter.fullName().toLowerCase().contains("technician")
+                            || reporter.fullName().toLowerCase().contains("maintenance")))
+            );
+            if (isTech) {
+                report.setAssignedToUserId(userId);
+                report.setAssignedAt(java.time.LocalDateTime.now());
+                report.setStatus("IN_PROGRESS");
+            }
+        }
+
         reportRepository.save(report);
         publishBoxFault(box, reason);
         syncBoxStateQuietly(box, "FAULT");
@@ -1034,6 +1053,31 @@ public class LockerService {
                         && !"RESOLVED".equalsIgnoreCase(report.getStatus())
                         && LocalDateTime.now().isAfter(slaDueAt);
         UserSummary reporter = lookupUserQuietly(report.getUserId());
+
+        Long assignedToUserId = report.getAssignedToUserId();
+        LocalDateTime assignedAt = report.getAssignedAt();
+        String status = report.getStatus();
+
+        boolean isTechReporter = reporter != null && (
+                (reporter.roles() != null && (reporter.roles().contains("TECHNICIAN")
+                        || reporter.roles().contains("ROLE_TECHNICIAN")
+                        || reporter.roles().contains("MAINTENANCE")))
+                || (reporter.fullName() != null && (reporter.fullName().toLowerCase().contains("kỹ thuật viên")
+                        || reporter.fullName().toLowerCase().contains("ktv")
+                        || reporter.fullName().toLowerCase().contains("technician")
+                        || reporter.fullName().toLowerCase().contains("maintenance")))
+        );
+
+        if (assignedToUserId == null && isTechReporter) {
+            assignedToUserId = report.getUserId();
+            if (assignedAt == null) {
+                assignedAt = report.getCreatedAt();
+            }
+            if ("OPEN".equalsIgnoreCase(status)) {
+                status = "IN_PROGRESS";
+            }
+        }
+
         return new LockerReportResponse(
                 report.getId(),
                 report.getLockerId(),
@@ -1041,9 +1085,9 @@ public class LockerService {
                 report.getUserId(),
                 report.getTitle(),
                 report.getDescription(),
-                report.getStatus(),
-                report.getAssignedToUserId(),
-                report.getAssignedAt(),
+                status,
+                assignedToUserId,
+                assignedAt,
                 report.getResolvedByUserId(),
                 report.getResolvedAt(),
                 report.getCreatedAt(),
