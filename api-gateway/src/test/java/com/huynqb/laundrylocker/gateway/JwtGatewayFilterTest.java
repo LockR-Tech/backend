@@ -117,6 +117,29 @@ class JwtGatewayFilterTest {
     }
 
     @Test
+    void revenueReportsRequireAdminRole() {
+        for (String path : new String[]{"/api/admin/revenue/summary", "/api/admin/payments/stats"}) {
+            MockServerWebExchange customer =
+                    exchangeWithBearer(MockServerHttpRequest.get(path), token("access", "CUSTOMER"));
+            AtomicBoolean customerForwarded = new AtomicBoolean(false);
+            filter.filter(customer, chainThatMarks(customerForwarded)).block();
+            assertEquals(HttpStatus.FORBIDDEN, customer.getResponse().getStatusCode(), path);
+            assertFalse(customerForwarded.get(), path);
+
+            MockServerWebExchange anonymous = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
+            AtomicBoolean anonymousForwarded = new AtomicBoolean(false);
+            filter.filter(anonymous, chainThatMarks(anonymousForwarded)).block();
+            assertEquals(HttpStatus.UNAUTHORIZED, anonymous.getResponse().getStatusCode(), path);
+
+            MockServerWebExchange admin =
+                    exchangeWithBearer(MockServerHttpRequest.get(path), token("access", "ADMIN"));
+            AtomicBoolean adminForwarded = new AtomicBoolean(false);
+            filter.filter(admin, chainThatMarks(adminForwarded)).block();
+            assertTrue(adminForwarded.get(), path);
+        }
+    }
+
+    @Test
     void forwardsIdentityHeadersForAuthenticatedCustomer() {
         MockServerWebExchange exchange =
                 exchangeWithBearer(MockServerHttpRequest.get("/api/orders/my-orders"), token("access", "CUSTOMER"));

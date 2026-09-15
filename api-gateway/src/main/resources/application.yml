@@ -30,6 +30,11 @@ spring:
               uri: lb://order-service
               predicates:
                 - Path=/api/orders/**,/api/admin/orders,/api/admin/orders/**,/api/admin/scheduler,/api/admin/scheduler/**,/internal/orders/**
+            # Báo cáo doanh thu (tiền thực thu) cho trang /admin/revenue — ADMIN (JwtGatewayFilter).
+            - id: order-service-admin-revenue
+              uri: lb://order-service
+              predicates:
+                - Path=/api/admin/revenue,/api/admin/revenue/**
             - id: order-service-maintenance-drone
               uri: lb://order-service
               predicates:
