@@ -467,6 +467,17 @@ public class LockerService {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "REPORT_NOT_CLAIMABLE", "Report is not open for claiming");
         }
+        // Kiểm tra chế tài vi phạm SLA: nếu KTV đang có từ 3 phiếu trễ hạn trở lên, chặn nhận việc mới
+        long overdueCount = reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
+                .filter(r -> "IN_PROGRESS".equalsIgnoreCase(r.getStatus()))
+                .filter(r -> r.getCreatedAt() != null && java.time.LocalDateTime.now().isAfter(r.getCreatedAt().plusHours(slaHours)))
+                .count();
+        if (overdueCount >= 3) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "TECHNICIAN_SLA_RESTRICTED",
+                    "Kỹ thuật viên đang có " + overdueCount + " sự cố trễ hạn SLA. Vui lòng xử lý dứt điểm các ca tồn đọng trước khi nhận việc mới.");
+        }
+
         report.setStatus("IN_PROGRESS");
         report.setAssignedToUserId(userId);
         report.setAssignedAt(java.time.LocalDateTime.now());
@@ -474,6 +485,88 @@ public class LockerService {
         publishReportNotification(saved, DomainEventNames.LOCKER_REPORT_CLAIMED,
                 "đang được đội bảo trì xử lý");
         return toReport(saved);
+    }
+
+    /// Admin chủ động phân công một phiếu sự cố cho kỹ thuật viên
+    @Transactional
+    public LockerReportResponse assignReport(Long reportId, Long technicianId) {
+        LockerReport report =
+                reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        report.setStatus("IN_PROGRESS");
+        report.setAssignedToUserId(technicianId);
+        report.setAssignedAt(java.time.LocalDateTime.now());
+        LockerReport saved = reportRepository.save(report);
+        publishReportNotification(saved, DomainEventNames.LOCKER_REPORT_CLAIMED,
+                "đang được đội bảo trì xử lý");
+        return toReport(saved);
+    }
+
+    /// Admin thu hồi phân công phiếu sự cố (chuyển lại về OPEN để giao cho KTV khác)
+    @Transactional
+    public LockerReportResponse unassignReport(Long reportId) {
+        LockerReport report =
+                reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        report.setStatus("OPEN");
+        report.setAssignedToUserId(null);
+        report.setAssignedAt(null);
+        return toReport(reportRepository.save(report));
+    }
+
+    /// Tổng hợp chỉ số hiệu suất, số lần vi phạm SLA, mức độ chế tài và đánh giá của một KTV
+    @Transactional(readOnly = true)
+    public Map<String, Object> technicianPerformance(Long technicianId) {
+        List<LockerReport> allAssigned = reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(technicianId);
+        int total = allAssigned.size();
+        long inProgress = allAssigned.stream().filter(r -> "IN_PROGRESS".equalsIgnoreCase(r.getStatus())).count();
+        long resolved = allAssigned.stream().filter(r -> "RESOLVED".equalsIgnoreCase(r.getStatus())).count();
+        long overdue = allAssigned.stream()
+                .filter(r -> !"RESOLVED".equalsIgnoreCase(r.getStatus()))
+                .filter(r -> r.getCreatedAt() != null && java.time.LocalDateTime.now().isAfter(r.getCreatedAt().plusHours(slaHours)))
+                .count();
+
+        // Xác định bậc chế tài (Penalty Level)
+        String penaltyLevel;
+        String penaltyReason;
+        if (overdue >= 5) {
+            penaltyLevel = "SUSPENDED";
+            penaltyReason = "Vi phạm nghiêm trọng: có từ 5 phiếu trễ hạn SLA. Đề xuất đình chỉ công tác & khóa tài khoản.";
+        } else if (overdue >= 3) {
+            penaltyLevel = "RESTRICTED";
+            penaltyReason = "Hạn chế nhận việc: có " + overdue + " phiếu trễ hạn SLA. Tạm ngưng phân công mới.";
+        } else if (overdue >= 1) {
+            penaltyLevel = "WARNING";
+            penaltyReason = "Cảnh báo SLA: có " + overdue + " phiếu trễ hạn SLA cần đẩy nhanh tiến độ.";
+        } else {
+            penaltyLevel = "NORMAL";
+            penaltyReason = "Hiệu suất hoạt động tốt, không có phiếu trễ hạn.";
+        }
+
+        List<Long> reportIds = allAssigned.stream().map(LockerReport::getId).toList();
+        List<LockerReportRating> ratings = reportIds.isEmpty() ? List.of() : ratingRepository.findByReportIdIn(reportIds);
+        double average = ratings.stream().mapToInt(LockerReportRating::getRating).average().orElse(0.0);
+
+        List<Map<String, Object>> ratingList = ratings.stream().map(r -> {
+            Map<String, Object> item = new java.util.HashMap<>();
+            item.put("id", r.getId());
+            item.put("reportId", r.getReportId());
+            item.put("rating", r.getRating());
+            item.put("comment", r.getComment() == null ? "" : r.getComment());
+            item.put("createdAt", r.getCreatedAt() != null ? r.getCreatedAt().toString() : "");
+            return item;
+        }).toList();
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("technicianId", technicianId);
+        result.put("totalAssigned", total);
+        result.put("inProgress", inProgress);
+        result.put("resolved", resolved);
+        result.put("overdue", overdue);
+        result.put("penaltyLevel", penaltyLevel);
+        result.put("penaltyReason", penaltyReason);
+        result.put("ratingCount", ratings.size());
+        result.put("averageRating", Math.round(average * 10) / 10.0);
+        result.put("ratings", ratingList);
+        return result;
     }
 
     // Resolving a report tied to a faulty cell also returns the cell to service —
