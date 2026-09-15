@@ -8,8 +8,8 @@ import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
+import com.huynqb.laundrylocker.order.settings.OrderRules;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,9 +30,7 @@ public class DroneDeliverySimulator {
     private final LockerOrderRepository orderRepository;
     private final NotificationClient notificationClient;
     private final LockerDroneClient lockerDroneClient;
-
-    @Value("${app.drone.demo.stage-delay-ms:7000}")
-    private long stageDelayMs = 7000L;
+    private final OrderRules rules;
 
     @Scheduled(fixedDelayString = "${app.drone.demo.scheduler-delay-ms:1000}")
     @Transactional
@@ -41,6 +39,7 @@ public class DroneDeliverySimulator {
     }
 
     void advanceEligibleMissions(LocalDateTime now) {
+        long stageDelayMs = rules.droneDemoStageDelayMs();
         for (DroneMission mission : missionRepository.findByStatusIn(ACTIVE_STAGES)) {
             LockerOrder order = orderRepository.findById(mission.getOrderId()).orElse(null);
             if (order == null || !"DEMO".equalsIgnoreCase(order.getFulfillmentMode())) {
@@ -73,7 +72,7 @@ public class DroneDeliverySimulator {
             order.setDeliveryStage(nextStage);
             order.setPinCode(String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000)));
             order.setPinCodeIssuedAt(LocalDateTime.now());
-            order.setPickupDeadline(LocalDateTime.now().plusHours(24));
+            order.setPickupDeadline(LocalDateTime.now().plusHours(rules.dronePickupHours()));
         } else {
             mission.setStatus(nextStage);
             order.setDeliveryStage(nextStage);

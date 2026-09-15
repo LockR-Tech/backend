@@ -14,6 +14,7 @@ import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
+import com.huynqb.laundrylocker.order.settings.OrderRules;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,14 +27,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DroneOrderMaintenanceService {
 
-    private static final int MIN_PREFLIGHT_BATTERY_PERCENT = 20;
-
     private final LockerOrderRepository orderRepository;
     private final DroneMissionRepository missionRepository;
     private final LockerDroneClient lockerDroneClient;
     private final LockerClient lockerClient;
     private final OrderStatusHistoryRepository historyRepository;
     private final NotificationClient notificationClient;
+    private final OrderRules rules;
 
     @Transactional(readOnly = true)
     public List<DroneMissionResponse> queue(String deliveryStage) {
@@ -217,7 +217,7 @@ public class DroneOrderMaintenanceService {
         if (!"IDLE".equals(drone.status())) {
             throw new BusinessException("DRONE_NOT_IDLE", "Drone must be IDLE before acceptance");
         }
-        if (drone.batteryPercent() != null && drone.batteryPercent() <= MIN_PREFLIGHT_BATTERY_PERCENT) {
+        if (drone.batteryPercent() != null && drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
             throw new BusinessException("DRONE_BATTERY_TOO_LOW", "Drone battery is too low for launch");
         }
     }

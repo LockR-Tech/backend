@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.order.settings.TestOrderRules;
+
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.dto.DroneStatusUpdateRequest;
@@ -38,8 +40,8 @@ class DroneDeliverySimulatorTest {
     void advancesLaunchingDemoMissionToDepartedAfterConfiguredDelay() {
         DroneDeliverySimulator simulator =
                 new DroneDeliverySimulator(
-                        missionRepository, orderRepository, notificationClient, lockerDroneClient);
-        ReflectionTestUtils.setField(simulator, "stageDelayMs", 5_000L);
+                        missionRepository, orderRepository, notificationClient, lockerDroneClient,
+                        TestOrderRules.of(java.util.Map.of("app.drone.demo.stage-delay-ms", 5000)));
         DroneMission mission = mission(301L, "LAUNCHING", LocalDateTime.now().minusSeconds(6));
         LockerOrder order = order("LAUNCHING");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
@@ -58,8 +60,8 @@ class DroneDeliverySimulatorTest {
     void arrivalCompletesDemoDepositAndMakesOrderReadyForPaidPickup() {
         DroneDeliverySimulator simulator =
                 new DroneDeliverySimulator(
-                        missionRepository, orderRepository, notificationClient, lockerDroneClient);
-        ReflectionTestUtils.setField(simulator, "stageDelayMs", 5_000L);
+                        missionRepository, orderRepository, notificationClient, lockerDroneClient,
+                        TestOrderRules.of(java.util.Map.of("app.drone.demo.stage-delay-ms", 5000)));
         DroneMission mission = mission(301L, "ARRIVED", LocalDateTime.now().minusSeconds(6));
         LockerOrder order = order("ARRIVED");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
@@ -81,8 +83,8 @@ class DroneDeliverySimulatorTest {
     void arrivalRemainsReadyForPickupWhenFleetStatusSyncFails() {
         DroneDeliverySimulator simulator =
                 new DroneDeliverySimulator(
-                        missionRepository, orderRepository, notificationClient, lockerDroneClient);
-        ReflectionTestUtils.setField(simulator, "stageDelayMs", 5_000L);
+                        missionRepository, orderRepository, notificationClient, lockerDroneClient,
+                        TestOrderRules.of(java.util.Map.of("app.drone.demo.stage-delay-ms", 5000)));
         DroneMission mission = mission(301L, "ARRIVED", LocalDateTime.now().minusSeconds(6));
         LockerOrder order = order("ARRIVED");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));

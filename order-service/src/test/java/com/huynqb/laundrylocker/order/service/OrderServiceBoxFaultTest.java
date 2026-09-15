@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.order.settings.TestOrderRules;
+
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.LockerBoxSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
@@ -73,7 +75,8 @@ class OrderServiceBoxFaultTest {
                 lockerClient,
                 lockerCellClient,
                 notificationClient,
-                qrTokenService);
+                qrTokenService,
+                TestOrderRules.defaults());
     }
 
     @Test

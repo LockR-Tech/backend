@@ -58,11 +58,13 @@ public class OrderController {
             @PathVariable Long orderId,
             @RequestBody Map<String, Object> request,
             @RequestHeader("X-User-Id") Long userId) {
-        int hours = Integer.parseInt(String.valueOf(request.getOrDefault("hours", "0")));
-        if (hours < 1 || hours > 720) {
-            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
-                    "INVALID_REQUEST", "hours must be between 1 and 720");
+        int hours;
+        try {
+            hours = Integer.parseInt(String.valueOf(request.getOrDefault("hours", "0")));
+        } catch (NumberFormatException ex) {
+            throw new BusinessException("INVALID_REQUEST", "hours must be a whole number");
         }
+        // Giới hạn trên theo cấu hình admin (app.order.extend-max-hours) — kiểm trong OrderService.
         return ApiResponse.ok("ORDER_RENTAL_EXTENDED", "Rental extended", orderService.extendRental(orderId, userId, hours));
     }
 

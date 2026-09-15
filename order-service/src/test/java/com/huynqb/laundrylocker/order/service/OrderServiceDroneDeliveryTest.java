@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.order.settings.TestOrderRules;
+
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.LockerBoxSummary;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
@@ -64,8 +66,11 @@ class OrderServiceDroneDeliveryTest {
 
     private OrderService orderService;
 
+    private com.huynqb.laundrylocker.common.settings.BusinessSettings settings;
+
     @BeforeEach
     void setUp() {
+        settings = TestOrderRules.settings(java.util.Map.of("app.order.drone-delivery-fee", 15000));
         orderService =
                 new OrderService(
                         orderRepository,
@@ -81,10 +86,8 @@ class OrderServiceDroneDeliveryTest {
                         lockerClient,
                         lockerCellClient,
                         notificationClient,
-                        qrTokenService);
-        ReflectionTestUtils.setField(orderService, "sendBaseFee", 15000L);
-        ReflectionTestUtils.setField(orderService, "droneDemoEnabled", true);
-        ReflectionTestUtils.setField(orderService, "droneDemoAllowedUserIds", "");
+                        qrTokenService,
+                        new com.huynqb.laundrylocker.order.settings.OrderRules(settings));
     }
 
     @Test
@@ -141,7 +144,7 @@ class OrderServiceDroneDeliveryTest {
 
     @Test
     void explicitDemoIsRejectedForUserOutsideConfiguredAllowlistBeforeBoxReservation() {
-        ReflectionTestUtils.setField(orderService, "droneDemoAllowedUserIds", "91,92");
+        settings.update(java.util.Map.of("app.drone.demo.allowed-user-ids", "91,92"), null);
 
         BusinessException error =
                 assertThrows(
