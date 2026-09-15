@@ -29,6 +29,13 @@
             <artifactId>spring-tx</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Optional: JdbcSettingsStore (quy tắc nghiệp vụ admin chỉnh được). Mọi service bật
+             app.settings.scope đều đã có spring-jdbc qua data-jpa. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+            <optional>true</optional>
+        </dependency>
         <!-- Optional: only used by the shared FlywayMigrationStrategy (FlywayRepairConfig).
              Services that run Flyway already provide flyway-core; for services without it,
              the config is skipped via @ConditionalOnClass. -->
