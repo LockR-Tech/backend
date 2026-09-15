@@ -12,6 +12,7 @@ import com.huynqb.laundrylocker.payment.model.PaymentRecord;
 import com.huynqb.laundrylocker.payment.model.RefundRecord;
 import com.huynqb.laundrylocker.payment.repository.PaymentRepository;
 import com.huynqb.laundrylocker.payment.repository.RefundRepository;
+import com.huynqb.laundrylocker.payment.settings.PaymentRules;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +51,8 @@ public class PaymentService {
     private final WalletService walletService;
     private final OrderClient orderClient;
     private final MomoService momoService;
+    /// Hạn mức nạp ví, phương thức đang bật, tự hoàn tất tiền mặt… admin cấu hình (ADR-0005).
+    private final PaymentRules rules;
 
     @Value("${vnpay.pay-url:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}")
     private String vnpayPayUrl;
@@ -83,6 +86,7 @@ public class PaymentService {
         payment.setUserId(request.userId());
         payment.setAmount(request.amount());
         payment.setMethod(StringUtils.hasText(request.method()) ? request.method().toUpperCase() : "CASH");
+        assertMethodEnabled(payment.getMethod());
         payment.setReferenceId(StringUtils.hasText(request.referenceId()) ? request.referenceId() : generateReference(request.orderId()));
         payment.setDescription(request.description());
         payment.setContent("Payment for order " + request.orderId());
@@ -90,7 +94,7 @@ public class PaymentService {
             payment.setUrl(buildVnPayUrl(payment, request.bankCode(), request.language()));
         } else if ("MOMO".equals(payment.getMethod())) {
             momoService.createPayment(payment, null);
-        } else if ("CASH".equals(payment.getMethod())) {
+        } else if ("CASH".equals(payment.getMethod()) && rules.cashAutoComplete()) {
             payment.setStatus("COMPLETED");
         }
         PaymentRecord saved = repository.save(payment);
@@ -102,12 +106,16 @@ public class PaymentService {
 
     /**
      * Pay for an existing order with the chosen method.
-     * WALLET/CASH settle immediately (status COMPLETED + event); VNPAY/MOMO return a redirect URL
-     * and settle later via the provider callback. The amount is taken from the order (authoritative),
-     * not the client.
+     * WALLET settles immediately (status COMPLETED + event); CASH too unless admin turned off
+     * {@code app.payment.cash-auto-complete} (then it stays PENDING for staff confirmation);
+     * VNPAY/MOMO return a redirect URL and settle later via the provider callback. The amount is
+     * taken from the order (authoritative), not the client. Methods not in
+     * {@code app.payment.enabled-methods} are rejected with PAYMENT_METHOD_DISABLED.
      */
     @Transactional
     public PaymentResponse checkout(Long userId, CheckoutRequest request) {
+        String method = request.method() == null ? "" : request.method().toUpperCase();
+        assertMethodEnabled(method);
         OrderSummary order;
         try {
             order = orderClient.getOrder(request.orderId()).data();
@@ -129,7 +137,6 @@ public class PaymentService {
             throw new BusinessException("ORDER_ALREADY_PAID", "Đơn này đã được thanh toán");
         }
 
-        String method = request.method() == null ? "" : request.method().toUpperCase();
         PaymentRecord payment = new PaymentRecord();
         payment.setOrderId(request.orderId());
         payment.setUserId(userId);
@@ -149,7 +156,11 @@ public class PaymentService {
                         "Thanh toán đơn #" + request.orderId());
                 payment.setStatus("COMPLETED");
             }
-            case "CASH" -> payment.setStatus("COMPLETED");
+            case "CASH" -> {
+                if (rules.cashAutoComplete()) {
+                    payment.setStatus("COMPLETED");
+                }
+            }
             case "VNPAY" ->
                     payment.setUrl(buildVnPayUrl(payment, request.bankCode(), request.language(), request.returnUrl()));
             case "MOMO" -> momoService.createPayment(payment, request.returnUrl());
@@ -216,6 +227,7 @@ public class PaymentService {
 
     @Transactional
     public TopupResponse createTopupUrl(Long userId, CreateTopupRequest request) {
+        assertTopupAmount(request.amount());
         String txnRef = "TOPUP_" + userId + "_" + System.currentTimeMillis();
         String effectiveReturnUrl = StringUtils.hasText(request.returnUrl()) ? request.returnUrl() : vnpayReturnUrl;
 
@@ -293,6 +305,25 @@ public class PaymentService {
                 .findById(refundId)
                 .map(this::toRefund)
                 .orElseThrow(() -> new NotFoundException("Refund", refundId));
+    }
+
+    /// Phương thức thanh toán đơn đã biết nhưng admin đang tắt ⇒ từ chối. Phương thức lạ để luồng cũ xử lý.
+    private void assertMethodEnabled(String method) {
+        if (PaymentRules.SUPPORTED_METHODS.contains(method) && !rules.isMethodEnabled(method)) {
+            throw new BusinessException(
+                    "PAYMENT_METHOD_DISABLED", "Phương thức thanh toán đang tạm tắt: " + method);
+        }
+    }
+
+    /// Hạn mức nạp ví theo cấu hình admin (app.payment.topup-min-amount / topup-max-amount).
+    private void assertTopupAmount(BigDecimal amount) {
+        BigDecimal min = rules.topupMinAmount();
+        BigDecimal max = rules.topupMaxAmount();
+        if (amount == null || amount.compareTo(min) < 0 || amount.compareTo(max) > 0) {
+            throw new BusinessException(
+                    "TOPUP_AMOUNT_OUT_OF_RANGE",
+                    "Số tiền nạp phải từ " + min.toPlainString() + " đến " + max.toPlainString() + " VND");
+        }
     }
 
     private PaymentRecord find(Long id) {
