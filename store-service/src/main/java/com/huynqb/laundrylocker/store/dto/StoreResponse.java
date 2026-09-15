@@ -11,5 +11,7 @@ public record StoreResponse(
         String description,
         Boolean active,
         Double distanceKm,
-        String status) {
+        String status,
+        /// Cùng giá trị với `image` — admin web đọc tên này.
+        String imageUrl) {
 }

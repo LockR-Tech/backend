@@ -1,6 +1,10 @@
 package com.huynqb.laundrylocker.store.service;
 
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
+import com.huynqb.laundrylocker.common.media.MediaPurpose;
+import com.huynqb.laundrylocker.common.media.MediaUpload;
+import com.huynqb.laundrylocker.common.media.VerifiedMedia;
 import com.huynqb.laundrylocker.store.client.OrderClient;
 import com.huynqb.laundrylocker.store.dto.StoreRequest;
 import com.huynqb.laundrylocker.store.dto.StoreResponse;
@@ -20,6 +24,7 @@ public class StoreService {
 
     private final StoreRepository repository;
     private final OrderClient orderClient;
+    private final CloudinaryMediaStorage mediaStorage;
 
     @Transactional
     public StoreResponse create(StoreRequest request) {
@@ -84,11 +89,27 @@ public class StoreService {
         repository.delete(repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id)));
     }
 
+    /// API cũ nhận URL tuỳ ý — giữ để tương thích; client mới dùng `updateImage(id, MediaUpload, userId)`.
     @Transactional
     public StoreResponse updateImage(Long id, String imageUrl) {
         StoreLocation store = repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id));
+        String previous = store.getImage();
         store.setImage(imageUrl);
-        return toResponse(repository.save(store));
+        StoreLocation saved = repository.save(store);
+        mediaStorage.deleteReplacedAfterCommit(previous, imageUrl);
+        return toResponse(saved);
+    }
+
+    /// Ảnh cửa hàng đã upload lên Cloudinary (ADR-0004); ảnh cũ của hệ thống bị dọn sau khi lưu.
+    @Transactional
+    public StoreResponse updateImage(Long id, MediaUpload upload, Long actorUserId) {
+        VerifiedMedia media = mediaStorage.verify(upload, MediaPurpose.STORE_IMAGE, actorUserId);
+        return updateImage(id, media.secureUrl());
+    }
+
+    @Transactional
+    public StoreResponse removeImage(Long id) {
+        return updateImage(id, (String) null);
     }
 
     @Transactional(readOnly = true)
@@ -106,7 +127,10 @@ public class StoreService {
         store.setAddress(request.address());
         store.setLatitude(request.latitude());
         store.setLongitude(request.longitude());
-        store.setImage(request.image());
+        // Form sửa thông tin không gửi ảnh ⇒ giữ ảnh hiện tại; xoá ảnh qua DELETE /image.
+        if (StringUtils.hasText(request.image())) {
+            store.setImage(request.image());
+        }
         store.setDescription(request.description());
         store.setActive(request.active() == null ? true : request.active());
         store.setStatus(StringUtils.hasText(request.status()) ? request.status() : "ACTIVE");
@@ -120,7 +144,7 @@ public class StoreService {
         return new StoreResponse(
                 store.getId(), store.getName(), store.getContactPhone(), store.getAddress(),
                 store.getLatitude(), store.getLongitude(), store.getImage(), store.getDescription(), store.getActive(),
-                distanceKm, store.getStatus());
+                distanceKm, store.getStatus(), store.getImage());
     }
 
     private Double distanceKm(Double lat1, Double lon1, Double lat2, Double lon2) {
