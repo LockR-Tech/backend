@@ -63,6 +63,36 @@ spring:
               uri: lb://loyalty-service
               predicates:
                 - Path=/api/loyalty/**,/api/admin/loyalty,/api/admin/loyalty/**,/internal/loyalty/**
+            # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005): mỗi service sở hữu quy tắc của nó.
+            # /api/admin/settings/** chỉ ADMIN; GET /api/settings/{scope}/public không cần JWT.
+            - id: settings-order
+              uri: lb://order-service
+              predicates:
+                - Path=/api/admin/settings/order,/api/admin/settings/order/**,/api/settings/order/**
+            - id: settings-locker
+              uri: lb://locker-service
+              predicates:
+                - Path=/api/admin/settings/locker,/api/admin/settings/locker/**,/api/settings/locker/**
+            - id: settings-payment
+              uri: lb://payment-service
+              predicates:
+                - Path=/api/admin/settings/payment,/api/admin/settings/payment/**,/api/settings/payment/**
+            - id: settings-iot
+              uri: lb://iot-service
+              predicates:
+                - Path=/api/admin/settings/iot,/api/admin/settings/iot/**,/api/settings/iot/**
+            - id: settings-auth
+              uri: lb://auth-service
+              predicates:
+                - Path=/api/admin/settings/auth,/api/admin/settings/auth/**,/api/settings/auth/**
+            - id: settings-loyalty
+              uri: lb://loyalty-service
+              predicates:
+                - Path=/api/admin/settings/loyalty,/api/admin/settings/loyalty/**,/api/settings/loyalty/**
+            - id: settings-store
+              uri: lb://store-service
+              predicates:
+                - Path=/api/admin/settings/store,/api/admin/settings/store/**,/api/settings/store/**
             - id: docs-auth-service
               uri: lb://auth-service
               predicates:
