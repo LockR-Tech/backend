@@ -1,6 +1,8 @@
 package com.huynqb.laundrylocker.store.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.store.dto.StoreRequest;
 import com.huynqb.laundrylocker.store.dto.StoreResponse;
 import com.huynqb.laundrylocker.store.service.StoreService;
@@ -16,6 +18,7 @@ import java.util.Map;
 public class StoreController {
 
     private final StoreService service;
+    private final ObjectMapper objectMapper;
 
     @PostMapping("/api/stores")
     public ApiResponse<StoreResponse> create(@Valid @RequestBody StoreRequest request) {
@@ -87,9 +90,25 @@ public class StoreController {
         return ApiResponse.ok("STORE_STATUS_UPDATED", "Store status updated", service.updateStatus(id, resolved));
     }
 
+    /// Body mới: MediaUpload (ảnh đã upload lên Cloudinary, ADR-0004). Body cũ `{imageUrl}` vẫn nhận.
     @PutMapping("/api/admin/stores/{id}/image")
-    public ApiResponse<StoreResponse> adminImage(@PathVariable Long id, @RequestBody Map<String, Object> request) {
-        return ApiResponse.ok("STORE_IMAGE_UPDATED", "Store image updated", service.updateImage(id, String.valueOf(request.get("imageUrl"))));
+    public ApiResponse<StoreResponse> adminImage(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        StoreResponse updated = request.get("publicId") != null
+                ? service.updateImage(id, mediaUpload(request), userId)
+                : service.updateImage(id, request.get("imageUrl") == null ? null : String.valueOf(request.get("imageUrl")));
+        return ApiResponse.ok("STORE_IMAGE_UPDATED", "Store image updated", updated);
+    }
+
+    @DeleteMapping("/api/admin/stores/{id}/image")
+    public ApiResponse<StoreResponse> adminRemoveImage(@PathVariable Long id) {
+        return ApiResponse.ok("STORE_IMAGE_REMOVED", "Store image removed", service.removeImage(id));
+    }
+
+    private MediaUpload mediaUpload(Map<String, Object> body) {
+        return objectMapper.convertValue(body, MediaUpload.class);
     }
 
     @DeleteMapping("/api/admin/stores/{id}")
