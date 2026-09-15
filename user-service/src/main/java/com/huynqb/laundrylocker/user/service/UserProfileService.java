@@ -2,6 +2,10 @@ package com.huynqb.laundrylocker.user.service;
 
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
+import com.huynqb.laundrylocker.common.media.MediaPurpose;
+import com.huynqb.laundrylocker.common.media.MediaUpload;
+import com.huynqb.laundrylocker.common.media.VerifiedMedia;
 import com.huynqb.laundrylocker.user.dto.UserProfileRequest;
 import com.huynqb.laundrylocker.user.model.UserProfile;
 import com.huynqb.laundrylocker.user.repository.UserProfileRepository;
@@ -20,6 +24,7 @@ import java.util.stream.Collectors;
 public class UserProfileService {
 
     private final UserProfileRepository userProfileRepository;
+    private final CloudinaryMediaStorage mediaStorage;
 
     @Transactional
     public UserSummary create(UserProfileRequest request) {
@@ -123,11 +128,28 @@ public class UserProfileService {
         return toSummary(userProfileRepository.save(user));
     }
 
+    /// API cũ nhận URL tuỳ ý — giữ để tương thích; client mới gửi MediaUpload.
     @Transactional
     public UserSummary updateAvatar(Long id, String imageUrl) {
         UserProfile user = find(id);
-        user.setImageUrl(imageUrl);
-        return toSummary(userProfileRepository.save(user));
+        String previous = user.getImageUrl();
+        user.setImageUrl(StringUtils.hasText(imageUrl) ? imageUrl : null);
+        UserSummary saved = toSummary(userProfileRepository.save(user));
+        mediaStorage.deleteReplacedAfterCommit(previous, user.getImageUrl());
+        return saved;
+    }
+
+    /// Ảnh đại diện đã upload lên Cloudinary (ADR-0004). `actorUserId` là người upload —
+    /// chính người dùng, hoặc ADMIN khi đổi hộ.
+    @Transactional
+    public UserSummary updateAvatar(Long id, MediaUpload upload, Long actorUserId) {
+        VerifiedMedia media = mediaStorage.verify(upload, MediaPurpose.AVATAR, actorUserId);
+        return updateAvatar(id, media.secureUrl());
+    }
+
+    @Transactional
+    public UserSummary removeAvatar(Long id) {
+        return updateAvatar(id, (String) null);
     }
 
     @Transactional(readOnly = true)
@@ -145,7 +167,10 @@ public class UserProfileService {
         user.setFirstName(request.firstName());
         user.setLastName(request.lastName());
         user.setBirthday(request.birthday());
-        user.setImageUrl(request.imageUrl());
+        // Form hồ sơ không gửi ảnh ⇒ giữ avatar hiện tại; đổi/xoá avatar qua /avatar.
+        if (StringUtils.hasText(request.imageUrl())) {
+            user.setImageUrl(request.imageUrl());
+        }
         user.setStatus(StringUtils.hasText(request.status()) ? request.status() : "ACTIVE");
         if (request.roles() != null && !request.roles().isEmpty()) {
             user.setRoles(request.roles().stream().map(String::toUpperCase).collect(Collectors.joining(",")));
@@ -166,7 +191,8 @@ public class UserProfileService {
                 user.getPhoneNumber(),
                 fullName,
                 user.getStatus(),
-                parseRoles(user.getRoles()));
+                parseRoles(user.getRoles()),
+                user.getImageUrl());
     }
 
     private Set<String> parseRoles(String roles) {

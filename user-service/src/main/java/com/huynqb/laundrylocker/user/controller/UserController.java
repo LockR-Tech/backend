@@ -1,7 +1,9 @@
 package com.huynqb.laundrylocker.user.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
+import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.user.client.AuthClient;
 import com.huynqb.laundrylocker.user.client.NotificationClient;
 import com.huynqb.laundrylocker.user.dto.AdminCreateUserRequest;
@@ -22,6 +24,7 @@ public class UserController {
     private final UserProfileService userProfileService;
     private final AuthClient authClient;
     private final NotificationClient notificationClient;
+    private final ObjectMapper objectMapper;
 
     @PostMapping("/api/users")
     public ApiResponse<UserSummary> create(@RequestBody UserProfileRequest request) {
@@ -69,12 +72,25 @@ public class UserController {
         return ApiResponse.ok("PROFILE_UPDATED", "Profile updated", userProfileService.update(userId, request));
     }
 
+    /// Body mới: MediaUpload (ảnh đã upload lên Cloudinary, ADR-0004). Body cũ `{imageUrl}`/`{avatar}` vẫn nhận.
     @PutMapping("/api/user/avatar")
     public ApiResponse<UserSummary> updateAvatar(
             @RequestHeader("X-User-Id") Long userId, @RequestBody Map<String, Object> request) {
-        String imageUrl =
-                request.get("imageUrl") == null ? String.valueOf(request.get("avatar")) : String.valueOf(request.get("imageUrl"));
-        return ApiResponse.ok("AVATAR_UPDATED", "Avatar updated", userProfileService.updateAvatar(userId, imageUrl));
+        return ApiResponse.ok("AVATAR_UPDATED", "Avatar updated", applyAvatar(userId, userId, request));
+    }
+
+    @DeleteMapping("/api/user/avatar")
+    public ApiResponse<UserSummary> removeAvatar(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok("AVATAR_REMOVED", "Avatar removed", userProfileService.removeAvatar(userId));
+    }
+
+    private UserSummary applyAvatar(Long targetUserId, Long actorUserId, Map<String, Object> request) {
+        if (request.get("publicId") != null) {
+            return userProfileService.updateAvatar(
+                    targetUserId, objectMapper.convertValue(request, MediaUpload.class), actorUserId);
+        }
+        Object imageUrl = request.get("imageUrl") != null ? request.get("imageUrl") : request.get("avatar");
+        return userProfileService.updateAvatar(targetUserId, imageUrl == null ? null : String.valueOf(imageUrl));
     }
 
     @PutMapping("/api/user/password")
@@ -183,6 +199,20 @@ public class UserController {
     @PutMapping("/api/admin/users/{id}")
     public ApiResponse<UserSummary> adminUpdate(@PathVariable Long id, @RequestBody UserProfileRequest request) {
         return update(id, request);
+    }
+
+    @PutMapping("/api/admin/users/{id}/avatar")
+    public ApiResponse<UserSummary> adminUpdateAvatar(
+            @PathVariable Long id,
+            @RequestBody MediaUpload request,
+            @RequestHeader("X-User-Id") Long adminUserId) {
+        return ApiResponse.ok(
+                "AVATAR_UPDATED", "Avatar updated", userProfileService.updateAvatar(id, request, adminUserId));
+    }
+
+    @DeleteMapping("/api/admin/users/{id}/avatar")
+    public ApiResponse<UserSummary> adminRemoveAvatar(@PathVariable Long id) {
+        return ApiResponse.ok("AVATAR_REMOVED", "Avatar removed", userProfileService.removeAvatar(id));
     }
 
     @PutMapping("/api/admin/users/{id}/status")
