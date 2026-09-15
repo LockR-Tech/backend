@@ -43,10 +43,15 @@ public class LockerService {
     private final DroneMaintenanceLogRepository droneMaintenanceLogRepository;
     private final IotClient iotClient;
     private final UserClient userClient;
+    private final ReportAttachmentService attachmentService;
 
     /// SLA: số giờ tối đa để xử lý một phiếu bảo trì trước khi bị coi là quá hạn.
     @Value("${app.maintenance.sla-hours:4}")
     private int slaHours;
+
+    /// Bật sau khi app mobile có bước chụp ảnh nghiệm thu ⇒ KTV không hoàn tất được phiếu thiếu ảnh.
+    @Value("${app.maintenance.require-resolution-photo:false}")
+    private boolean requireResolutionPhoto;
 
     /// Backstop TTL cho ô RESERVED — order-service sweep mỗi 15 phút đã release
     /// ô khi auto-cancel đơn quá `app.order.auto-cancel-hours` (mặc định 24h);
@@ -216,6 +221,12 @@ public class LockerService {
 
     @Transactional
     public CellResponse markFault(Long boxId, String reason, Long userId) {
+        return markFault(boxId, reason, userId, List.of());
+    }
+
+    /// Báo ô hỏng kèm ảnh hiện trường (stage REPORT) của người báo.
+    @Transactional
+    public CellResponse markFault(Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments) {
         LockerBox box = findBox(boxId);
         box.setStatus("FAULT");
         box.setFaultReason(reason);
@@ -227,6 +238,9 @@ public class LockerService {
         report.setTitle("Box " + box.getBoxNumber() + " fault");
         report.setDescription(StringUtils.hasText(reason) ? reason : "Reported faulty");
         reportRepository.save(report);
+        attachmentService.attach(
+                report, AttachmentStage.REPORT, attachments, userId, null,
+                ReportAttachmentService.MAX_REPORTER_PER_REQUEST);
         publishBoxFault(box, reason);
         syncBoxStateQuietly(box, "FAULT");
         return toCell(box);
@@ -382,17 +396,38 @@ public class LockerService {
 
     @Transactional
     public LockerReportResponse report(Long lockerId, LockerReportRequest request) {
+        return report(lockerId, request, null);
+    }
+
+    /// `headerUserId` (từ JWT qua gateway) được ưu tiên hơn `userId` trong body.
+    @Transactional
+    public LockerReportResponse report(Long lockerId, LockerReportRequest request, Long headerUserId) {
+        Long userId = headerUserId != null ? headerUserId : request.userId();
+        if (userId == null) {
+            throw new BusinessException("REPORTER_REQUIRED", "userId is required");
+        }
         LockerReport report = new LockerReport();
         report.setLockerId(lockerId);
-        report.setUserId(request.userId());
+        report.setUserId(userId);
         report.setTitle(request.title());
         report.setDescription(request.description());
-        return toReport(reportRepository.save(report));
+        LockerReport saved = reportRepository.save(report);
+        attachmentService.attach(
+                saved, AttachmentStage.REPORT, request.attachments(), userId, null,
+                ReportAttachmentService.MAX_REPORTER_PER_REQUEST);
+        return toReport(saved);
     }
 
     @Transactional
     public LockerReportResponse resolveReport(Long reportId, Long userId) {
+        return resolveReport(reportId, userId, null);
+    }
+
+    /// Admin đóng phiếu từ web — không bắt buộc ảnh nghiệm thu (có thể là phiếu trùng/nhầm).
+    @Transactional
+    public LockerReportResponse resolveReport(Long reportId, Long userId, ResolveReportRequest request) {
         LockerReport report = reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        attachResolutionEvidence(report, userId, true, request);
         report.setStatus("RESOLVED");
         report.setResolvedByUserId(userId);
         report.setResolvedAt(java.time.LocalDateTime.now());
@@ -401,12 +436,18 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> myReports(Long userId) {
-        return reportRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().map(this::toReport).toList();
+        return toReports(reportRepository.findByUserIdOrderByCreatedAtDesc(userId));
     }
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> allReports() {
-        return reportRepository.findAll().stream().map(this::toReport).toList();
+        return toReports(reportRepository.findAll());
+    }
+
+    @Transactional(readOnly = true)
+    public LockerReportResponse getReport(Long reportId) {
+        return toReport(
+                reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId)));
     }
 
     @Transactional(readOnly = true)
@@ -447,16 +488,12 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> openReports() {
-        return reportRepository.findByStatusInOrderByCreatedAtDesc(OPEN_REPORT_STATUSES).stream()
-                .map(this::toReport)
-                .toList();
+        return toReports(reportRepository.findByStatusInOrderByCreatedAtDesc(OPEN_REPORT_STATUSES));
     }
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> assignedReports(Long userId) {
-        return reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
-                .map(this::toReport)
-                .toList();
+        return toReports(reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId));
     }
 
     @Transactional
@@ -573,8 +610,20 @@ public class LockerService {
     // the technician confirms the physical repair in one step.
     @Transactional
     public LockerReportResponse resolveReportAndClearFault(Long reportId, Long userId) {
+        return resolveReportAndClearFault(reportId, userId, null, false);
+    }
+
+    /// Hoàn tất từ app KTV: ảnh nghiệm thu (stage RESOLUTION) + ghi chú được lưu trước khi đóng phiếu.
+    @Transactional
+    public LockerReportResponse resolveReportAndClearFault(
+            Long reportId, Long userId, ResolveReportRequest request, boolean admin) {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        attachResolutionEvidence(report, userId, admin, request);
+        if (requireResolutionPhoto && !admin && !attachmentService.hasStage(report.getId(), AttachmentStage.RESOLUTION)) {
+            throw new BusinessException(
+                    "RESOLUTION_PHOTO_REQUIRED", "Take at least one acceptance photo before resolving the report");
+        }
         report.setStatus("RESOLVED");
         report.setResolvedByUserId(userId);
         report.setResolvedAt(java.time.LocalDateTime.now());
@@ -596,25 +645,69 @@ public class LockerService {
     /// L5: kỹ thuật viên thêm 1 dòng nhật ký xử lý vào phiếu bảo trì.
     @Transactional
     public RepairLogResponse addRepairLog(Long reportId, String note, Long actorUserId) {
+        return addRepairLog(reportId, note, actorUserId, List.of(), false);
+    }
+
+    /// Nhật ký kèm ảnh quá trình sửa (stage PROGRESS) — ảnh chỉ nhận từ KTV được giao hoặc ADMIN.
+    @Transactional
+    public RepairLogResponse addRepairLog(
+            Long reportId, String note, Long actorUserId, List<ReportAttachmentRequest> attachments, boolean admin) {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("Report", reportId));
+        if (!StringUtils.hasText(note)) {
+            throw new BusinessException("REPAIR_LOG_NOTE_REQUIRED", "note is required");
+        }
+        boolean hasAttachments = attachments != null && !attachments.isEmpty();
+        if (hasAttachments) {
+            attachmentService.assertCanAttachAsStaff(report, actorUserId, admin);
+        }
         RepairLog log = new RepairLog();
         log.setReportId(report.getId());
         log.setActorUserId(actorUserId);
         log.setNote(note);
-        return toRepairLog(repairLogRepository.save(log));
+        RepairLog saved = repairLogRepository.save(log);
+        List<ReportAttachmentResponse> savedAttachments = attachmentService.attach(
+                report, AttachmentStage.PROGRESS, attachments, actorUserId, saved.getId(),
+                ReportAttachmentService.MAX_STAFF_PER_REQUEST);
+        return toRepairLog(saved, savedAttachments);
     }
 
     @Transactional(readOnly = true)
     public List<RepairLogResponse> repairLogs(Long reportId) {
-        return repairLogRepository.findByReportIdOrderByCreatedAtAsc(reportId).stream()
-                .map(this::toRepairLog)
+        List<RepairLog> logs = repairLogRepository.findByReportIdOrderByCreatedAtAsc(reportId);
+        Map<Long, List<ReportAttachmentResponse>> attachments =
+                attachmentService.byRepairLogIds(logs.stream().map(RepairLog::getId).toList());
+        return logs.stream()
+                .map(log -> toRepairLog(log, attachments.getOrDefault(log.getId(), List.of())))
                 .toList();
     }
 
-    private RepairLogResponse toRepairLog(RepairLog log) {
+    private RepairLogResponse toRepairLog(RepairLog log, List<ReportAttachmentResponse> attachments) {
         return new RepairLogResponse(
-                log.getId(), log.getReportId(), log.getActorUserId(), log.getNote(), log.getCreatedAt());
+                log.getId(), log.getReportId(), log.getActorUserId(), log.getNote(), log.getCreatedAt(), attachments);
+    }
+
+    /// Ghi chú + ảnh nghiệm thu gửi kèm lúc hoàn tất. Không gửi gì ⇒ giữ hành vi cũ.
+    private void attachResolutionEvidence(
+            LockerReport report, Long actorUserId, boolean admin, ResolveReportRequest request) {
+        if (request == null) {
+            return;
+        }
+        boolean hasAttachments = request.attachments() != null && !request.attachments().isEmpty();
+        if (hasAttachments) {
+            attachmentService.assertCanAttachAsStaff(report, actorUserId, admin);
+        }
+        Long repairLogId = null;
+        if (StringUtils.hasText(request.note())) {
+            RepairLog log = new RepairLog();
+            log.setReportId(report.getId());
+            log.setActorUserId(actorUserId);
+            log.setNote(request.note().trim());
+            repairLogId = repairLogRepository.save(log).getId();
+        }
+        attachmentService.attach(
+                report, AttachmentStage.RESOLUTION, request.attachments(), actorUserId, repairLogId,
+                ReportAttachmentService.MAX_STAFF_PER_REQUEST);
     }
 
     // ---- L5: bảo trì phòng ngừa (lịch kiểm tra định kỳ) ----
@@ -1025,6 +1118,21 @@ public class LockerService {
     }
 
     private LockerReportResponse toReport(LockerReport report) {
+        return toReport(
+                report,
+                attachmentService.byReportIds(List.of(report.getId())).getOrDefault(report.getId(), List.of()));
+    }
+
+    /// Danh sách phiếu: nạp ảnh của mọi phiếu bằng một truy vấn thay vì từng phiếu.
+    private List<LockerReportResponse> toReports(List<LockerReport> reports) {
+        Map<Long, List<ReportAttachmentResponse>> attachments =
+                attachmentService.byReportIds(reports.stream().map(LockerReport::getId).toList());
+        return reports.stream()
+                .map(report -> toReport(report, attachments.getOrDefault(report.getId(), List.of())))
+                .toList();
+    }
+
+    private LockerReportResponse toReport(LockerReport report, List<ReportAttachmentResponse> attachments) {
         LockerUnit locker = lockerRepository.findById(report.getLockerId()).orElse(null);
         LockerBox box = report.getBoxId() == null ? null : boxRepository.findById(report.getBoxId()).orElse(null);
         LocalDateTime slaDueAt =
@@ -1058,7 +1166,8 @@ public class LockerService {
                 slaDueAt,
                 overdue,
                 reporter == null ? null : reporter.fullName(),
-                reporter == null ? null : reporter.phoneNumber());
+                reporter == null ? null : reporter.phoneNumber(),
+                attachments);
     }
 
     // Best-effort: maintenance still needs to see status/SLA even if user-service

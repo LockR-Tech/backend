@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.locker.dto;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record LockerReportResponse(
         Long id,
@@ -26,5 +27,6 @@ public record LockerReportResponse(
         LocalDateTime slaDueAt,
         Boolean overdue,
         String reporterName,
-        String reporterPhone) {
+        String reporterPhone,
+        List<ReportAttachmentResponse> attachments) {
 }

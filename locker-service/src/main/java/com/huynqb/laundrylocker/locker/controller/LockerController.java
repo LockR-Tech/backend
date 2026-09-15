@@ -2,8 +2,10 @@ package com.huynqb.laundrylocker.locker.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.LockerBoxSummary;
+import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.locker.dto.*;
 import com.huynqb.laundrylocker.locker.service.LockerService;
+import com.huynqb.laundrylocker.locker.service.ReportAttachmentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -16,6 +18,7 @@ import java.util.Map;
 public class LockerController {
 
     private final LockerService lockerService;
+    private final ReportAttachmentService attachmentService;
 
     @PostMapping("/api/lockers")
     public ApiResponse<LockerResponse> createLocker(@Valid @RequestBody LockerRequest request) {
@@ -88,10 +91,9 @@ public class LockerController {
     @PostMapping("/internal/boxes/{id}/fault")
     public ApiResponse<CellResponse> markFaultInternal(
             @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body,
+            @Valid @RequestBody(required = false) BoxFaultRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        String reason = body == null ? null : body.get("reason");
-        return ApiResponse.ok("BOX_FAULT_REPORTED", "Box marked as faulty", lockerService.markFault(id, reason, userId));
+        return markFault(id, body, userId);
     }
 
     // Nguồn dữ liệu cho job đối soát ô ↔ đơn của order-service (Gap G4).
@@ -113,10 +115,12 @@ public class LockerController {
     @PostMapping("/api/boxes/{id}/fault")
     public ApiResponse<CellResponse> markFault(
             @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body,
+            @Valid @RequestBody(required = false) BoxFaultRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        String reason = body == null ? null : body.get("reason");
-        return ApiResponse.ok("BOX_FAULT_REPORTED", "Box marked as faulty", lockerService.markFault(id, reason, userId));
+        String reason = body == null ? null : body.reason();
+        List<ReportAttachmentRequest> attachments = body == null ? null : body.attachments();
+        return ApiResponse.ok(
+                "BOX_FAULT_REPORTED", "Box marked as faulty", lockerService.markFault(id, reason, userId, attachments));
     }
 
     @PostMapping("/api/admin/lockers/boxes/{id}/clear-fault")
@@ -152,11 +156,50 @@ public class LockerController {
         return ApiResponse.ok("REPORT_CLAIMED", "Report claimed", lockerService.claimReport(id, userId));
     }
 
+    @GetMapping("/api/maintenance/reports/{id}")
+    public ApiResponse<LockerReportResponse> maintenanceReport(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.getReport(id));
+    }
+
     @PutMapping("/api/maintenance/reports/{id}/resolve")
     public ApiResponse<LockerReportResponse> maintenanceResolve(
-            @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) ResolveReportRequest body,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return ApiResponse.ok(
-                "REPORT_RESOLVED", "Report resolved and cell cleared", lockerService.resolveReportAndClearFault(id, userId));
+                "REPORT_RESOLVED", "Report resolved and cell cleared",
+                lockerService.resolveReportAndClearFault(id, userId, body, UserRoles.isAdmin(roles)));
+    }
+
+    // ---- Ảnh phiếu sự cố (Cloudinary, ADR-0004) ----
+
+    @GetMapping("/api/maintenance/reports/{id}/attachments")
+    public ApiResponse<List<ReportAttachmentResponse>> maintenanceReportAttachments(
+            @PathVariable Long id, @RequestParam(required = false) String stage) {
+        return ApiResponse.ok(attachmentService.list(id, stage));
+    }
+
+    @PostMapping("/api/maintenance/reports/{id}/attachments")
+    public ApiResponse<List<ReportAttachmentResponse>> maintenanceAddReportAttachments(
+            @PathVariable Long id,
+            @Valid @RequestBody ReportAttachmentsRequest body,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(
+                "REPORT_ATTACHMENTS_ADDED", "Report photos added",
+                attachmentService.addByStaff(
+                        id, body.stage(), body.note(), body.attachments(), userId, UserRoles.isAdmin(roles)));
+    }
+
+    @DeleteMapping("/api/maintenance/reports/{id}/attachments/{attachmentId}")
+    public ApiResponse<Void> maintenanceDeleteReportAttachment(
+            @PathVariable Long id,
+            @PathVariable Long attachmentId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        attachmentService.delete(id, attachmentId, userId, UserRoles.isAdmin(roles));
+        return ApiResponse.ok("REPORT_ATTACHMENT_DELETED", "Report photo deleted");
     }
 
     @PostMapping("/api/maintenance/boxes/{id}/clear-fault")
@@ -209,11 +252,12 @@ public class LockerController {
     @PostMapping("/api/maintenance/reports/{id}/logs")
     public ApiResponse<RepairLogResponse> maintenanceAddReportLog(
             @PathVariable Long id,
-            @RequestBody Map<String, String> body,
-            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+            @Valid @RequestBody RepairLogRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return ApiResponse.ok(
                 "REPAIR_LOG_ADDED", "Repair log added",
-                lockerService.addRepairLog(id, body.get("note"), userId));
+                lockerService.addRepairLog(id, body.note(), userId, body.attachments(), UserRoles.isAdmin(roles)));
     }
 
     // L5 — bảo trì phòng ngừa (lịch kiểm tra định kỳ)
@@ -370,13 +414,33 @@ public class LockerController {
     }
 
     @PostMapping("/api/lockers/{id}/report")
-    public ApiResponse<LockerReportResponse> report(@PathVariable Long id, @Valid @RequestBody LockerReportRequest request) {
-        return ApiResponse.ok("LOCKER_REPORTED", "Locker report created", lockerService.report(id, request));
+    public ApiResponse<LockerReportResponse> report(
+            @PathVariable Long id,
+            @Valid @RequestBody LockerReportRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok("LOCKER_REPORTED", "Locker report created", lockerService.report(id, request, userId));
     }
 
     @GetMapping("/api/lockers/my-reports")
     public ApiResponse<List<LockerReportResponse>> myReports(@RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(lockerService.myReports(userId));
+    }
+
+    // Người báo xem/bổ sung ảnh hiện trường của phiếu mình (gateway cho phép hậu tố /attachments).
+    @GetMapping("/api/lockers/reports/{id}/attachments")
+    public ApiResponse<List<ReportAttachmentResponse>> myReportAttachments(
+            @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(attachmentService.listForReporter(id, userId));
+    }
+
+    @PostMapping("/api/lockers/reports/{id}/attachments")
+    public ApiResponse<List<ReportAttachmentResponse>> addMyReportAttachments(
+            @PathVariable Long id,
+            @Valid @RequestBody ReportAttachmentsRequest body,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "REPORT_ATTACHMENTS_ADDED", "Report photos added",
+                attachmentService.addByReporter(id, userId, body.attachments()));
     }
 
     // Closes the loop the other way: customer rates how maintenance handled
@@ -421,8 +485,36 @@ public class LockerController {
     }
 
     @PutMapping("/api/admin/lockers/reports/{id}/resolve")
-    public ApiResponse<LockerReportResponse> resolve(@PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok("LOCKER_REPORT_RESOLVED", "Locker report resolved", lockerService.resolveReport(id, userId));
+    public ApiResponse<LockerReportResponse> resolve(
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) ResolveReportRequest body,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "LOCKER_REPORT_RESOLVED", "Locker report resolved", lockerService.resolveReport(id, userId, body));
+    }
+
+    @GetMapping("/api/admin/lockers/reports/{id}/attachments")
+    public ApiResponse<List<ReportAttachmentResponse>> adminReportAttachments(
+            @PathVariable Long id, @RequestParam(required = false) String stage) {
+        return ApiResponse.ok(attachmentService.list(id, stage));
+    }
+
+    // Gateway chỉ cho ADMIN vào /api/admin/** ⇒ admin = true.
+    @PostMapping("/api/admin/lockers/reports/{id}/attachments")
+    public ApiResponse<List<ReportAttachmentResponse>> adminAddReportAttachments(
+            @PathVariable Long id,
+            @Valid @RequestBody ReportAttachmentsRequest body,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "REPORT_ATTACHMENTS_ADDED", "Report photos added",
+                attachmentService.addByStaff(id, body.stage(), body.note(), body.attachments(), userId, true));
+    }
+
+    @DeleteMapping("/api/admin/lockers/reports/{id}/attachments/{attachmentId}")
+    public ApiResponse<Void> adminDeleteReportAttachment(
+            @PathVariable Long id, @PathVariable Long attachmentId, @RequestHeader("X-User-Id") Long userId) {
+        attachmentService.delete(id, attachmentId, userId, true);
+        return ApiResponse.ok("REPORT_ATTACHMENT_DELETED", "Report photo deleted");
     }
 
     @GetMapping("/api/admin/lockers")
