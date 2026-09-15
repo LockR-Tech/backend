@@ -22,6 +22,15 @@ import java.util.List;
 public class AdminPaymentController {
 
     private final AdminPaymentQueryService queryService;
+    private final com.huynqb.laundrylocker.payment.service.PaymentStatsService statsService;
+
+    /// from/to: yyyy-MM-dd theo giờ Việt Nam, mặc định đầu tháng tới hôm nay.
+    @GetMapping("/api/admin/payments/stats")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.admin.PaymentStatsResponse> stats(
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return ApiResponse.ok(statsService.stats(from, to));
+    }
 
     @GetMapping("/api/admin/payments/search")
     public ApiResponse<PageResponse<AdminPaymentResponse>> search(
