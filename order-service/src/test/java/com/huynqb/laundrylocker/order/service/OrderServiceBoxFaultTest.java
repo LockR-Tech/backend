@@ -157,6 +157,25 @@ class OrderServiceBoxFaultTest {
     }
 
     @Test
+    void reportBoxFaultForwardsFieldPhotosToLockerService() {
+        LockerOrder order = customerOrder();
+        order.setId(28L);
+        order.setStatus("STORING");
+        order.setPaymentStatus("PAID");
+        order.setSendBoxId(7008L);
+        Map<String, Object> photo = Map.of("publicId", "lockr/reports/u44/abc", "version", 1, "signature", "sig");
+        Map<String, Object> expectedBody = Map.of("reason", "Kẹt cửa", "attachments", java.util.List.of(photo));
+
+        when(orderRepository.findById(28L)).thenReturn(Optional.of(order));
+        when(lockerClient.reportFault(7008L, expectedBody, 44L))
+                .thenReturn(ApiResponse.ok(Map.of("boxId", 7008L, "status", "FAULT")));
+
+        orderService.reportBoxFault(28L, 44L, "Kẹt cửa", java.util.List.of(photo));
+
+        verify(lockerClient).reportFault(7008L, expectedBody, 44L);
+    }
+
+    @Test
     void reportBoxFaultRejectsNonOwner() {
         LockerOrder order = customerOrder();
         order.setId(24L);

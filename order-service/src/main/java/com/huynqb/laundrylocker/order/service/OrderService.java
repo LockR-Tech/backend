@@ -554,6 +554,12 @@ public class OrderService {
 
     @Transactional
     public OrderResponse reportBoxFault(Long id, Long userId, String reason) {
+        return reportBoxFault(id, userId, reason, null);
+    }
+
+    /// `attachments`: ảnh hiện trường khách đã upload lên Cloudinary; locker-service tự xác minh.
+    @Transactional
+    public OrderResponse reportBoxFault(Long id, Long userId, String reason, List<Object> attachments) {
         LockerOrder order = find(id);
         assertOwner(order, userId);
         validateStatus(order, Set.of("INITIALIZED", "STORING", "RETURNED"));
@@ -562,9 +568,13 @@ public class OrderService {
             throw new BusinessException("BOX_NOT_FOUND", "Order has no active box to report");
         }
         try {
-            Map<String, String> body = reason == null || reason.isBlank()
-                    ? Map.of()
-                    : Map.of("reason", reason);
+            Map<String, Object> body = new HashMap<>();
+            if (reason != null && !reason.isBlank()) {
+                body.put("reason", reason);
+            }
+            if (attachments != null && !attachments.isEmpty()) {
+                body.put("attachments", attachments);
+            }
             lockerClient.reportFault(boxId, body, userId);
         } catch (Exception ex) {
             throw unwrapDownstreamError(ex, "BOX_FAULT_REPORT_FAILED", "Could not report fault for box " + boxId);
