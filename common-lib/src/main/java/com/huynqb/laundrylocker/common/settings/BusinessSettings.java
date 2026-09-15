@@ -72,6 +72,17 @@ public class BusinessSettings {
         this.definitions = Collections.unmodifiableMap(byKey);
     }
 
+    /// Bản dùng cho unit test: store trong bộ nhớ, không đọc biến môi trường; `overrides` như admin đã sửa.
+    public static BusinessSettings inMemory(String scope, SettingsCatalog catalog, Map<String, ?> overrides) {
+        BusinessSettings settings = new BusinessSettings(
+                scope, List.of(catalog), new InMemorySettingsStore(),
+                new org.springframework.core.env.AbstractEnvironment() { }, Clock.systemUTC());
+        if (overrides != null && !overrides.isEmpty()) {
+            settings.update(overrides, null);
+        }
+        return settings;
+    }
+
     public String scope() {
         return scope;
     }
@@ -281,6 +292,10 @@ public class BusinessSettings {
     static String normalize(SettingDefinition definition, String raw) {
         String value = raw == null ? null : raw.trim();
         if (value == null || value.isEmpty()) {
+            // Chuỗi tự do được phép rỗng (ví dụ danh sách user id rỗng = cho tất cả).
+            if (definition.type() == SettingType.STRING && definition.allowedValues().isEmpty()) {
+                return "";
+            }
             throw invalid(definition, "value is required");
         }
         return switch (definition.type()) {
