@@ -343,7 +343,10 @@ public class PaymentService {
                 payment.getUrl(),
                 payment.getQr(),
                 payment.getDeeplink(),
-                payment.getDescription());
+                payment.getDescription(),
+                payment.getContent(),
+                payment.getCreatedAt(),
+                payment.getUpdatedAt());
     }
 
     private RefundResponse toRefund(RefundRecord refund) {

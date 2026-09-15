@@ -84,6 +84,26 @@ class PaymentServiceCheckoutTest {
     }
 
     @Test
+    void paymentResponseExposesContentAndTimestamps() {
+        PaymentRecord record = new PaymentRecord();
+        record.setId(9L);
+        record.setOrderId(55L);
+        record.setUserId(44L);
+        record.setMethod("CASH");
+        record.setStatus("COMPLETED");
+        record.setContent("Thanh toan don 55");
+        record.setCreatedAt(java.time.LocalDateTime.of(2026, 9, 15, 1, 2, 3));
+        record.setUpdatedAt(java.time.LocalDateTime.of(2026, 9, 15, 1, 5, 0));
+        when(repository.findById(9L)).thenReturn(java.util.Optional.of(record));
+
+        PaymentResponse response = paymentService.get(9L);
+
+        assertEquals("Thanh toan don 55", response.content());
+        assertEquals(java.time.LocalDateTime.of(2026, 9, 15, 1, 2, 3), response.createdAt());
+        assertEquals(java.time.LocalDateTime.of(2026, 9, 15, 1, 5, 0), response.updatedAt());
+    }
+
+    @Test
     void checkoutStillRejectsOrderWhenCompletedPaymentsAlreadyCoverTotal() {
         when(orderClient.getOrder(55L)).thenReturn(ApiResponse.ok(new OrderSummary(55L, 44L, "STORING", BigDecimal.valueOf(15000))));
 
