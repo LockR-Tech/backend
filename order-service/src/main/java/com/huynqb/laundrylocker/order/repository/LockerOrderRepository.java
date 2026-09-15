@@ -2,11 +2,12 @@ package com.huynqb.laundrylocker.order.repository;
 
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.util.List;
 import java.util.Optional;
 
-public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long> {
+public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long>, JpaSpecificationExecutor<LockerOrder> {
 
     List<LockerOrder> findByUserIdOrderByCreatedAtDesc(Long userId);
 
