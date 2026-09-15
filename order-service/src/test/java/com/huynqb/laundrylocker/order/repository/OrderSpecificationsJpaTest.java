@@ -55,6 +55,21 @@ class OrderSpecificationsJpaTest {
     }
 
     @Test
+    void createdOrCompletedBetweenAlsoCatchesOlderOrdersCompletedInRange() {
+        em.getEntityManager()
+                .createQuery("update LockerOrder o set o.completedAt = :at where o.id = :id")
+                .setParameter("at", LocalDateTime.of(2026, 9, 11, 0, 0))
+                .setParameter("id", send.getId())
+                .executeUpdate();
+
+        assertEquals(List.of(send.getId(), rental.getId()), ids(all(
+                createdOrCompletedBetween(LocalDateTime.of(2026, 9, 5, 0, 0), LocalDateTime.of(2026, 9, 10, 0, 0))
+                        .or(createdOrCompletedBetween(LocalDateTime.of(2026, 9, 11, 0, 0), LocalDateTime.of(2026, 9, 12, 0, 0))))));
+        assertEquals(3, repository.count(all(
+                createdOrCompletedBetween(LocalDateTime.of(2026, 9, 5, 0, 0), LocalDateTime.of(2026, 9, 12, 0, 0)))));
+    }
+
+    @Test
     void lockerAndStoreMatchDestinationLockerToo() {
         assertEquals(List.of(drone.getId()), ids(all(lockerIn(List.of(9L)))));
         assertEquals(2, repository.count(all(store(3L, List.of(7L, 9L)))));
