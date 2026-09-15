@@ -11,6 +11,9 @@ import com.huynqb.laundrylocker.locker.model.ReportAttachment;
 import com.huynqb.laundrylocker.locker.repository.LockerReportRepository;
 import com.huynqb.laundrylocker.locker.repository.RepairLogRepository;
 import com.huynqb.laundrylocker.locker.repository.ReportAttachmentRepository;
+import com.huynqb.laundrylocker.locker.settings.LockerRules;
+import com.huynqb.laundrylocker.locker.settings.TestLockerRules;
+import com.huynqb.laundrylocker.common.settings.BusinessSettings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,12 +51,15 @@ class ReportAttachmentServiceTest {
 
     private ReportAttachmentService service;
     private CloudinaryMediaStorage storage;
+    private BusinessSettings settings;
 
     @BeforeEach
     void setUp() {
+        settings = TestLockerRules.settings(Map.of());
         storage = spy(new CloudinaryMediaStorage("cloudinary://key:" + SECRET + "@demo", "lockr"));
         doNothing().when(storage).deleteAfterCommit(any());
-        service = new ReportAttachmentService(attachmentRepository, reportRepository, repairLogRepository, storage);
+        service = new ReportAttachmentService(
+                attachmentRepository, reportRepository, repairLogRepository, storage, new LockerRules(settings));
         when(attachmentRepository.saveAll(anyList())).thenAnswer(invocation -> {
             List<ReportAttachment> saved = new ArrayList<>(invocation.getArgument(0));
             long id = 100;
@@ -163,6 +169,28 @@ class ReportAttachmentServiceTest {
                 BusinessException.class,
                 () -> service.attach(report, AttachmentStage.REPORT,
                         Collections.nCopies(6, photo(7L, "y")), 7L, null, 5)).getCode());
+    }
+
+    @Test
+    void reportTotalsAndReporterRequestLimitFollowAdminSettings() {
+        LockerReport report = report(1L, "OPEN", 7L, null);
+        when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
+        when(attachmentRepository.countByReportId(1L)).thenReturn(3L);
+
+        // Mặc định (tổng 30, người báo 5/lần) ⇒ 2 ảnh hợp lệ.
+        assertEquals(2, service.addByReporter(1L, 7L, List.of(photo(7L, "d1"), photo(7L, "d2"))).size());
+
+        settings.update(Map.of("app.maintenance.report-photos-total", 4), null);
+        assertEquals("ATTACHMENT_LIMIT_EXCEEDED", assertThrows(
+                BusinessException.class,
+                () -> service.addByReporter(1L, 7L, List.of(photo(7L, "t1"), photo(7L, "t2")))).getCode());
+
+        settings.update(Map.of(
+                "app.maintenance.report-photos-total", 30,
+                "app.maintenance.report-photos-per-request-reporter", 1), null);
+        assertEquals("ATTACHMENT_LIMIT_EXCEEDED", assertThrows(
+                BusinessException.class,
+                () -> service.addByReporter(1L, 7L, List.of(photo(7L, "p1"), photo(7L, "p2")))).getCode());
     }
 
     @Test
