@@ -53,6 +53,8 @@ class LockerServiceDroneFleetTest {
     @Mock
     private UserClient userClient;
     @Mock
+    private ReportAttachmentService attachmentService;
+    @Mock
     private RabbitTemplate rabbitTemplate;
 
     private LockerService service;
@@ -71,6 +73,7 @@ class LockerServiceDroneFleetTest {
                         droneMaintenanceLogRepository,
                         iotClient,
                         userClient,
+                        attachmentService,
                         rabbitTemplate);
 
         when(droneUnitRepository.save(any(DroneUnit.class)))
