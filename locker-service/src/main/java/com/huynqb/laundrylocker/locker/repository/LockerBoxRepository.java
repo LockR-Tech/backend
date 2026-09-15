@@ -27,6 +27,8 @@ public interface LockerBoxRepository extends JpaRepository<LockerBox, Long> {
 
     List<LockerBox> findByStatusAndActiveTrueOrderByLockerIdAscBoxNumberAsc(String status);
 
+    List<LockerBox> findByLockerIdIn(java.util.Collection<Long> lockerIds);
+
     long countByLockerId(Long lockerId);
 
     long countByLockerIdAndStatusAndActiveTrue(Long lockerId, String status);
