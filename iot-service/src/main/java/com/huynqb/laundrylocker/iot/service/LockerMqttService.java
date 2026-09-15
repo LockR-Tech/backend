@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.iot.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.huynqb.laundrylocker.iot.settings.IotRules;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,8 @@ public class LockerMqttService {
 
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
+    /// Thời gian cửa mở (`timeout` gửi xuống tủ) và thời gian chờ phản hồi do admin cấu hình (ADR-0005).
+    private final IotRules rules;
     private MqttClient client;
     private final ConcurrentHashMap<String, CompletableFuture<JsonNode>> pendingCommands = new ConcurrentHashMap<>();
 
@@ -179,7 +182,9 @@ public class LockerMqttService {
         pendingCommands.put(commandId, future);
 
         try {
-            String payload = String.format("{\"commandId\":\"%s\",\"box_id\":%d,\"action\":\"OPEN\",\"timeout\":15}", commandId, boxId);
+            String payload = String.format(
+                    "{\"commandId\":\"%s\",\"box_id\":%d,\"action\":\"OPEN\",\"timeout\":%d}",
+                    commandId, boxId, rules.doorOpenTimeoutSeconds());
             MqttMessage message = new MqttMessage(payload.getBytes(StandardCharsets.UTF_8));
             message.setQos(1);
 
@@ -188,7 +193,7 @@ public class LockerMqttService {
             log.info("Published OPEN command {} to {}", commandId, topic);
 
             // Auto cleanup future if not resolved in time
-            future.orTimeout(20, TimeUnit.SECONDS).whenComplete((res, ex) -> {
+            future.orTimeout(rules.unlockWaitSeconds(), TimeUnit.SECONDS).whenComplete((res, ex) -> {
                 if (ex != null) {
                     pendingCommands.remove(commandId);
                     log.warn("Command {} timed out", commandId);

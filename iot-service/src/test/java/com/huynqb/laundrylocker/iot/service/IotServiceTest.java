@@ -10,12 +10,13 @@ import com.huynqb.laundrylocker.iot.repository.AccessAttemptRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxHardwareStatusRepository;
 import com.huynqb.laundrylocker.iot.repository.DeviceStatusRepository;
+import com.huynqb.laundrylocker.iot.settings.TestIotRules;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -23,6 +24,8 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -60,9 +63,8 @@ class IotServiceTest {
                 rabbitTemplate,
                 orderClient,
                 lockerClient,
-                lockerMqttService);
-        ReflectionTestUtils.setField(iotService, "lockoutMaxAttempts", 5);
-        ReflectionTestUtils.setField(iotService, "lockoutMinutes", 15);
+                lockerMqttService,
+                TestIotRules.of(Map.of("app.iot.lockout.max-attempts", 5, "app.iot.lockout.minutes", 15)));
     }
 
     @Test
@@ -78,6 +80,29 @@ class IotServiceTest {
         verify(accessAttemptRepository, never()).save(any(AccessAttempt.class));
         verify(lockerMqttService, never()).sendUnlockCommandAsync(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
         verify(lockerClient, never()).openBox(org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void lockoutAttemptsAndDurationFollowAdminSettings() {
+        IotService strict = new IotService(
+                repository, accessLogRepository, boxHardwareStatusRepository, accessAttemptRepository,
+                rabbitTemplate, orderClient, lockerClient, lockerMqttService,
+                TestIotRules.of(Map.of("app.iot.lockout.max-attempts", 2, "app.iot.lockout.minutes", 60)));
+        AccessAttempt previous = new AccessAttempt();
+        previous.setBoxId(9002L);
+        previous.setFailedCount(1);
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.of(previous));
+        when(orderClient.getByAccess("WRONG")).thenThrow(new RuntimeException("not found"));
+
+        var result = strict.verifyAccess(9002L, "WRONG");
+
+        assertFalse(Boolean.TRUE.equals(result.valid()));
+        ArgumentCaptor<AccessAttempt> saved = ArgumentCaptor.forClass(AccessAttempt.class);
+        verify(accessAttemptRepository).save(saved.capture());
+        assertEquals(2, saved.getValue().getFailedCount());
+        assertNotNull(saved.getValue().getLockedUntil());
+        // Khoá theo cấu hình 60 phút (mặc định chỉ 15 phút và cần 5 lần sai).
+        assertTrue(saved.getValue().getLockedUntil().isAfter(LocalDateTime.now().plusMinutes(55)));
     }
 
     @Test
