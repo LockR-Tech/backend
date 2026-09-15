@@ -176,6 +176,10 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
                 || (path.startsWith("/api/lockers/reports/") && path.endsWith("/attachments"));
     }
 
+    // Giá/giới hạn hiển thị cho khách (ADR-0005) — chỉ đúng endpoint public, không mở /api/admin/settings.
+    private static final java.util.regex.Pattern PUBLIC_SETTINGS_PATH =
+            java.util.regex.Pattern.compile("^/api/settings/[a-z]+/public$");
+
     // Eureka application ids the discovery locator would turn into a path prefix
     // (lower-case-service-id: true). Anything addressed this way is a bypass attempt.
     private static final List<String> SERVICE_ID_PREFIXES =
@@ -254,7 +258,8 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
         // để gateway gắn X-User-Id thật, không cho client tự chèn header.
         boolean readOnly = org.springframework.http.HttpMethod.GET.equals(method);
         return readOnly
-                && (path.startsWith("/api/stores")
+                && (PUBLIC_SETTINGS_PATH.matcher(path).matches()
+                || path.startsWith("/api/stores")
                 || path.startsWith("/api/lockers")
                 || path.startsWith("/api/services")
                 || path.startsWith("/api/laundry-services")

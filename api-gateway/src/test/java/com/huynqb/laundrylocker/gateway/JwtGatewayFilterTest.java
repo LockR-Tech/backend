@@ -290,6 +290,31 @@ class JwtGatewayFilterTest {
         assertFalse(chainCalled.get());
     }
 
+    @Test
+    void publicSettingsAreAnonymousButAdminSettingsNeedAdmin() {
+        assertPublicGet("/api/settings/order/public");
+
+        MockServerWebExchange anonymousAdmin =
+                MockServerWebExchange.from(MockServerHttpRequest.get("/api/admin/settings/order").build());
+        AtomicBoolean anonymousForwarded = new AtomicBoolean(false);
+        filter.filter(anonymousAdmin, chainThatMarks(anonymousForwarded)).block();
+        assertEquals(HttpStatus.UNAUTHORIZED, anonymousAdmin.getResponse().getStatusCode());
+        assertFalse(anonymousForwarded.get());
+
+        MockServerWebExchange customerAdmin = exchangeWithBearer(
+                MockServerHttpRequest.put("/api/admin/settings/order"), token("access", "CUSTOMER"));
+        AtomicBoolean customerForwarded = new AtomicBoolean(false);
+        filter.filter(customerAdmin, chainThatMarks(customerForwarded)).block();
+        assertEquals(HttpStatus.FORBIDDEN, customerAdmin.getResponse().getStatusCode());
+        assertFalse(customerForwarded.get());
+
+        MockServerWebExchange notPublic =
+                MockServerWebExchange.from(MockServerHttpRequest.get("/api/settings/order/public/../x").build());
+        AtomicBoolean notPublicForwarded = new AtomicBoolean(false);
+        filter.filter(notPublic, chainThatMarks(notPublicForwarded)).block();
+        assertFalse(notPublicForwarded.get());
+    }
+
     private void assertPublicGet(String path) {
         MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
         AtomicBoolean chainCalled = new AtomicBoolean(false);
