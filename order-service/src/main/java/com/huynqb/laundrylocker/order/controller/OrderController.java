@@ -2,10 +2,13 @@ package com.huynqb.laundrylocker.order.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.OrderSummary;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.model.Promotion;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
 import com.huynqb.laundrylocker.order.service.OrderService;
+import com.huynqb.laundrylocker.order.service.PromotionImageService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +23,7 @@ public class OrderController {
 
     private final DroneOrderMaintenanceService droneOrderMaintenanceService;
     private final OrderService orderService;
+    private final PromotionImageService promotionImageService;
 
     @PostMapping("/api/orders")
     public ApiResponse<OrderResponse> create(@Valid @RequestBody CreateOrderRequest request) {
@@ -130,13 +134,19 @@ public class OrderController {
     @PostMapping("/api/orders/{orderId}/report-box-fault")
     public ApiResponse<OrderResponse> reportBoxFault(
             @PathVariable Long orderId,
-            @RequestBody(required = false) Map<String, String> request,
+            @RequestBody(required = false) Map<String, Object> request,
             @RequestHeader("X-User-Id") Long userId) {
-        String reason = request == null ? null : request.get("reason");
+        Object reason = request == null ? null : request.get("reason");
+        Object attachments = request == null ? null : request.get("attachments");
+        if (attachments != null && !(attachments instanceof List<?>)) {
+            throw new BusinessException("ATTACHMENTS_INVALID", "attachments must be an array");
+        }
+        @SuppressWarnings("unchecked")
+        List<Object> attachmentList = (List<Object>) attachments;
         return ApiResponse.ok(
                 "ORDER_BOX_FAULT_REPORTED",
                 "Order box fault reported",
-                orderService.reportBoxFault(orderId, userId, reason));
+                orderService.reportBoxFault(orderId, userId, reason == null ? null : String.valueOf(reason), attachmentList));
     }
 
     @PostMapping("/api/orders/{orderId}/reorder")
@@ -334,6 +344,23 @@ public class OrderController {
     public ApiResponse<Void> deletePromotion(@PathVariable Long promotionId) {
         orderService.deletePromotion(promotionId);
         return ApiResponse.ok("PROMOTION_DELETED", "Promotion deleted");
+    }
+
+    // Ảnh khuyến mãi: client upload thẳng lên Cloudinary rồi gửi MediaUpload (ADR-0004).
+    @PutMapping("/api/admin/promotions/{promotionId}/image")
+    public ApiResponse<Promotion> updatePromotionImage(
+            @PathVariable Long promotionId,
+            @RequestBody MediaUpload request,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "PROMOTION_IMAGE_UPDATED", "Promotion image updated",
+                promotionImageService.updateImage(promotionId, request, userId));
+    }
+
+    @DeleteMapping("/api/admin/promotions/{promotionId}/image")
+    public ApiResponse<Promotion> removePromotionImage(@PathVariable Long promotionId) {
+        return ApiResponse.ok(
+                "PROMOTION_IMAGE_REMOVED", "Promotion image removed", promotionImageService.removeImage(promotionId));
     }
 
     @GetMapping("/api/admin/promotions/status/{status}")

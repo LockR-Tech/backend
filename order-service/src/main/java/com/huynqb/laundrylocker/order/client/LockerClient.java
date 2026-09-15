@@ -32,9 +32,10 @@ public interface LockerClient {
     @PostMapping("/{id}/release")
     ApiResponse<LockerBoxSummary> releaseBox(@PathVariable Long id);
 
+    /// Body `{reason?, attachments?}` — `attachments` là ảnh hiện trường của khách (xem docs media-storage).
     @PostMapping("/{id}/fault")
     ApiResponse<Map<String, Object>> reportFault(
             @PathVariable Long id,
-            @RequestBody Map<String, String> body,
+            @RequestBody Map<String, Object> body,
             @RequestHeader("X-User-Id") Long userId);
 }
