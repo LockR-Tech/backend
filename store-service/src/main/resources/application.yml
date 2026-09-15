@@ -30,6 +30,10 @@ spring:
     create-schemas: true
     schemas: store_schema
     default-schema: store_schema
+app:
+  # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005) — /api/admin/settings/store.
+  settings:
+    scope: store
 eureka:
   client:
     service-url:

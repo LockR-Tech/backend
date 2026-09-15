@@ -10,6 +10,7 @@ import com.huynqb.laundrylocker.store.dto.StoreRequest;
 import com.huynqb.laundrylocker.store.dto.StoreResponse;
 import com.huynqb.laundrylocker.store.model.StoreLocation;
 import com.huynqb.laundrylocker.store.repository.StoreRepository;
+import com.huynqb.laundrylocker.store.settings.StoreRules;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,8 @@ public class StoreService {
     private final StoreRepository repository;
     private final OrderClient orderClient;
     private final CloudinaryMediaStorage mediaStorage;
+    /// Bán kính tìm cửa hàng mặc định do admin cấu hình (ADR-0005).
+    private final StoreRules rules;
 
     @Transactional
     public StoreResponse create(StoreRequest request) {
@@ -62,7 +65,7 @@ public class StoreService {
 
     @Transactional(readOnly = true)
     public List<StoreResponse> nearby(Double latitude, Double longitude, Double radiusKm) {
-        double radius = radiusKm == null ? 10.0 : radiusKm;
+        double radius = radiusKm == null ? rules.nearbyDefaultRadiusKm() : radiusKm;
         return repository.findByStatusAndActiveTrue("ACTIVE").stream()
                 .map(store -> toResponse(store, distanceKm(latitude, longitude, store.getLatitude(), store.getLongitude())))
                 .filter(store -> store.distanceKm() == null || store.distanceKm() <= radius)
