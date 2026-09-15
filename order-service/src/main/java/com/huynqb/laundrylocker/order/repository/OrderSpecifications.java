@@ -37,6 +37,13 @@ public final class OrderSpecifications {
                 toExclusive == null ? cb.conjunction() : cb.lessThan(root.get("createdAt"), toExclusive));
     }
 
+    /// Đơn tạo HOẶC hoàn tất trong [from, toExclusive) — nguồn đếm đơn cho báo cáo doanh thu.
+    public static Specification<LockerOrder> createdOrCompletedBetween(LocalDateTime from, LocalDateTime toExclusive) {
+        return (root, query, cb) -> cb.or(
+                cb.and(cb.greaterThanOrEqualTo(root.get("createdAt"), from), cb.lessThan(root.get("createdAt"), toExclusive)),
+                cb.and(cb.greaterThanOrEqualTo(root.get("completedAt"), from), cb.lessThan(root.get("completedAt"), toExclusive)));
+    }
+
     public static Specification<LockerOrder> user(Long userId) {
         return userId == null ? null : (root, query, cb) -> cb.equal(root.get("userId"), userId);
     }
