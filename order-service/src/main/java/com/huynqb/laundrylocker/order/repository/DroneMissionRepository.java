@@ -11,4 +11,6 @@ public interface DroneMissionRepository extends JpaRepository<DroneMission, Long
     Optional<DroneMission> findByOrderId(Long orderId);
 
     List<DroneMission> findByStatusIn(List<String> statuses);
+
+    List<DroneMission> findByOrderIdIn(java.util.Collection<Long> orderIds);
 }
