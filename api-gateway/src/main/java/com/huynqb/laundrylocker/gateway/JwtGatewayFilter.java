@@ -171,7 +171,9 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
         return path.endsWith("/fault")
                 || path.endsWith("/report")
                 || path.endsWith("/open")
-                || path.endsWith("/rate");
+                || path.endsWith("/rate")
+                // Người báo bổ sung ảnh hiện trường; locker-service tự kiểm chủ phiếu.
+                || (path.startsWith("/api/lockers/reports/") && path.endsWith("/attachments"));
     }
 
     // Eureka application ids the discovery locator would turn into a path prefix

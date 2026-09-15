@@ -218,6 +218,24 @@ class JwtGatewayFilterTest {
     }
 
     @Test
+    void allowsCustomerToAddPhotosToOwnReportButNotOtherLockerMutations() {
+        MockServerWebExchange photos =
+                exchangeWithBearer(
+                        MockServerHttpRequest.post("/api/lockers/reports/9/attachments"), token("access", "CUSTOMER"));
+        AtomicBoolean photosForwarded = new AtomicBoolean(false);
+        filter.filter(photos, chainThatMarks(photosForwarded)).block();
+        assertTrue(photosForwarded.get());
+
+        MockServerWebExchange structure =
+                exchangeWithBearer(
+                        MockServerHttpRequest.post("/api/lockers/9/attachments"), token("access", "CUSTOMER"));
+        AtomicBoolean structureForwarded = new AtomicBoolean(false);
+        filter.filter(structure, chainThatMarks(structureForwarded)).block();
+        assertEquals(HttpStatus.FORBIDDEN, structure.getResponse().getStatusCode());
+        assertFalse(structureForwarded.get());
+    }
+
+    @Test
     void keepsOpenApiAndSwaggerUiPublic() {
         assertPublicGet("/v3/api-docs");
         assertPublicGet("/v3/api-docs/order-service");
