@@ -12,4 +12,6 @@ public interface RefundRepository extends JpaRepository<RefundRecord, Long>, Jpa
     List<RefundRecord> findByOrderId(Long orderId);
 
     List<RefundRecord> findByOrderIdIn(Collection<Long> orderIds);
+
+    List<RefundRecord> findByPaymentIdIn(Collection<Long> paymentIds);
 }
