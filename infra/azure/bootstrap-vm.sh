@@ -109,6 +109,11 @@ MOMO_ACCESS_KEY=
 MOMO_SECRET_KEY=
 MOMO_REDIRECT_URL=https://${API_DOMAIN}/api/payments/momo/return
 MOMO_IPN_URL=https://${API_DOMAIN}/api/payments/momo/callback
+
+# Ảnh (Cloudinary, ADR-0004) — cloudinary://<api_key>:<api_secret>@<cloud_name>. Trống ⇒ tắt upload ảnh.
+CLOUDINARY_URL=
+MEDIA_FOLDER_ROOT=lockr-prod
+APP_MAINTENANCE_REQUIRE_RESOLUTION_PHOTO=false
 EOF
   chown "$DEPLOY_USER":"$DEPLOY_USER" "$APP_DIR/.env"
   chmod 600 "$APP_DIR/.env"

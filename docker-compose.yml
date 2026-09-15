@@ -144,6 +144,9 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      # Ảnh (ADR-0004): trống ⇒ tắt upload ảnh. Cùng giá trị ở user/order/locker/store-service.
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:
@@ -170,6 +173,8 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:
@@ -196,6 +201,10 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
+      # true ⇒ KTV phải có ≥1 ảnh nghiệm thu mới hoàn tất được phiếu (bật sau khi app mobile mới phát hành).
+      APP_MAINTENANCE_REQUIRE_RESOLUTION_PHOTO: ${APP_MAINTENANCE_REQUIRE_RESOLUTION_PHOTO:-false}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:
@@ -312,6 +321,8 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:
