@@ -73,6 +73,9 @@ resilience4j:
         slow-call-rate-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_RATE_THRESHOLD:80}
 
 app:
+  # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005) — /api/admin/settings/auth.
+  settings:
+    scope: auth
   firebase:
     credentials-json: ${FIREBASE_CREDENTIALS_JSON:}
   # Seed tài khoản ADMIN đầu tiên lúc khởi động (đăng ký công khai luôn ép

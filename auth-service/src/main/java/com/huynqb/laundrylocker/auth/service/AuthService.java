@@ -10,6 +10,7 @@ import com.huynqb.laundrylocker.auth.model.SocialIdentity;
 import com.huynqb.laundrylocker.auth.repository.AuthAccountRepository;
 import com.huynqb.laundrylocker.auth.repository.RefreshTokenRepository;
 import com.huynqb.laundrylocker.auth.repository.SocialIdentityRepository;
+import com.huynqb.laundrylocker.auth.settings.AuthRules;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
@@ -40,6 +41,8 @@ public class AuthService {
     private final JwtService jwtService;
     private final UserClient userClient;
     private final EmailOtpService emailOtpService;
+    /// Thời hạn token tạm do admin cấu hình (ADR-0005).
+    private final AuthRules rules;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -255,7 +258,7 @@ public class AuthService {
                             response.put("isNewUser", true);
                             response.put("phoneNumber", phoneNumber);
                             response.put("tempToken", tempToken);
-                            response.put("expiresIn", 600L);
+                            response.put("expiresIn", (long) rules.tempTokenTtlSeconds());
                             return response;
                         });
     }
@@ -319,7 +322,7 @@ public class AuthService {
                             Map<String, Object> response = new HashMap<>();
                             response.put("isNewUser", true);
                             response.put("tempToken", tempToken);
-                            response.put("expiresIn", 600L);
+                            response.put("expiresIn", (long) rules.tempTokenTtlSeconds());
                             return response;
                         });
     }
@@ -399,7 +402,7 @@ public class AuthService {
         Map<String, Object> response = new HashMap<>();
         response.put("requiresTwoFactor", true);
         response.put("tempToken", tempToken);
-        response.put("expiresIn", 600L);
+        response.put("expiresIn", (long) rules.tempTokenTtlSeconds());
         response.put("maskedEmail", maskEmail(account.getEmail()));
         response.put("message", "OTP has been sent to your email");
         return response;
@@ -483,7 +486,7 @@ public class AuthService {
 
     private String createTempToken(String identifier, String purpose, Long accountId) {
         String token = purpose.toLowerCase() + "_" + UUID.randomUUID();
-        TEMP_TOKENS.put(token, new TempToken(identifier, purpose, accountId, Instant.now().plusSeconds(600)));
+        TEMP_TOKENS.put(token, new TempToken(identifier, purpose, accountId, Instant.now().plusSeconds(rules.tempTokenTtlSeconds())));
         return token;
     }
 

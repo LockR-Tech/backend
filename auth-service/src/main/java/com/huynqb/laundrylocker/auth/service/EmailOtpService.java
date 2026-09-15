@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.auth.service;
 import com.huynqb.laundrylocker.auth.email.EmailService;
 import com.huynqb.laundrylocker.auth.model.EmailOtp;
 import com.huynqb.laundrylocker.auth.repository.EmailOtpRepository;
+import com.huynqb.laundrylocker.auth.settings.AuthRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,15 +23,19 @@ public class EmailOtpService {
     private final EmailOtpRepository repository;
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
+    /// Độ dài và thời hạn OTP do admin cấu hình (ADR-0005).
+    private final AuthRules rules;
 
     @Transactional
     public boolean sendOtp(String email, String purpose) {
-        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+        int length = rules.otpLength();
+        int expirySeconds = rules.otpExpirySeconds();
+        String code = generateCode(length);
         EmailOtp otp = new EmailOtp();
         otp.setEmail(normalize(email));
         otp.setPurpose(purpose);
         otp.setOtpHash(passwordEncoder.encode(code));
-        otp.setExpiresAt(Instant.now().plusSeconds(300));
+        otp.setExpiresAt(Instant.now().plusSeconds(expirySeconds));
         repository.save(otp);
         String htmlTemplate = """
                 <!DOCTYPE html>
@@ -77,7 +82,7 @@ public class EmailOtpService {
                           <div class="otp-code">%s</div>
                         </div>
                         <div class="expiry">
-                          \u23F3 EXPIRES IN 5 MINUTES
+                          \u23F3 EXPIRES IN %s
                         </div>
                       </div>
                       <div class="footer">
@@ -90,7 +95,7 @@ public class EmailOtpService {
                   </div>
                 </body>
                 </html>
-                """.formatted(code);
+                """.formatted(code, expiryText(expirySeconds));
 
         emailService.sendHtmlEmail(
                 email,
@@ -112,6 +117,21 @@ public class EmailOtpService {
                             return true;
                         })
                 .orElse(false);
+    }
+
+    /// Mã số ngẫu nhiên đúng `length` chữ số (giữ số 0 ở đầu).
+    static String generateCode(int length) {
+        int bound = (int) Math.pow(10, length);
+        return String.format("%0" + length + "d", RANDOM.nextInt(bound));
+    }
+
+    /// "5 MINUTES" khi chia hết cho 60, ngược lại "90 SECONDS".
+    static String expiryText(int seconds) {
+        if (seconds % 60 == 0) {
+            long minutes = seconds / 60L;
+            return minutes + (minutes == 1 ? " MINUTE" : " MINUTES");
+        }
+        return seconds + " SECONDS";
     }
 
     private String normalize(String email) {
