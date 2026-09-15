@@ -59,6 +59,8 @@ jobs:
           echo "checksum_name=${CHECKSUM_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Attest release artifact provenance
+        # Không có cho repo private ở gói GitHub Free — không chặn tạo Release.
+        continue-on-error: true
         uses: actions/attest@v4
         with:
           subject-path: |

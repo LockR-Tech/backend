@@ -76,6 +76,10 @@ jobs:
           retention-days: 14
 
       - name: Attest deploy artifact provenance
+        # Artifact attestation không có cho repo private ở gói GitHub Free
+        # ("Feature not available for the LockR-Tech organization") — không để
+        # bước ký nguồn gốc chặn deploy. Checksum .sha256 vẫn được tải lên ở trên.
+        continue-on-error: true
         uses: actions/attest@v4
         with:
           subject-path: |
