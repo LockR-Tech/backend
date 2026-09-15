@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.order.settings.TestOrderRules;
+
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerClient;
@@ -47,7 +49,8 @@ class DroneOrderMaintenanceServiceTest {
                         lockerDroneClient,
                         lockerClient,
                         historyRepository,
-                        notificationClient);
+                        notificationClient,
+                        TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
         when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
@@ -85,7 +88,8 @@ class DroneOrderMaintenanceServiceTest {
                         lockerDroneClient,
                         lockerClient,
                         historyRepository,
-                        notificationClient);
+                        notificationClient,
+                        TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -118,7 +122,8 @@ class DroneOrderMaintenanceServiceTest {
                         lockerDroneClient,
                         lockerClient,
                         historyRepository,
-                        notificationClient);
+                        notificationClient,
+                        TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -152,7 +157,8 @@ class DroneOrderMaintenanceServiceTest {
                         lockerDroneClient,
                         lockerClient,
                         historyRepository,
-                        notificationClient);
+                        notificationClient,
+                        TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setStatus("AWAITING_DISPATCH");
         DroneMission mission = new DroneMission();
@@ -191,7 +197,8 @@ class DroneOrderMaintenanceServiceTest {
                         lockerDroneClient,
                         lockerClient,
                         historyRepository,
-                        notificationClient);
+                        notificationClient,
+                        TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);

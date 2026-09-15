@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.order.settings.TestOrderRules;
+
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
@@ -69,9 +71,10 @@ class OrderServiceRentalPaymentTest {
                 lockerClient,
                 lockerCellClient,
                 notificationClient,
-                qrTokenService);
-        ReflectionTestUtils.setField(orderService, "rentalRateStandard", 5000L);
-        ReflectionTestUtils.setField(orderService, "requirePaymentBeforeDrop", true);
+                qrTokenService,
+                TestOrderRules.of(java.util.Map.of(
+                        "app.order.rental-rate-standard", 5000,
+                        "app.order.require-payment-before-drop", true)));
     }
 
     @Test

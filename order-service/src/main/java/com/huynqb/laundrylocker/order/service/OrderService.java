@@ -14,11 +14,11 @@ import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.model.*;
 import com.huynqb.laundrylocker.order.repository.*;
+import com.huynqb.laundrylocker.order.settings.OrderRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -53,54 +53,18 @@ public class OrderService {
     private final LockerCellClient lockerCellClient;
     private final NotificationClient notificationClient;
     private final QrTokenService qrTokenService;
+    /// Giá, phí, thời hạn… admin cấu hình trên web (ADR-0005), không còn @Value cứng.
+    private final OrderRules rules;
 
-    @Value("${app.order.pickup-hours-limit:24}")
-    private int pickupHoursLimit;
-
-    @Value("${app.order.pickup-overtime-fee-per-hour:500}")
-    private int overtimeFeePerHour;
-
-    @Value("${app.order.pickup-max-overtime-fee:50000}")
-    private int maxOvertimeFee;
-
-    @Value("${app.order.pickup-max-overtime-percent:50}")
-    private int maxOvertimePercent;
-
-    @Value("${app.order.send-pickup-hours-limit:48}")
-    private int sendPickupHoursLimit;
-
-    @Value("${app.order.send-base-fee:15000}")
-    private long sendBaseFee;
-
-    @Value("${app.drone.demo.enabled:true}")
-    private boolean droneDemoEnabled = true;
-
-    @Value("${app.drone.demo.allowed-user-ids:}")
-    private String droneDemoAllowedUserIds = "";
-
-    @Value("${app.order.rental-rate-standard:5000}")
-    private long rentalRateStandard;
-
-    @Value("${app.order.rental-rate-xl:10000}")
-    private long rentalRateXl;
-
-    @Value("${app.order.reminder-cooldown-minutes:60}")
-    private int reminderCooldownMinutes;
-
-    @Value("${app.order.auto-cancel-hours:24}")
-    private int autoCancelHours;
-
-    // Chặn khách bỏ hàng / bắt đầu thuê khi đơn có phí nhưng chưa thanh toán.
-    @Value("${app.order.require-payment-before-drop:true}")
-    private boolean requirePaymentBeforeDrop;
-
-    // G3: quá hạn lấy hàng quá số giờ này thì coi như đồ được dời vào kho —
-    // đơn sang EXPIRED, chốt phí quá hạn và nhả ô cho khách khác. 0 = tắt.
-    @Value("${app.order.overdue-release-hours:24}")
-    private int overdueReleaseHours;
-
+    /// Tạo đơn từ API công khai: giá luôn do server tính, bỏ qua `totalPrice` client gửi.
     @Transactional
     public OrderResponse create(CreateOrderRequest request) {
+        return create(request, null);
+    }
+
+    /// `serverPrice` = giá server đã tính theo cấu hình (gửi hàng, thuê tủ); null ⇒ tính theo danh sách món.
+    @Transactional
+    public OrderResponse create(CreateOrderRequest request, BigDecimal serverPrice) {
         userClient.getUser(request.userId());
         LockerOrder order = new LockerOrder();
         order.setOrderCode(generateOrderCode());
@@ -126,7 +90,7 @@ public class OrderService {
 
         LockerOrder saved = orderRepository.save(order);
         BigDecimal calculatedTotal = saveDetailsAndCalculate(saved.getId(), request);
-        saved.setTotalPrice(request.totalPrice() == null ? calculatedTotal : request.totalPrice());
+        saved.setTotalPrice(serverPrice == null ? calculatedTotal : serverPrice);
         saved.setOriginalPrice(saved.getTotalPrice());
         applyPromotion(saved, request.promotionCode(), request.promotionCodes());
         saved = orderRepository.save(saved);
@@ -165,7 +129,7 @@ public class OrderService {
             // goes to the receiver — the sender can no longer open the cell.
             order.setPinCode(generatePinCode());
             order.setPinCodeIssuedAt(LocalDateTime.now());
-            order.setPickupDeadline(LocalDateTime.now().plusHours(sendPickupHoursLimit));
+            order.setPickupDeadline(LocalDateTime.now().plusHours(rules.sendPickupHours()));
             notifyParcelReadyForReceiver(order);
             return transition(order, "STORING", userId, null,
                     "Sender dropped parcel; pickup PIN issued to receiver " + order.getReceiverPhone());
@@ -179,13 +143,14 @@ public class OrderService {
         if (boxId == null) {
             boxId = findAvailableCell(request.lockerId(), request.size(), "STANDARD");
         }
-        BigDecimal price = request.totalPrice() == null ? BigDecimal.valueOf(sendBaseFee) : request.totalPrice();
+        // Giá gửi hàng luôn theo cấu hình admin — không tin totalPrice client gửi lên.
         return create(
                 new CreateOrderRequest(
                         userId, request.lockerId(), boxId, null, null,
                         "SEND", "PARCEL",
                         null, request.receiverPhone(), request.receiverName(),
-                        null, null, request.note(), null, null, null, request.promotionCode(), null, price));
+                        null, null, request.note(), null, null, null, request.promotionCode(), null, null),
+                rules.sendBaseFee());
     }
 
     @Transactional
@@ -198,13 +163,15 @@ public class OrderService {
         if (boxId == null) {
             boxId = findAvailableCell(request.lockerId(), null, cellType);
         }
-        BigDecimal price = rentalRate(cellType).multiply(BigDecimal.valueOf(request.hours()));
+        assertRentalHours(request.hours(), rules.rentalMinHours(), rules.rentalMaxHours());
+        BigDecimal price = rules.rentalRate(cellType).multiply(BigDecimal.valueOf(request.hours()));
         OrderResponse created =
                 create(
                         new CreateOrderRequest(
                                 userId, request.lockerId(), boxId, null, null,
                                 "RENTAL", "RENTAL",
-                                null, null, null, null, null, request.note(), null, null, null, request.promotionCode(), null, price));
+                                null, null, null, null, null, request.note(), null, null, null, request.promotionCode(), null, null),
+                        price);
         LockerOrder order = find(created.id());
         order.setPickupDeadline(null);
         order.setRentalDurationHours(request.hours());
@@ -244,8 +211,8 @@ public class OrderService {
         order.setParcelWeightGrams(request.parcelWeightGrams());
         order.setDescription(request.description());
         order.setIdempotencyKey(idempotencyKey);
-        order.setTotalPrice(BigDecimal.valueOf(sendBaseFee));
-        order.setOriginalPrice(BigDecimal.valueOf(sendBaseFee));
+        order.setTotalPrice(rules.droneDeliveryFee());
+        order.setOriginalPrice(rules.droneDeliveryFee());
 
         LockerOrder saved = orderRepository.save(order);
         notifyMaintenanceDroneOrderCreated(saved);
@@ -269,16 +236,7 @@ public class OrderService {
     }
 
     private boolean canUseDroneDemo(Long userId) {
-        if (!droneDemoEnabled) {
-            return false;
-        }
-        if (!StringUtils.hasText(droneDemoAllowedUserIds)) {
-            return true;
-        }
-        String expected = String.valueOf(userId);
-        return java.util.Arrays.stream(droneDemoAllowedUserIds.split(","))
-                .map(String::trim)
-                .anyMatch(expected::equals);
+        return rules.droneDemoEnabled() && rules.droneDemoAllowedFor(userId);
     }
 
     @Transactional(readOnly = true)
@@ -296,6 +254,7 @@ public class OrderService {
             throw new BusinessException("ORDER_STATUS_INVALID", "Only rental orders can be extended");
         }
         validateStatus(order, Set.of("INITIALIZED", "STORING"));
+        assertRentalHours(hours, 1, rules.extendMaxHours());
         order.setRentalDurationHours(resolveRentalDurationHours(order) + hours);
         if (!"INITIALIZED".equalsIgnoreCase(order.getStatus())) {
             LocalDateTime base =
@@ -304,7 +263,7 @@ public class OrderService {
                             : order.getPickupDeadline();
             order.setPickupDeadline(base.plusHours(hours));
         }
-        BigDecimal extra = rentalRate(cellTypeOfRental(order)).multiply(BigDecimal.valueOf(hours));
+        BigDecimal extra = rules.rentalRate(cellTypeOfRental(order)).multiply(BigDecimal.valueOf(hours));
         order.setTotalPrice(order.getTotalPrice().add(extra));
         order.setOriginalPrice(order.getOriginalPrice().add(extra));
         if (extra.compareTo(BigDecimal.ZERO) > 0) {
@@ -332,8 +291,11 @@ public class OrderService {
         }
     }
 
-    private BigDecimal rentalRate(String cellType) {
-        return BigDecimal.valueOf("XL".equalsIgnoreCase(cellType) ? rentalRateXl : rentalRateStandard);
+    private static void assertRentalHours(Integer hours, int min, int max) {
+        if (hours == null || hours < min || hours > max) {
+            throw new BusinessException(
+                    "RENTAL_HOURS_OUT_OF_RANGE", "hours must be between " + min + " and " + max);
+        }
     }
 
     private Long findAvailableCell(Long lockerId, String size, String cellType) {
@@ -732,7 +694,7 @@ public class OrderService {
                 continue;
             }
             if (order.getLastReminderAt() != null
-                    && order.getLastReminderAt().isAfter(now.minusMinutes(reminderCooldownMinutes))) {
+                    && order.getLastReminderAt().isAfter(now.minusMinutes(rules.reminderCooldownMinutes()))) {
                 continue;
             }
             boolean rental = "RENTAL".equalsIgnoreCase(order.getType());
@@ -1105,6 +1067,7 @@ public class OrderService {
     // stays stuck RESERVED forever (the old version only flipped the status).
     @Transactional
     public Map<String, Object> autoCancelUnconfirmedOrders() {
+        int autoCancelHours = rules.autoCancelHours();
         LocalDateTime cutoff = LocalDateTime.now().minusHours(autoCancelHours);
         int canceled = 0;
         for (LockerOrder order : orderRepository.findByStatusOrderByCreatedAtDesc("INITIALIZED")) {
@@ -1139,6 +1102,7 @@ public class OrderService {
     // viên bằng checkout) và nhả ô. PIN bị thu hồi vì ô có thể cấp cho đơn khác.
     @Transactional
     public Map<String, Object> releaseOverdueOrders() {
+        int overdueReleaseHours = rules.overdueReleaseHours();
         if (overdueReleaseHours <= 0) {
             return Map.of("expiredOrders", 0);
         }
@@ -1342,7 +1306,7 @@ public class OrderService {
     }
 
     private int clampRentalDurationHours(int hours) {
-        return Math.max(1, Math.min(720, hours));
+        return Math.max(1, Math.min(rules.rentalMaxHours(), hours));
     }
 
     private void assertAccessCredentialActive(LockerOrder order) {
@@ -1404,7 +1368,7 @@ public class OrderService {
         BigDecimal total = BigDecimal.ZERO;
         for (OrderItemRequest item : items) {
             BigDecimal quantity = item.quantity() == null ? (defaultQuantity == null ? BigDecimal.ONE : defaultQuantity) : item.quantity();
-            BigDecimal price = BigDecimal.valueOf(5000).multiply(quantity); // Base storage fee
+            BigDecimal price = rules.storageItemFee().multiply(quantity); // phí lưu trữ mỗi món (admin cấu hình)
             saveDetail(orderId, item.serviceId(), quantity, price, item.description());
             total = total.add(price);
         }
@@ -1568,10 +1532,10 @@ public class OrderService {
             return BigDecimal.ZERO;
         }
         long hours = ChronoUnit.HOURS.between(order.getPickupDeadline(), LocalDateTime.now());
-        BigDecimal raw = BigDecimal.valueOf(Math.max(0, hours) * overtimeFeePerHour);
+        BigDecimal raw = BigDecimal.valueOf(Math.max(0, hours) * rules.overtimeFeePerHour());
         BigDecimal percentageCap =
-                order.getTotalPrice().multiply(BigDecimal.valueOf(maxOvertimePercent)).divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
-        return raw.min(BigDecimal.valueOf(maxOvertimeFee)).min(percentageCap);
+                order.getTotalPrice().multiply(BigDecimal.valueOf(rules.maxOvertimePercent())).divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
+        return raw.min(rules.maxOvertimeFee()).min(percentageCap);
     }
 
     private void validateStatus(LockerOrder order, Set<String> statuses) {
@@ -1586,7 +1550,7 @@ public class OrderService {
      * {@code app.order.require-payment-before-drop=false}.
      */
     private void assertPaidBeforeDrop(LockerOrder order) {
-        if (!requirePaymentBeforeDrop) {
+        if (!rules.requirePaymentBeforeDrop()) {
             return;
         }
         BigDecimal total = order.getTotalPrice();
@@ -1600,7 +1564,7 @@ public class OrderService {
     }
 
     private void assertPaidBeforeStorageCompletion(LockerOrder order) {
-        if (!requirePaymentBeforeDrop) {
+        if (!rules.requirePaymentBeforeDrop()) {
             return;
         }
         BigDecimal total = order.getTotalPrice();
