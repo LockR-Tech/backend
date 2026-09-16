@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.order.service;
 import com.huynqb.laundrylocker.order.settings.TestOrderRules;
 
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
+import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
@@ -50,6 +51,7 @@ class OrderServiceRentalPaymentTest {
     @Mock private UserClient userClient;
     @Mock private LockerClient lockerClient;
     @Mock private LockerCellClient lockerCellClient;
+    @Mock private LockerLookupClient lockerLookupClient;
     @Mock private NotificationClient notificationClient;
     @Mock private QrTokenService qrTokenService;
 
@@ -70,6 +72,7 @@ class OrderServiceRentalPaymentTest {
                 userClient,
                 lockerClient,
                 lockerCellClient,
+                lockerLookupClient,
                 notificationClient,
                 qrTokenService,
                 TestOrderRules.of(java.util.Map.of(

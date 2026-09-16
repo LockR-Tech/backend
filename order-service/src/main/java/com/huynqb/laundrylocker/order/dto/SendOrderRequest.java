@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.order.dto;
 
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -11,6 +12,8 @@ public record SendOrderRequest(
         String size,
         @NotBlank String receiverPhone,
         String receiverName,
+        /// Tuỳ chọn. Có thì mã mở tủ gửi được cho người nhận CHƯA có tài khoản Lock.R.
+        @Email(message = "receiverEmail không hợp lệ") String receiverEmail,
         String note,
         BigDecimal totalPrice,
         String promotionCode) {

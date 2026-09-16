@@ -7,6 +7,7 @@ import com.huynqb.laundrylocker.common.dto.LockerBoxSummary;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
+import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
@@ -59,6 +60,9 @@ class OrderServiceDroneDeliveryTest {
     private LockerClient lockerClient;
     @Mock
     private LockerCellClient lockerCellClient;
+
+    @Mock
+    private LockerLookupClient lockerLookupClient;
     @Mock
     private NotificationClient notificationClient;
     @Mock
@@ -85,6 +89,7 @@ class OrderServiceDroneDeliveryTest {
                         userClient,
                         lockerClient,
                         lockerCellClient,
+                        lockerLookupClient,
                         notificationClient,
                         qrTokenService,
                         new com.huynqb.laundrylocker.order.settings.OrderRules(settings));

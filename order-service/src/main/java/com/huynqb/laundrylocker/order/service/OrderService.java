@@ -9,6 +9,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
+import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.*;
@@ -28,6 +29,9 @@ import java.math.RoundingMode;
 import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
@@ -51,6 +55,7 @@ public class OrderService {
     private final UserClient userClient;
     private final LockerClient lockerClient;
     private final LockerCellClient lockerCellClient;
+    private final LockerLookupClient lockerLookupClient;
     private final NotificationClient notificationClient;
     private final QrTokenService qrTokenService;
     /// Giá, phí, thời hạn… admin cấu hình trên web (ADR-0005), không còn @Value cứng.
@@ -144,13 +149,23 @@ public class OrderService {
             boxId = findAvailableCell(request.lockerId(), request.size(), "STANDARD");
         }
         // Giá gửi hàng luôn theo cấu hình admin — không tin totalPrice client gửi lên.
-        return create(
+        OrderResponse created = create(
                 new CreateOrderRequest(
                         userId, request.lockerId(), boxId, null, null,
                         "SEND", "PARCEL",
                         null, request.receiverPhone(), request.receiverName(),
                         null, null, request.note(), null, null, null, request.promotionCode(), null, null),
                 rules.sendBaseFee());
+
+        // Email người nhận ghi sau khi tạo, giống cách createRental đặt số giờ thuê:
+        // CreateOrderRequest là record vị trí dùng chung cho mọi loại đơn, thêm trường
+        // vào đó sẽ phải sửa mọi nơi gọi chỉ vì một loại đơn cần.
+        if (!StringUtils.hasText(request.receiverEmail())) {
+            return created;
+        }
+        LockerOrder order = find(created.id());
+        order.setReceiverEmail(request.receiverEmail().trim());
+        return toResponse(orderRepository.save(order));
     }
 
     @Transactional
@@ -336,28 +351,116 @@ public class OrderService {
         }
     }
 
+    /// Báo cho người nhận rằng hàng đã nằm trong tủ, kèm mã mở tủ.
+    ///
+    /// Ba kênh, cố ý thử CẢ BA chứ không dừng ở kênh đầu thành công — mã không tới nơi
+    /// là hỏng cả lượt nhận hàng:
+    /// 1. thông báo trong app, nếu số điện thoại trùng một tài khoản Lock.R;
+    /// 2. SMS tới đúng số người gửi đã nhập;
+    /// 3. email, nếu người gửi có nhập.
+    ///
+    /// Cuối cùng báo lại cho NGƯỜI GỬI đã gửi được hay chưa: khi không kênh nào tới nơi
+    /// thì họ phải tự chuyển mã, và họ chỉ làm vậy nếu biết.
     private void notifyParcelReadyForReceiver(LockerOrder order) {
         String message =
                 "Parcel " + order.getOrderCode() + " is waiting in locker " + order.getLockerId()
                         + ". Pickup PIN: " + order.getPinCode()
                         + ". Deadline: " + order.getPickupDeadline();
+        boolean inAppSent = false;
         try {
             var receiver = userClient.getUserByPhone(order.getReceiverPhone()).data();
             if (receiver != null && receiver.id() != null) {
                 order.setReceiverId(receiver.id());
                 notificationClient.requestNotification(
                         new NotificationRequest(receiver.id(), "Parcel waiting for you", message, "ORDER_PARCEL_READY", order.getId(), "ORDER"));
+                inAppSent = true;
             }
         } catch (Exception ex) {
-            // Receiver has no account (or user-service is down): the sender keeps the
-            // PIN in their order detail and shares it out-of-band (SMS gateway is a
-            // production integration point).
             log.info("Receiver {} not notified in-app for order {}: {}", order.getReceiverPhone(), order.getId(), ex.getMessage());
         }
+
+        GuestNotification.Result guest = notifyReceiverOutOfBand(order);
+        boolean reached = inAppSent || guest.delivered();
+
         notifyQuietly(order.getUserId(), "Parcel stored",
-                "Parcel " + order.getOrderCode() + " stored. Receiver " + order.getReceiverPhone()
-                        + " can pick up with PIN " + order.getPinCode() + " before " + order.getPickupDeadline(),
+                senderSummary(order, reached),
                 "ORDER_PARCEL_STORED", order.getId());
+    }
+
+    /// Gửi mã qua SMS/email tới số và email người gửi đã nhập trên đơn.
+    /// Không bao giờ ném lỗi ra ngoài: hỏng kênh nhắn tin không được làm hỏng việc bỏ hàng.
+    private GuestNotification.Result notifyReceiverOutOfBand(LockerOrder order) {
+        String phone = rules.receiverNotifySms() ? order.getReceiverPhone() : null;
+        String email = rules.receiverNotifyEmail() ? order.getReceiverEmail() : null;
+        if (!StringUtils.hasText(phone) && !StringUtils.hasText(email)) {
+            return new GuestNotification.Result(false, false, false, false);
+        }
+
+        String where = lockerLabel(order.getLockerId());
+        String deadline = formatDeadline(order.getPickupDeadline());
+        String sms = "Lock.R: Ban co kien hang " + order.getOrderCode() + " tai " + where
+                + ". Ma mo tu: " + order.getPinCode() + ". Han lay: " + deadline + ".";
+        String emailBody = "Xin chào" + (StringUtils.hasText(order.getReceiverName())
+                ? " " + order.getReceiverName() : "") + ",\n\n"
+                + "Bạn có một kiện hàng đang chờ trong tủ Lock.R.\n\n"
+                + "Mã đơn: " + order.getOrderCode() + "\n"
+                + "Nơi lấy: " + where + "\n"
+                + "Mã mở tủ: " + order.getPinCode() + "\n"
+                + "Hạn lấy hàng: " + deadline + "\n\n"
+                + "Nhập mã này trên màn hình tủ để mở ô và lấy hàng. "
+                + "Không chia sẻ mã cho người khác.\n";
+
+        try {
+            var response = notificationClient.notifyGuest(
+                    new GuestNotification.Request(phone, email, "Mã mở tủ Lock.R cho đơn "
+                            + order.getOrderCode(), sms, emailBody));
+            var result = response == null ? null : response.data();
+            return result == null
+                    ? new GuestNotification.Result(false, false, false, false)
+                    : result;
+        } catch (Exception ex) {
+            log.warn("Could not send pickup code out-of-band for order {}: {}", order.getId(), ex.getMessage());
+            return new GuestNotification.Result(false, false, false, false);
+        }
+    }
+
+    /// Câu báo cho người gửi, nói thẳng người nhận đã nhận được mã chưa.
+    private String senderSummary(LockerOrder order, boolean reached) {
+        String base = "Parcel " + order.getOrderCode() + " stored. Receiver "
+                + order.getReceiverPhone() + " can pick up with PIN " + order.getPinCode()
+                + " before " + order.getPickupDeadline() + ". ";
+        return base + (reached
+                ? "Pickup code sent to the receiver."
+                : "We could not reach the receiver — please share the PIN with them yourself.");
+    }
+
+    /// Tên + địa chỉ tủ nếu tra cứu được, ngược lại rơi về mã tủ. Người nhận cần biết
+    /// đi đâu, "locker 7" thì không giúp được gì.
+    private String lockerLabel(Long lockerId) {
+        if (lockerId == null) return "tủ Lock.R";
+        try {
+            var lockers = lockerLookupClient.getLockers(List.of(lockerId)).data();
+            if (lockers != null && !lockers.isEmpty()) {
+                var locker = lockers.getFirst();
+                String name = StringUtils.hasText(locker.name()) ? locker.name() : "tủ #" + lockerId;
+                return StringUtils.hasText(locker.address()) ? name + " (" + locker.address() + ")" : name;
+            }
+        } catch (Exception ex) {
+            log.debug("Locker {} lookup failed while composing pickup message: {}", lockerId, ex.getMessage());
+        }
+        return "tủ #" + lockerId;
+    }
+
+    /// Container chạy UTC nhưng người nhận đọc giờ Việt Nam, nên phải đổi múi giờ
+    /// trước khi đưa vào tin nhắn — trùng cách app và trang admin hiển thị thời gian.
+    private static final ZoneId DISPLAY_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final DateTimeFormatter PICKUP_DEADLINE_FORMAT =
+            DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
+
+    private static String formatDeadline(LocalDateTime deadline) {
+        if (deadline == null) return "chưa xác định";
+        return PICKUP_DEADLINE_FORMAT.format(
+                deadline.atZone(ZoneOffset.UTC).withZoneSameInstant(DISPLAY_ZONE));
     }
 
     private void notifyQuietly(Long userId, String title, String message, String type, Long orderId) {
@@ -571,6 +674,7 @@ public class OrderService {
                             null,
                             original.getReceiverPhone(),
                             original.getReceiverName(),
+                            original.getReceiverEmail(),
                             original.getCustomerNote(),
                             null,
                             null),

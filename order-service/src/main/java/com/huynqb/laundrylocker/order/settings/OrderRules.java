@@ -81,6 +81,16 @@ public class OrderRules {
         return settings.getBoolean(REQUIRE_PAYMENT_BEFORE_DROP);
     }
 
+    /// Gửi mã mở tủ cho người nhận qua SMS. Bật mà máy chủ chưa nạp khoá nhà cung cấp
+    /// thì vẫn không gửi được — notification-service báo lại `smsChannelAvailable=false`.
+    public boolean receiverNotifySms() {
+        return settings.getBoolean(RECEIVER_NOTIFY_SMS);
+    }
+
+    public boolean receiverNotifyEmail() {
+        return settings.getBoolean(RECEIVER_NOTIFY_EMAIL);
+    }
+
     public boolean droneDemoEnabled() {
         return settings.getBoolean(DRONE_DEMO_ENABLED);
     }

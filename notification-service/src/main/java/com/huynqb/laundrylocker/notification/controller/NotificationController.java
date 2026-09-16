@@ -5,6 +5,7 @@ import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.notification.dto.*;
 import com.huynqb.laundrylocker.notification.service.DeliveryNotificationService;
 import com.huynqb.laundrylocker.notification.service.DronePositionService;
+import com.huynqb.laundrylocker.notification.service.GuestNotificationService;
 import com.huynqb.laundrylocker.notification.service.NotificationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ public class NotificationController {
     private final NotificationService notificationService;
     private final DeliveryNotificationService deliveryNotificationService;
     private final DronePositionService dronePositionService;
+    private final GuestNotificationService guestNotificationService;
 
     @PostMapping("/internal/notifications")
     public ApiResponse<NotificationResponse> createInternal(@Valid @RequestBody NotificationRequest request) {
@@ -51,6 +53,20 @@ public class NotificationController {
                 "DRONE_POSITION_BROADCAST",
                 "Drone position broadcast",
                 dronePositionService.broadcast(orderId, request));
+    }
+
+    /**
+     * Gửi tin cho người KHÔNG có tài khoản Lock.R (người nhận hàng, người được uỷ
+     * quyền lấy hộ) qua SMS và/hoặc email. Internal only — gateway chặn /internal/**
+     * ra ngoài, nếu không ai cũng gửi được tin nhắn dưới tên Lock.R.
+     */
+    @PostMapping("/internal/notifications/guest")
+    public ApiResponse<GuestNotificationResponse> notifyGuest(
+            @Valid @RequestBody GuestNotificationRequest request) {
+        return ApiResponse.ok(
+                "GUEST_NOTIFICATION_SENT",
+                "Guest notification processed",
+                guestNotificationService.notifyGuest(request));
     }
 
     @PostMapping("/internal/notifications/order-status")
