@@ -61,6 +61,16 @@ class EmailOtpServiceTest {
         assertEquals(4, EmailOtpService.generateCode(4).length());
     }
 
+    @Test
+    void maskEmailKeepsEnoughToTraceButNotEnoughToIdentify() {
+        assertEquals("a***@example.com", EmailOtpService.maskEmail("an@example.com"));
+        assertEquals("a***@example.com", EmailOtpService.maskEmail("  An@example.com  "));
+        // Chuỗi không phải email thì che sạch, không để lọt nguyên giá trị vào log.
+        assertEquals("***", EmailOtpService.maskEmail(null));
+        assertEquals("***", EmailOtpService.maskEmail("khong-co-a-cong"));
+        assertEquals("***", EmailOtpService.maskEmail("@example.com"));
+    }
+
     private void assertOtp(int digits, Duration expiry, String expiryText) {
         ArgumentCaptor<String> code = ArgumentCaptor.forClass(String.class);
         verify(passwordEncoder).encode(code.capture());

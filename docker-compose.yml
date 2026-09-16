@@ -63,7 +63,10 @@ services:
     environment:
       SERVER_PORT: 8080
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
-      APP_SECURITY_JWT_SECRET: laundry-locker-microservices-secret-key-change-me-please-32chars
+      # SEC-01: secret KHÔNG nằm trong repo. Đặt trong `.env` trên máy chủ.
+      # Thiếu thì `docker compose up` dừng ngay với thông báo dưới đây — thà không
+      # khởi động còn hơn chạy bằng secret mặc định mà ai đọc repo cũng biết.
+      APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
       # Comma-separated allowed CORS origins; override in the server .env to add the
       # production domain (e.g. http://localhost:3000,http://localhost:3001,https://lockerly.tech).
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
@@ -117,7 +120,8 @@ services:
       APP_BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin@123456}
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
-      APP_SECURITY_JWT_SECRET: laundry-locker-microservices-secret-key-change-me-please-32chars
+      # SEC-01 — xem ghi chú ở khối api-gateway.
+      APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:
@@ -269,6 +273,11 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      # notification-service tự xác thực JWT cho kết nối STOMP (không đi qua gateway),
+      # nên phải dùng CÙNG secret với gateway và auth-service. Khối này trước đây không
+      # truyền biến nên service rơi về mặc định trong application.yml — trùng nhau chỉ vì
+      # cả ba đều đang dùng mặc định; đổi secret mà quên chỗ này là realtime đứt.
+      APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:

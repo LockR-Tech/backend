@@ -101,7 +101,10 @@ public class EmailOtpService {
                 email,
                 "Laundry Locker OTP",
                 htmlTemplate);
-        log.info("OTP generated for {} purpose {}. Development OTP: {}", email, purpose, code);
+        // KHÔNG ghi mã OTP ra log: ai đọc được log là đăng nhập được bằng tài khoản
+        // người khác (SEC-07). Chạy ở máy lập trình thì đọc mã trong hộp thư SMTP giả
+        // (mailhog, mặc định http://localhost:8025), không cần log.
+        log.info("OTP generated for {} purpose {}", maskEmail(email), purpose);
         return true;
     }
 
@@ -136,5 +139,15 @@ public class EmailOtpService {
 
     private String normalize(String email) {
         return email == null ? "" : email.trim().toLowerCase();
+    }
+
+    /// `a***@example.com` — đủ để đối chiếu khi soát lỗi, không đủ để lộ email khách.
+    /// Hạ chữ hoa giống `normalize` để cùng một người luôn ra cùng một chuỗi trong log,
+    /// bất kể họ gõ hoa hay thường lúc đăng nhập.
+    static String maskEmail(String email) {
+        String normalized = email == null ? "" : email.trim().toLowerCase();
+        int at = normalized.indexOf('@');
+        if (at <= 0) return "***";
+        return normalized.charAt(0) + "***" + normalized.substring(at);
     }
 }
