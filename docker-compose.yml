@@ -280,6 +280,21 @@ services:
       APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
       # Push notification. Trống thì push tắt, các kênh thông báo khác vẫn chạy.
       FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
+      # Gửi mã mở tủ cho người nhận CHƯA có tài khoản.
+      # Email: dùng chung SMTP với auth-service (xem khối auth-service ở trên).
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-localhost}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-1025}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-noreply@laundry.test}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:-}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SPRING_MAIL_SMTP_AUTH:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_SMTP_STARTTLS:-false}
+      APP_MAIL_FROM: ${APP_MAIL_FROM:-}
+      MANAGEMENT_HEALTH_MAIL_ENABLED: false
+      # SMS: để trống cả ba thì service vẫn chạy, chỉ ghi log thay vì gửi thật.
+      # Tài khoản Twilio dùng thử chỉ gửi được tới số đã xác minh trong console.
+      APP_SMS_TWILIO_ACCOUNT_SID: ${APP_SMS_TWILIO_ACCOUNT_SID:-}
+      APP_SMS_TWILIO_AUTH_TOKEN: ${APP_SMS_TWILIO_AUTH_TOKEN:-}
+      APP_SMS_TWILIO_FROM_NUMBER: ${APP_SMS_TWILIO_FROM_NUMBER:-}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:

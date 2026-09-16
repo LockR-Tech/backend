@@ -41,12 +41,15 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DEMO_STAGE_DELAY_MS = "app.drone.demo.stage-delay-ms";
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
     public static final String DRONE_DEFAULT_PARCEL_WEIGHT = "app.order.drone-default-parcel-weight-grams";
+    public static final String RECEIVER_NOTIFY_SMS = "app.order.receiver-notify-sms";
+    public static final String RECEIVER_NOTIFY_EMAIL = "app.order.receiver-notify-email";
 
     private static final String PRICING = "Giá & phí";
     private static final String DEADLINES = "Thời hạn & tự động hoá";
     private static final String RENTAL = "Thuê tủ";
     private static final String PAYMENT = "Thanh toán";
     private static final String DRONE = "Giao hàng drone";
+    private static final String RECEIVER = "Thông báo cho người nhận";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -89,6 +92,13 @@ public class OrderSettingsCatalog implements SettingsCatalog {
 
                 bool(REQUIRE_PAYMENT_BEFORE_DROP, PAYMENT, "Bắt buộc thanh toán trước khi bỏ hàng",
                         "Chặn xác nhận bỏ hàng/kết thúc thuê khi đơn chưa thanh toán.", true).asPublic(),
+
+                bool(RECEIVER_NOTIFY_SMS, RECEIVER, "Gửi mã mở tủ qua SMS",
+                        "Nhắn mã và hạn lấy hàng tới số điện thoại người nhận, kể cả người chưa có "
+                                + "tài khoản. Cần khoá nhà cung cấp SMS trên máy chủ; chưa có khoá thì "
+                                + "bật cũng không gửi được.", true),
+                bool(RECEIVER_NOTIFY_EMAIL, RECEIVER, "Gửi mã mở tủ qua email",
+                        "Gửi mã tới email người nhận khi người gửi có nhập email.", true),
 
                 bool(DRONE_DEMO_ENABLED, DRONE, "Cho phép chế độ drone DEMO",
                         "Bật bộ giả lập chặng bay cho đơn drone.", true),

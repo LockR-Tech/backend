@@ -44,6 +44,18 @@ app:
   # môi trường. Trống thì push tắt, các kênh thông báo khác vẫn chạy.
   firebase:
     credentials-json: ${FIREBASE_CREDENTIALS_JSON:}
+  # Địa chỉ gửi email. Một số nhà cung cấp bắt "From" phải là người gửi đã xác minh,
+  # khác tài khoản SMTP; để trống thì dùng chính `spring.mail.username`.
+  mail:
+    from: ${APP_MAIL_FROM:}
+  # Kênh SMS gửi mã mở tủ cho người nhận chưa có tài khoản.
+  # KHOÁ LÀ SECRET — nạp qua biến môi trường trên VM, không commit giá trị vào repo.
+  # Thiếu bất kỳ giá trị nào thì rơi về bản chỉ ghi log (service vẫn khởi động được).
+  sms:
+    twilio:
+      account-sid: ${APP_SMS_TWILIO_ACCOUNT_SID:}
+      auth-token: ${APP_SMS_TWILIO_AUTH_TOKEN:}
+      from-number: ${APP_SMS_TWILIO_FROM_NUMBER:}
 eureka:
   client:
     service-url:

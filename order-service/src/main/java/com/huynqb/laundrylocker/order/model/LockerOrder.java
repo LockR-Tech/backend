@@ -35,6 +35,11 @@ public class LockerOrder {
     @Column(name = "receiver_name")
     private String receiverName;
 
+    /// Email người nhận, tuỳ chọn. Có giá trị thì mã mở tủ gửi được cho người nhận
+    /// CHƯA có tài khoản Lock.R — trước đây chỉ người nhận đã có tài khoản mới nhận được.
+    @Column(name = "receiver_email")
+    private String receiverEmail;
+
     @Column(name = "locker_id")
     private Long lockerId;
 
