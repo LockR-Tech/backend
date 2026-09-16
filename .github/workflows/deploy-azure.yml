@@ -3,8 +3,7 @@ name: Deploy to Azure VM
 on:
   push:
     branches:
-      - main
-      - develop
+      - main          # GitHub Flow: main là production, không có develop (docs ADR-0001)
     paths-ignore:
       # Sửa tài liệu không cần build lại và deploy lại — một lần chạy đầy đủ mất
       # khoảng 20 phút và thay cả bản đang chạy trên VM.
