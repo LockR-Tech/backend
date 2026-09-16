@@ -40,6 +40,10 @@ app:
   security:
     jwt:
       secret: ${APP_SECURITY_JWT_SECRET:laundry-locker-microservices-secret-key-change-me-please-32chars}
+  # Khoá service account Firebase (JSON một dòng) để gửi push. Là secret — nạp qua biến
+  # môi trường. Trống thì push tắt, các kênh thông báo khác vẫn chạy.
+  firebase:
+    credentials-json: ${FIREBASE_CREDENTIALS_JSON:}
 eureka:
   client:
     service-url:
