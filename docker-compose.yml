@@ -278,6 +278,8 @@ services:
       # truyền biến nên service rơi về mặc định trong application.yml — trùng nhau chỉ vì
       # cả ba đều đang dùng mặc định; đổi secret mà quên chỗ này là realtime đứt.
       APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
+      # Push notification. Trống thì push tắt, các kênh thông báo khác vẫn chạy.
+      FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:
