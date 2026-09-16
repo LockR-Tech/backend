@@ -1,16 +1,22 @@
 name: Backend Security
 
+# Chỉ chạy trên `main`, theo lịch tuần, và khi gọi tay.
+#
+# Trước đây chạy cả trên `pull_request` VÀ mọi push nhánh feat/fix/chore. Mỗi lần
+# là 14 job quét container + CodeQL + SBOM, và mỗi PR bị chạy hai lượt (một cho
+# push, một cho pull_request) ⇒ riêng repo này ngốn 97% quota Actions của org và
+# làm hết sạch 2.000 phút giữa chu kỳ, chặn luôn cả deploy.
+#
+# Bỏ đi không mất lớp bảo vệ nào đang hoạt động: `dependency-review` và `codeql`
+# đều hỏng trên repo này vì org chưa bật Dependency graph + Advanced Security.
+# Cổng chặn merge thật sự là `backend-ci.yml` (mvn test) — vẫn giữ nguyên trên PR.
 on:
-  pull_request:
   push:
     branches:
       - main
-      - develop
-      - "feat/**"
-      - "fix/**"
-      - "chore/**"
   schedule:
     - cron: "25 20 * * 0"
+  workflow_dispatch:
 
 concurrency:
   group: backend-security-${{ github.ref }}

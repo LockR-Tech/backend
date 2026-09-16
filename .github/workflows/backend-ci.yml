@@ -1,15 +1,15 @@
 name: Backend CI
 
+# `pull_request` là cổng chặn merge; push chỉ chạy trên `main` để bắt lỗi lọt qua.
+#
+# Trước đây còn chạy trên push nhánh feat/fix/chore/docs, nên mỗi PR bị test HAI
+# lượt cho cùng một commit — tốn gấp đôi phút Actions mà không thêm thông tin gì.
+# Nhánh chưa mở PR thì cũng chưa cần CI.
 on:
   pull_request:
   push:
     branches:
       - main
-      - develop
-      - "feat/**"
-      - "fix/**"
-      - "chore/**"
-      - "docs/**"
 
 concurrency:
   group: backend-ci-${{ github.ref }}
