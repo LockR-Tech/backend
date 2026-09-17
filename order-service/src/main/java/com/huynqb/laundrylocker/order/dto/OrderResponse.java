@@ -38,5 +38,14 @@ public record OrderResponse(
         LocalDateTime completedAt,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
-        List<OrderDetailResponse> orderDetails) {
+        List<OrderDetailResponse> orderDetails,
+        // Có sẵn trên entity + được ghi từ OrderCreateRequest/DelegateRequest nhưng trước
+        // đây không trả về cho khách hàng — AdminOrderResponse có, OrderResponse thì không.
+        // Khách gửi hàng (SEND) không thấy lại tên/SĐT người nhận mình vừa nhập; khách thuê
+        // tủ (RENTAL) không thấy lại số giờ đã đặt; ghi chú lúc tạo đơn cũng mất tăm.
+        String receiverName,
+        String receiverPhone,
+        String customerNote,
+        String deliveryAddress,
+        Integer rentalDurationHours) {
 }
