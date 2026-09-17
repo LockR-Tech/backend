@@ -145,9 +145,15 @@ public class LockerController {
     @GetMapping("/api/maintenance/reports")
     public ApiResponse<List<LockerReportResponse>> maintenanceReports(
             @RequestParam(required = false, defaultValue = "false") boolean mine,
+            @RequestParam(required = false, defaultValue = "false") boolean all,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return ApiResponse.ok(
-                mine && userId != null ? lockerService.assignedReports(userId) : lockerService.openReports());
+        if (mine && userId != null) {
+            return ApiResponse.ok(lockerService.assignedReports(userId));
+        }
+        if (all) {
+            return ApiResponse.ok(lockerService.allReports());
+        }
+        return ApiResponse.ok(lockerService.openReports());
     }
 
     @PutMapping("/api/maintenance/reports/{id}/claim")

@@ -146,6 +146,9 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
     // Role model: CUSTOMER, ADMIN (web console), TECHNICIAN (locker upkeep + IoT),
     // MAINTENANCE (drone team). MANAGER/STAFF were retired.
     private boolean hasRequiredRole(String path, List<String> roles) {
+        if (path.startsWith("/api/admin/lockers/reports")) {
+            return hasAny(roles, "ADMIN", "TECHNICIAN");
+        }
         if (path.startsWith("/api/admin")) {
             return hasAny(roles, "ADMIN");
         }
