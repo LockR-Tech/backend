@@ -152,7 +152,7 @@ public class PaymentService {
                         userId,
                         amount,
                         WalletService.SOURCE_ORDER_PAYMENT,
-                        "ORDERPAY-" + request.orderId(),
+                        WalletTransactionRefs.ORDER_PAYMENT_REF_PREFIX + request.orderId(),
                         "Thanh toán đơn #" + request.orderId());
                 payment.setStatus("COMPLETED");
             }
