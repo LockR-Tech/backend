@@ -513,7 +513,13 @@ public class LockerService {
         int slaHours = rules.slaHours();
         long overdueCount = reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
                 .filter(r -> "IN_PROGRESS".equalsIgnoreCase(r.getStatus()))
-                .filter(r -> r.getCreatedAt() != null && java.time.LocalDateTime.now().isAfter(r.getCreatedAt().plusHours(slaHours)))
+                .filter(r -> {
+                    LocalDateTime due = r.getSlaDueAt();
+                    if (due == null && r.getCreatedAt() != null) {
+                        due = r.getCreatedAt().plusHours(slaHours);
+                    }
+                    return due != null && java.time.LocalDateTime.now().isAfter(due);
+                })
                 .count();
         if (overdueCount >= rules.technicianClaimBlockOverdue()) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
@@ -555,6 +561,52 @@ public class LockerService {
         return toReport(reportRepository.save(report));
     }
 
+    /// Admin gia hạn SLA cho phiếu sự cố
+    @Transactional
+    public LockerReportResponse extendSla(Long reportId, Integer extensionHours, String reason, Long actorUserId) {
+        if (extensionHours == null || extensionHours < 1) {
+            throw new BusinessException("INVALID_EXTENSION_HOURS", "Thời gian gia hạn phải từ 1 giờ trở lên");
+        }
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+
+        int currentExt = report.getSlaExtendedHours() != null ? report.getSlaExtendedHours() : 0;
+        report.setSlaExtendedHours(currentExt + extensionHours);
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime currentDue = report.getSlaDueAt();
+        if (currentDue == null) {
+            currentDue = report.getCreatedAt() != null ? report.getCreatedAt().plusHours(rules.slaHours()) : now;
+        }
+        // Nếu đã quá hạn thì tính mốc mới bắt đầu từ thời điểm hiện tại (now)
+        LocalDateTime baseDue = now.isAfter(currentDue) ? now : currentDue;
+        LocalDateTime newDue = baseDue.plusHours(extensionHours);
+        report.setSlaDueAt(newDue);
+
+        if (reason != null && !reason.isBlank()) {
+            report.setSlaExtensionReason(reason.trim());
+        }
+
+        LockerReport saved = reportRepository.save(report);
+
+        // Tự động ghi nhận kiểm toán vào nhật ký xử lý của phiếu
+        try {
+            java.time.format.DateTimeFormatter dtf = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
+            addRepairLog(
+                    reportId,
+                    "[GIA HẠN SLA] Hệ thống đã phê duyệt gia hạn thêm +" + extensionHours + " giờ cho sự cố này.\n"
+                            + "- Hạn hoàn tất mới: " + newDue.format(dtf) + "\n"
+                            + "- Lý do: " + (reason != null && !reason.isBlank() ? reason.trim() : "Admin phê duyệt gia hạn"),
+                    actorUserId,
+                    List.of(),
+                    true);
+        } catch (Exception ex) {
+            log.warn("Could not log SLA extension audit for report {}: {}", reportId, ex.getMessage());
+        }
+
+        return toReport(saved);
+    }
+
     /// Tổng hợp chỉ số hiệu suất, số lần vi phạm SLA, mức độ chế tài và đánh giá của một KTV
     @Transactional(readOnly = true)
     public Map<String, Object> technicianPerformance(Long technicianId) {
@@ -565,7 +617,13 @@ public class LockerService {
         int slaHours = rules.slaHours();
         long overdue = allAssigned.stream()
                 .filter(r -> !"RESOLVED".equalsIgnoreCase(r.getStatus()))
-                .filter(r -> r.getCreatedAt() != null && java.time.LocalDateTime.now().isAfter(r.getCreatedAt().plusHours(slaHours)))
+                .filter(r -> {
+                    LocalDateTime due = r.getSlaDueAt();
+                    if (due == null && r.getCreatedAt() != null) {
+                        due = r.getCreatedAt().plusHours(slaHours);
+                    }
+                    return due != null && java.time.LocalDateTime.now().isAfter(due);
+                })
                 .count();
 
         // Xác định bậc chế tài (Penalty Level) theo ngưỡng admin cấu hình
@@ -1145,8 +1203,10 @@ public class LockerService {
         LockerUnit locker = lockerRepository.findById(report.getLockerId()).orElse(null);
         LockerBox box = report.getBoxId() == null ? null : boxRepository.findById(report.getBoxId()).orElse(null);
         int slaHours = rules.slaHours();
-        LocalDateTime slaDueAt =
-                report.getCreatedAt() == null ? null : report.getCreatedAt().plusHours(slaHours);
+        LocalDateTime slaDueAt = report.getSlaDueAt();
+        if (slaDueAt == null && report.getCreatedAt() != null) {
+            slaDueAt = report.getCreatedAt().plusHours(slaHours);
+        }
         boolean overdue =
                 slaDueAt != null
                         && !"RESOLVED".equalsIgnoreCase(report.getStatus())
@@ -1200,6 +1260,8 @@ public class LockerService {
                 slaHours,
                 slaDueAt,
                 overdue,
+                report.getSlaExtendedHours() != null ? report.getSlaExtendedHours() : 0,
+                report.getSlaExtensionReason(),
                 reporter == null ? null : reporter.fullName(),
                 reporter == null ? null : reporter.phoneNumber(),
                 attachments);

@@ -244,6 +244,17 @@ public class LockerController {
         return ApiResponse.ok(lockerService.technicianPerformance(userId));
     }
 
+    @PutMapping("/api/maintenance/reports/{id}/extend-sla")
+    public ApiResponse<LockerReportResponse> maintenanceExtendReportSla(
+            @PathVariable Long id,
+            @Valid @RequestBody ExtendSlaRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long actorUserId) {
+        return ApiResponse.ok(
+                "SLA_EXTENDED",
+                "Đã gia hạn SLA thành công",
+                lockerService.extendSla(id, body.extensionHours(), body.reason(), actorUserId));
+    }
+
     @GetMapping("/api/maintenance/reports/{id}/logs")
     public ApiResponse<List<RepairLogResponse>> maintenanceReportLogs(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.repairLogs(id));
@@ -477,6 +488,17 @@ public class LockerController {
     @PutMapping("/api/admin/lockers/reports/{id}/unassign")
     public ApiResponse<LockerReportResponse> adminUnassignReport(@PathVariable Long id) {
         return ApiResponse.ok("REPORT_UNASSIGNED", "Report unassigned", lockerService.unassignReport(id));
+    }
+
+    @PutMapping("/api/admin/lockers/reports/{id}/extend-sla")
+    public ApiResponse<LockerReportResponse> adminExtendReportSla(
+            @PathVariable Long id,
+            @Valid @RequestBody ExtendSlaRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long actorUserId) {
+        return ApiResponse.ok(
+                "SLA_EXTENDED",
+                "Đã gia hạn SLA thành công",
+                lockerService.extendSla(id, body.extensionHours(), body.reason(), actorUserId));
     }
 
     @GetMapping("/api/admin/lockers/technicians/{id}/performance")

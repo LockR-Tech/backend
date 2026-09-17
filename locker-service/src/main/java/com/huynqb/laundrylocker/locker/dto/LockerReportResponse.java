@@ -26,6 +26,8 @@ public record LockerReportResponse(
         Integer slaHours,
         LocalDateTime slaDueAt,
         Boolean overdue,
+        Integer slaExtendedHours,
+        String slaExtensionReason,
         String reporterName,
         String reporterPhone,
         List<ReportAttachmentResponse> attachments) {
