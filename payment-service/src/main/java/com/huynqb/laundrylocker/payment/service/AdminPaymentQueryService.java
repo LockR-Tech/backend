@@ -45,7 +45,6 @@ import static com.huynqb.laundrylocker.payment.service.PaymentReportRules.amount
 public class AdminPaymentQueryService {
 
     public static final int MAX_PAGE_SIZE = 100;
-    static final String ORDER_PAYMENT_REF_PREFIX = "ORDERPAY-";
 
     private final PaymentRepository paymentRepository;
     private final RefundRepository refundRepository;
@@ -116,17 +115,23 @@ public class AdminPaymentQueryService {
                     .ifPresent(walletTransactions::add);
         } else if ("WALLET".equalsIgnoreCase(payment.getMethod())) {
             walletTransactionRepository
-                    .findFirstBySourceAndReferenceId(WalletService.SOURCE_ORDER_PAYMENT, ORDER_PAYMENT_REF_PREFIX + payment.getOrderId())
+                    .findFirstBySourceAndReferenceId(
+                            WalletService.SOURCE_ORDER_PAYMENT,
+                            WalletTransactionRefs.ORDER_PAYMENT_REF_PREFIX + payment.getOrderId())
                     .filter(tx -> Objects.equals(tx.getUserId(), payment.getUserId()))
                     .ifPresent(walletTransactions::add);
         }
         Map<Long, UserSummary> users = resolver.users(refunds.stream().map(RefundRecord::getProcessedByUserId).toList());
+        Map<Long, OrderBrief> walletOrders = resolver.orders(
+                walletTransactions.stream().map(WalletTransactionRefs::relatedOrderId).toList());
         return new AdminPaymentDetailResponse(
                 responses.get(0),
                 refunds.stream()
                         .map(r -> toRefund(r, payment, responses.get(0).order(), responses.get(0).customer(), users))
                         .toList(),
-                walletTransactions.stream().map(tx -> toWallet(tx, responses.get(0).customer())).toList(),
+                walletTransactions.stream()
+                        .map(tx -> toWallet(tx, responses.get(0).customer(), walletOrders))
+                        .toList(),
                 responses.subList(1, responses.size()));
     }
 
@@ -168,8 +173,10 @@ public class AdminPaymentQueryService {
                         walletReferenceLike(c.q())),
                 pageable(c.page(), c.size(), c.sort(), Set.of("createdAt", "amount", "id"), "createdAt"));
         Map<Long, UserSummary> users = resolver.users(page.getContent().stream().map(WalletTransaction::getUserId).toList());
+        Map<Long, OrderBrief> orders = resolver.orders(
+                page.getContent().stream().map(WalletTransactionRefs::relatedOrderId).toList());
         return page(page, page.getContent().stream()
-                .map(tx -> toWallet(tx, person(lookup(users, tx.getUserId()))))
+                .map(tx -> toWallet(tx, person(lookup(users, tx.getUserId())), orders))
                 .toList());
     }
 
@@ -208,23 +215,14 @@ public class AdminPaymentQueryService {
                 person(lookup(users, r.getProcessedByUserId())));
     }
 
-    private AdminWalletTransactionResponse toWallet(WalletTransaction tx, PersonRef customer) {
+    private AdminWalletTransactionResponse toWallet(
+            WalletTransaction tx, PersonRef customer, Map<Long, OrderBrief> orders) {
+        Long orderId = WalletTransactionRefs.relatedOrderId(tx);
+        OrderBrief order = orderId == null ? null : orders.get(orderId);
         return new AdminWalletTransactionResponse(
                 tx.getId(), tx.getWalletId(), tx.getUserId(), tx.getType(), tx.getAmount(), tx.getBalanceAfter(),
-                tx.getSource(), tx.getReferenceId(), tx.getDescription(), tx.getCreatedAt(), relatedOrderId(tx), customer);
-    }
-
-    static Long relatedOrderId(WalletTransaction tx) {
-        if (!WalletService.SOURCE_ORDER_PAYMENT.equalsIgnoreCase(tx.getSource())
-                || tx.getReferenceId() == null
-                || !tx.getReferenceId().startsWith(ORDER_PAYMENT_REF_PREFIX)) {
-            return null;
-        }
-        try {
-            return Long.parseLong(tx.getReferenceId().substring(ORDER_PAYMENT_REF_PREFIX.length()));
-        } catch (NumberFormatException ex) {
-            return null;
-        }
+                tx.getSource(), tx.getReferenceId(), tx.getDescription(), tx.getCreatedAt(),
+                orderId, order == null ? null : order.orderCode(), customer);
     }
 
     static Pageable pageable(int page, int size, String sort, Set<String> sortable, String defaultField) {

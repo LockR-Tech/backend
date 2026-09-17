@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.payment.service;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.payment.dto.WalletResponse;
 import com.huynqb.laundrylocker.payment.dto.WalletTransactionResponse;
+import com.huynqb.laundrylocker.payment.dto.admin.OrderBrief;
 import com.huynqb.laundrylocker.payment.model.Wallet;
 import com.huynqb.laundrylocker.payment.model.WalletTransaction;
 import com.huynqb.laundrylocker.payment.repository.WalletRepository;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -25,6 +27,7 @@ public class WalletService {
 
     private final WalletRepository walletRepository;
     private final WalletTransactionRepository transactionRepository;
+    private final PaymentReferenceResolver resolver;
 
     @Transactional
     public Wallet getOrCreate(Long userId) {
@@ -48,9 +51,13 @@ public class WalletService {
 
     @Transactional(readOnly = true)
     public List<WalletTransactionResponse> history(Long userId) {
-        return transactionRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .map(this::toResponse)
-                .toList();
+        List<WalletTransaction> transactions = transactionRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        // Tra cứu theo lô (một lời gọi Feign cho cả trang) thay vì mỗi giao dịch một lần —
+        // cùng cơ chế PaymentReferenceResolver mà trang admin đang dùng, nên "mã đơn hàng"
+        // app khách thấy luôn khớp với admin cho cùng một biến động.
+        Map<Long, OrderBrief> orders = resolver.orders(
+                transactions.stream().map(WalletTransactionRefs::relatedOrderId).toList());
+        return transactions.stream().map(tx -> toResponse(tx, orders)).toList();
     }
 
     /**
@@ -143,7 +150,9 @@ public class WalletService {
         return wallet;
     }
 
-    private WalletTransactionResponse toResponse(WalletTransaction tx) {
+    private WalletTransactionResponse toResponse(WalletTransaction tx, Map<Long, OrderBrief> orders) {
+        Long orderId = WalletTransactionRefs.relatedOrderId(tx);
+        OrderBrief order = orderId == null ? null : orders.get(orderId);
         return new WalletTransactionResponse(
                 tx.getId(),
                 tx.getType(),
@@ -152,6 +161,8 @@ public class WalletService {
                 tx.getSource(),
                 tx.getReferenceId(),
                 tx.getDescription(),
-                tx.getCreatedAt());
+                tx.getCreatedAt(),
+                orderId,
+                order == null ? null : order.orderCode());
     }
 }
