@@ -1777,7 +1777,12 @@ public class OrderService {
                 order.getCompletedAt(),
                 order.getCreatedAt(),
                 order.getUpdatedAt(),
-                details);
+                details,
+                order.getReceiverName(),
+                order.getReceiverPhone(),
+                order.getCustomerNote(),
+                order.getDeliveryAddress(),
+                order.getRentalDurationHours());
     }
 
     private DroneDeliveryOrderResponse toDroneDeliveryResponse(LockerOrder order) {
