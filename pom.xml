@@ -54,6 +54,7 @@
         <spring-data-bom.version>2025.0.12</spring-data-bom.version> <!-- release train của spring-data-commons 3.5.12 -->
         <postgresql.version>42.7.12</postgresql.version>          <!-- 42.7.10: 3 CVE -->
         <micrometer.version>1.15.12</micrometer.version>          <!-- 1.15.11: 1 CVE -->
+        <google-auth-library.version>1.29.0</google-auth-library.version> <!-- khớp bản firebase-admin 9.4.2 kéo về, xem ghi chú ở dependencyManagement -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -70,6 +71,23 @@
                 <groupId>org.bouncycastle</groupId>
                 <artifactId>bcprov-jdk18on</artifactId>
                 <version>${bouncycastle.version}</version>
+            </dependency>
+            <!-- firebase-admin 9.4.2 kéo google-auth-library-oauth2-http 1.29.0 trực tiếp,
+                 nhưng google-auth-library-credentials chỉ vào qua google-api-client 2.7.0 ở
+                 bậc sâu hơn nên Maven chọn 1.23.0. Bản đó chưa có CredentialTypeForMetrics
+                 mà oauth2-http 1.29.0 gọi tới ⇒ NoClassDefFoundError lúc FirebaseConfig khởi
+                 tạo, và vì đó là Error chứ không phải Exception nên khối catch fail-soft
+                 không đỡ được: notification-service chết ngay khi thiếu FIREBASE_CREDENTIALS_JSON.
+                 Ghim cùng dòng với oauth2-http để hai artifact khớp nhau. -->
+            <dependency>
+                <groupId>com.google.auth</groupId>
+                <artifactId>google-auth-library-credentials</artifactId>
+                <version>${google-auth-library.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.auth</groupId>
+                <artifactId>google-auth-library-oauth2-http</artifactId>
+                <version>${google-auth-library.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.springdoc</groupId>
