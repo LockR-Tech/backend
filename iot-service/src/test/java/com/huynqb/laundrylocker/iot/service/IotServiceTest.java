@@ -1,9 +1,11 @@
 package com.huynqb.laundrylocker.iot.service;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.iot.client.LockerClient;
 import com.huynqb.laundrylocker.iot.client.OrderClient;
 import com.huynqb.laundrylocker.iot.dto.OrderLookupResponse;
+import com.huynqb.laundrylocker.iot.dto.UnlockRequest;
 import com.huynqb.laundrylocker.iot.dto.UnlockWithCodeRequest;
 import com.huynqb.laundrylocker.iot.model.AccessAttempt;
 import com.huynqb.laundrylocker.iot.repository.AccessAttemptRepository;
@@ -21,12 +23,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -116,5 +121,68 @@ class IotServiceTest {
         assertFalse(Boolean.TRUE.equals(result.valid()));
         assertEquals("Access code is no longer active", result.message());
         verify(accessAttemptRepository, never()).save(org.mockito.ArgumentMatchers.any(AccessAttempt.class));
+    }
+
+    // F2-G01: mở khoá LẤY đồ (đơn đang STORING) phải tự hoàn tất đơn — không còn để
+    // khách tự bấm "hoàn tất" trên app hay đơn treo mãi ở STORING.
+
+    @Test
+    void unlockWithCodeCompletesOrderWhenPickingUpFromStoring() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, null, 9002L, "STORING", "PIN-123", null)));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        verify(lockerClient).openBox(9002L);
+        verify(orderClient).complete(51L, 44L);
+    }
+
+    @Test
+    void unlockWithCodeDoesNotCompleteOrderWhenDroppingOffAtInitialized() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, 9002L, null, "INITIALIZED", "PIN-123", null)));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        verify(lockerClient).openBox(9002L);
+        verify(orderClient, never()).complete(anyLong(), anyLong());
+    }
+
+    @Test
+    void unlockCompletesOrderWhenPickingUpFromReturned() {
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, null, 9002L, "RETURNED", "PIN-123", null)));
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlock(new UnlockRequest(7L, 9002L, "PIN-123"), 44L);
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        verify(orderClient).complete(51L, 44L);
+    }
+
+    @Test
+    void unlockKeepsDoorOpenResultEvenWhenAutoCompleteFails() {
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, null, 9002L, "STORING", "PIN-123", null)));
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+        when(orderClient.complete(eq(51L), eq(44L))).thenThrow(new RuntimeException("ORDER_PAYMENT_REQUIRED"));
+
+        Map<String, Object> result = iotService.unlock(new UnlockRequest(7L, 9002L, "PIN-123"), 44L);
+
+        // Cửa đã mở thật — một lỗi hoàn tất không được biến phản hồi thành "thất bại".
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        verify(lockerClient).openBox(9002L);
     }
 }

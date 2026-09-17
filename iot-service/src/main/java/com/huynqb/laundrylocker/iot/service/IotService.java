@@ -69,6 +69,7 @@ public class IotService {
             }
             lockerClient.openBox(request.boxId());
             logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "SUCCESS", null);
+            completeIfPickup(verification.orderId(), verification.orderStatus(), verification.orderUserId());
             return Map.of("accepted", true, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Unlock command accepted");
         } catch (Exception e) {
             log.error("Timeout or error waiting for IoT device", e);
@@ -146,6 +147,7 @@ public class IotService {
             }
             lockerClient.openBox(boxId);
             logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "SUCCESS", null);
+            completeIfPickup(order.id(), order.status(), order.userId());
             return Map.of(
                     "accepted", true,
                     "lockerId", request.lockerId(),
@@ -167,24 +169,48 @@ public class IotService {
     public VerifyPinResponse verifyAccess(Long boxId, String code) {
         LocalDateTime lockedUntil = accessAttemptRepository.findById(boxId).map(AccessAttempt::getLockedUntil).orElse(null);
         if (lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now())) {
-            return new VerifyPinResponse(false, null, boxId, null, "Box temporarily locked after repeated failed attempts. Try again later.");
+            return new VerifyPinResponse(false, null, boxId, null, "Box temporarily locked after repeated failed attempts. Try again later.", null);
         }
         try {
             OrderLookupResponse order = orderClient.getByAccess(code).data();
             if (!isCredentialActive(order.status())) {
-                return new VerifyPinResponse(false, order.id(), boxId, order.status(), "Access code is no longer active");
+                return new VerifyPinResponse(false, order.id(), boxId, order.status(), "Access code is no longer active", order.userId());
             }
             boolean validBox =
                     boxId.equals(order.sendBoxId()) || boxId.equals(order.receiveBoxId());
             if (!validBox) {
                 recordFailedAttempt(boxId);
-                return new VerifyPinResponse(false, order.id(), boxId, order.status(), "Access code does not match this box");
+                return new VerifyPinResponse(false, order.id(), boxId, order.status(), "Access code does not match this box", order.userId());
             }
             resetAttempts(boxId);
-            return new VerifyPinResponse(true, order.id(), boxId, order.status(), "Access verified");
+            return new VerifyPinResponse(true, order.id(), boxId, order.status(), "Access verified", order.userId());
         } catch (Exception ex) {
             recordFailedAttempt(boxId);
-            return new VerifyPinResponse(false, null, boxId, null, "Invalid access code");
+            return new VerifyPinResponse(false, null, boxId, null, "Invalid access code", null);
+        }
+    }
+
+    /// F2-G01: mở khoá để LẤY đồ (đơn đang STORING/RETURNED) trước đây không hoàn tất
+    /// đơn — đơn cứ nằm mãi ở STORING, PIN/QR còn dùng lại được tới khi hết hạn thay vì
+    /// bị thu hồi ngay. Việc PIN/QR vừa xác thực đúng (verifyAccess) đã chứng minh người
+    /// mở có quyền — không cần đợi khách tự bấm "hoàn tất" trên app (họ có thể đang dùng
+    /// kiosk, không đăng nhập). Chỉ kích hoạt khi đơn đang STORING/RETURNED — mở để BỎ đồ
+    /// (đơn còn INITIALIZED) không được đụng vào.
+    ///
+    /// Best-effort, có chủ đích: cửa đã mở thật rồi, một lỗi hoàn tất (VD đơn chưa thanh
+    /// toán) không được biến phản hồi mở khoá thành "thất bại" — khách vẫn đang đứng
+    /// trước tủ đã mở. Nút "Tôi đã lấy đồ — hoàn tất" trên app vẫn còn để tự làm lại.
+    private void completeIfPickup(Long orderId, String orderStatus, Long orderUserId) {
+        if (orderId == null || orderUserId == null) {
+            return;
+        }
+        if (!"STORING".equalsIgnoreCase(orderStatus) && !"RETURNED".equalsIgnoreCase(orderStatus)) {
+            return;
+        }
+        try {
+            orderClient.complete(orderId, orderUserId);
+        } catch (Exception ex) {
+            log.warn("Auto-complete order {} after pickup unlock failed: {}", orderId, ex.getMessage());
         }
     }
 
