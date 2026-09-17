@@ -50,6 +50,15 @@ public class LockerReport {
     @Column(name = "resolved_at")
     private LocalDateTime resolvedAt;
 
+    @Column(name = "sla_due_at")
+    private LocalDateTime slaDueAt;
+
+    @Column(name = "sla_extended_hours")
+    private Integer slaExtendedHours = 0;
+
+    @Column(name = "sla_extension_reason", length = 1000)
+    private String slaExtensionReason;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -60,6 +69,12 @@ public class LockerReport {
     void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = createdAt;
+        if (slaDueAt == null) {
+            slaDueAt = createdAt.plusHours(4);
+        }
+        if (slaExtendedHours == null) {
+            slaExtendedHours = 0;
+        }
     }
 
     @PreUpdate

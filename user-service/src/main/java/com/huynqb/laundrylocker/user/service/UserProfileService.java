@@ -173,11 +173,21 @@ public class UserProfileService {
     }
 
     private void apply(UserProfile user, UserProfileRequest request) {
-        user.setEmail(request.email());
-        user.setPhoneNumber(request.phoneNumber());
-        user.setFirstName(request.firstName());
-        user.setLastName(request.lastName());
-        user.setBirthday(request.birthday());
+        if (request.email() != null) {
+            user.setEmail(request.email());
+        }
+        if (request.phoneNumber() != null) {
+            user.setPhoneNumber(request.phoneNumber());
+        }
+        if (request.firstName() != null) {
+            user.setFirstName(request.firstName());
+        }
+        if (request.lastName() != null) {
+            user.setLastName(request.lastName());
+        }
+        if (request.birthday() != null) {
+            user.setBirthday(request.birthday());
+        }
         // Form hồ sơ không gửi ảnh ⇒ giữ avatar hiện tại; đổi/xoá avatar qua /avatar.
         if (StringUtils.hasText(request.imageUrl())) {
             user.setImageUrl(request.imageUrl());
