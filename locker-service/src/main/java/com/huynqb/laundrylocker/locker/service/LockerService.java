@@ -38,6 +38,7 @@ public class LockerService {
     private final LockerReportRepository reportRepository;
     private final RepairLogRepository repairLogRepository;
     private final MaintenanceScheduleRepository scheduleRepository;
+    private final MaintenanceInspectionLogRepository inspectionLogRepository;
     private final LockerReportRatingRepository ratingRepository;
     private final DroneUnitRepository droneUnitRepository;
     private final DroneMaintenanceLogRepository droneMaintenanceLogRepository;
@@ -798,7 +799,16 @@ public class LockerService {
         }
         schedule.setTitle(request.title());
         schedule.setIntervalDays(request.intervalDays());
-        schedule.setNextDueAt(LocalDateTime.now().plusDays(request.intervalDays()));
+        schedule.setAssignedTechnicianId(request.assignedTechnicianId());
+        schedule.setPriority(StringUtils.hasText(request.priority()) ? request.priority() : "NORMAL");
+        schedule.setDescription(request.description());
+        schedule.setLocationNote(request.locationNote());
+        schedule.setScheduledTimeSlot(request.scheduledTimeSlot());
+        schedule.setChecklist(request.checklist());
+        LocalDateTime dueAt = request.firstDueDate() != null
+                ? request.firstDueDate()
+                : LocalDateTime.now().plusDays(request.intervalDays());
+        schedule.setNextDueAt(dueAt);
         schedule.setActive(true);
         return toSchedule(scheduleRepository.save(schedule));
     }
@@ -813,6 +823,13 @@ public class LockerService {
     /// KTV đã kiểm tra xong lần này: dời mốc đến hạn = now + intervalDays.
     @Transactional
     public MaintenanceScheduleResponse completeSchedule(Long id) {
+        return completeSchedule(id, null, null);
+    }
+
+    /// Hoàn tất kiểm tra định kỳ có kèm thông tin biên bản & lưu log kiểm tra.
+    @Transactional
+    public MaintenanceScheduleResponse completeSchedule(
+            Long id, CompleteScheduleRequest req, Long actorUserId) {
         MaintenanceSchedule schedule =
                 scheduleRepository
                         .findById(id)
@@ -820,6 +837,155 @@ public class LockerService {
         LocalDateTime now = LocalDateTime.now();
         schedule.setLastDoneAt(now);
         schedule.setNextDueAt(now.plusDays(schedule.getIntervalDays()));
+        MaintenanceSchedule saved = scheduleRepository.save(schedule);
+
+        // Lưu bản ghi nhật ký kiểm định định kỳ
+        MaintenanceInspectionLog inspectionLog = new MaintenanceInspectionLog();
+        inspectionLog.setScheduleId(saved.getId());
+        inspectionLog.setLockerId(saved.getLockerId());
+        inspectionLog.setDroneUnitId(saved.getDroneUnitId());
+
+        Long techId = req != null && req.technicianId() != null ? req.technicianId() : actorUserId;
+        if (techId == null) {
+            techId = saved.getAssignedTechnicianId();
+        }
+        inspectionLog.setTechnicianId(techId);
+
+        String techName = req != null ? req.technicianName() : null;
+        if (!StringUtils.hasText(techName) && techId != null) {
+            techName = resolveUserName(techId);
+        }
+        inspectionLog.setTechnicianName(techName);
+        inspectionLog.setStatus(req != null && StringUtils.hasText(req.status()) ? req.status() : "PASSED");
+        inspectionLog.setNote(req != null ? req.note() : null);
+        if (req != null && req.photoUrls() != null && !req.photoUrls().isEmpty()) {
+            inspectionLog.setPhotoUrls(String.join(",", req.photoUrls()));
+        }
+        inspectionLog.setChecklistResults(req != null ? req.checklistResults() : null);
+
+        // Nếu phát hiện hỏng hóc cần tạo phiếu sự cố tự động
+        if (req != null && Boolean.TRUE.equals(req.autoCreateReport()) && saved.getLockerId() != null) {
+            LockerReport report = new LockerReport();
+            report.setLockerId(saved.getLockerId());
+            report.setUserId(techId == null ? 0L : techId);
+            report.setTitle("Sự cố qua kiểm tra định kỳ: " + saved.getTitle());
+            report.setDescription(
+                    StringUtils.hasText(req.faultReason())
+                            ? req.faultReason()
+                            : (StringUtils.hasText(req.note())
+                                    ? req.note()
+                                    : "Phát hiện lỗi trong ca kiểm tra định kỳ"));
+            report.setStatus("OPEN");
+            if (req.faultBoxId() != null) {
+                report.setBoxId(req.faultBoxId());
+                boxRepository.findById(req.faultBoxId()).ifPresent(box -> {
+                    box.setStatus("FAULT");
+                    boxRepository.save(box);
+                });
+            }
+            LockerReport savedReport = reportRepository.save(report);
+            inspectionLog.setCreatedReportId(savedReport.getId());
+        }
+
+        inspectionLogRepository.save(inspectionLog);
+        return toSchedule(saved);
+    }
+
+    /// Lấy danh sách lịch sử kiểm tra định kỳ
+    @Transactional(readOnly = true)
+    public List<MaintenanceInspectionLogResponse> listInspectionLogs(
+            Long scheduleId, Long lockerId, Long technicianId) {
+        List<MaintenanceInspectionLog> logs;
+        if (scheduleId != null) {
+            logs = inspectionLogRepository.findByScheduleIdOrderByCreatedAtDesc(scheduleId);
+        } else if (lockerId != null) {
+            logs = inspectionLogRepository.findByLockerIdOrderByCreatedAtDesc(lockerId);
+        } else if (technicianId != null) {
+            logs = inspectionLogRepository.findByTechnicianIdOrderByCreatedAtDesc(technicianId);
+        } else {
+            logs = inspectionLogRepository.findAllByOrderByCreatedAtDesc();
+        }
+        return logs.stream().map(this::toInspectionLogResponse).toList();
+    }
+
+    private MaintenanceInspectionLogResponse toInspectionLogResponse(MaintenanceInspectionLog log) {
+        LockerUnit locker = log.getLockerId() == null ? null : lockerRepository.findById(log.getLockerId()).orElse(null);
+        DroneUnit drone = log.getDroneUnitId() == null ? null : droneUnitRepository.findById(log.getDroneUnitId()).orElse(null);
+        List<String> photos = StringUtils.hasText(log.getPhotoUrls())
+                ? java.util.Arrays.asList(log.getPhotoUrls().split(","))
+                : List.of();
+        return new MaintenanceInspectionLogResponse(
+                log.getId(),
+                log.getScheduleId(),
+                log.getLockerId(),
+                locker == null ? null : locker.getName(),
+                locker == null ? null : locker.getCode(),
+                log.getDroneUnitId(),
+                drone == null ? null : drone.getCode(),
+                log.getTechnicianId(),
+                log.getTechnicianName(),
+                log.getStatus(),
+                log.getNote(),
+                photos,
+                log.getChecklistResults(),
+                log.getCreatedReportId(),
+                log.getCreatedAt());
+    }
+
+    private String resolveUserName(Long userId) {
+        if (userId == null) return null;
+        try {
+            var resp = userClient.getUser(userId);
+            if (resp != null && resp.data() != null && StringUtils.hasText(resp.data().fullName())) {
+                return resp.data().fullName();
+            }
+        } catch (Exception ignored) {}
+        return "KTV #" + userId;
+    }
+
+    /// Phân công hoặc thay đổi KTV phụ trách lịch kiểm tra định kỳ
+    @Transactional
+    public MaintenanceScheduleResponse assignTechnician(Long id, Long technicianId) {
+        MaintenanceSchedule schedule = scheduleRepository
+                .findById(id)
+                .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        schedule.setAssignedTechnicianId(technicianId);
+        return toSchedule(scheduleRepository.save(schedule));
+    }
+
+    /// Cập nhật thông tin lịch kiểm tra định kỳ (chu kỳ, ưu tiên, checklist, mô tả, KTV)
+    @Transactional
+    public MaintenanceScheduleResponse updateSchedule(Long id, MaintenanceScheduleRequest request) {
+        MaintenanceSchedule schedule = scheduleRepository
+                .findById(id)
+                .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        if (request.title() != null) {
+            schedule.setTitle(request.title());
+        }
+        if (request.intervalDays() != null && request.intervalDays() > 0) {
+            schedule.setIntervalDays(request.intervalDays());
+        }
+        if (request.assignedTechnicianId() != null) {
+            schedule.setAssignedTechnicianId(request.assignedTechnicianId());
+        }
+        if (StringUtils.hasText(request.priority())) {
+            schedule.setPriority(request.priority());
+        }
+        if (request.description() != null) {
+            schedule.setDescription(request.description());
+        }
+        if (request.locationNote() != null) {
+            schedule.setLocationNote(request.locationNote());
+        }
+        if (request.scheduledTimeSlot() != null) {
+            schedule.setScheduledTimeSlot(request.scheduledTimeSlot());
+        }
+        if (request.checklist() != null) {
+            schedule.setChecklist(request.checklist());
+        }
+        if (request.firstDueDate() != null) {
+            schedule.setNextDueAt(request.firstDueDate());
+        }
         return toSchedule(scheduleRepository.save(schedule));
     }
 
@@ -845,6 +1011,9 @@ public class LockerService {
                 Boolean.TRUE.equals(s.getActive())
                         && s.getNextDueAt() != null
                         && !LocalDateTime.now().isBefore(s.getNextDueAt());
+        String techName = s.getAssignedTechnicianId() == null
+                ? null
+                : resolveUserName(s.getAssignedTechnicianId());
         return new MaintenanceScheduleResponse(
                 s.getId(),
                 s.getLockerId(),
@@ -857,7 +1026,16 @@ public class LockerService {
                 s.getLastDoneAt(),
                 s.getNextDueAt(),
                 s.getActive(),
-                due);
+                due,
+                s.getAssignedTechnicianId(),
+                techName,
+                s.getPriority() != null ? s.getPriority() : "NORMAL",
+                s.getDescription(),
+                s.getChecklist(),
+                locker == null ? null : locker.getStoreId(),
+                locker == null ? null : locker.getAddress(),
+                s.getLocationNote(),
+                s.getScheduledTimeSlot());
     }
 
     // ---- Drone fleet (thiết bị bay vật lý, khác ô tủ cellType=DRONE) ----

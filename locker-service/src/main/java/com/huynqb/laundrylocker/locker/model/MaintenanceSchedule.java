@@ -25,6 +25,24 @@ public class MaintenanceSchedule {
     @Column(name = "drone_unit_id")
     private Long droneUnitId;
 
+    @Column(name = "assigned_technician_id")
+    private Long assignedTechnicianId;
+
+    @Column(length = 20)
+    private String priority = "NORMAL";
+
+    @Column(length = 2000)
+    private String description;
+
+    @Column(name = "location_note", length = 500)
+    private String locationNote;
+
+    @Column(name = "scheduled_time_slot", length = 100)
+    private String scheduledTimeSlot;
+
+    @Column(columnDefinition = "TEXT")
+    private String checklist;
+
     @Column(nullable = false, length = 255)
     private String title;
 

@@ -47,6 +47,8 @@ class LockerServiceDroneFleetTest {
     @Mock
     private MaintenanceScheduleRepository scheduleRepository;
     @Mock
+    private MaintenanceInspectionLogRepository inspectionLogRepository;
+    @Mock
     private LockerReportRatingRepository ratingRepository;
     @Mock
     private DroneUnitRepository droneUnitRepository;
@@ -75,6 +77,7 @@ class LockerServiceDroneFleetTest {
                         reportRepository,
                         repairLogRepository,
                         scheduleRepository,
+                        inspectionLogRepository,
                         ratingRepository,
                         droneUnitRepository,
                         droneMaintenanceLogRepository,

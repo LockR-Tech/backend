@@ -41,6 +41,7 @@ class LockerServiceReportPhotoTest {
     @Mock private LockerReportRepository reportRepository;
     @Mock private RepairLogRepository repairLogRepository;
     @Mock private MaintenanceScheduleRepository scheduleRepository;
+    @Mock private MaintenanceInspectionLogRepository inspectionLogRepository;
     @Mock private LockerReportRatingRepository ratingRepository;
     @Mock private DroneUnitRepository droneUnitRepository;
     @Mock private DroneMaintenanceLogRepository droneMaintenanceLogRepository;
@@ -57,8 +58,8 @@ class LockerServiceReportPhotoTest {
         settings = TestLockerRules.settings(Map.of());
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
-                ratingRepository, droneUnitRepository, droneMaintenanceLogRepository, iotClient, userClient,
-                attachmentService, rabbitTemplate, new LockerRules(settings));
+                inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
+                iotClient, userClient, attachmentService, rabbitTemplate, new LockerRules(settings));
         when(reportRepository.save(any(LockerReport.class))).thenAnswer(invocation -> {
             LockerReport report = invocation.getArgument(0);
             if (report.getId() == null) {

@@ -284,15 +284,50 @@ public class LockerController {
     }
 
     @PostMapping("/api/maintenance/schedules/{id}/complete")
-    public ApiResponse<MaintenanceScheduleResponse> maintenanceCompleteSchedule(@PathVariable Long id) {
+    public ApiResponse<MaintenanceScheduleResponse> maintenanceCompleteSchedule(
+            @PathVariable Long id,
+            @RequestBody(required = false) CompleteScheduleRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long actorUserId) {
         return ApiResponse.ok(
-                "SCHEDULE_COMPLETED", "Inspection completed", lockerService.completeSchedule(id));
+                "SCHEDULE_COMPLETED", "Inspection completed", lockerService.completeSchedule(id, body, actorUserId));
+    }
+
+    @GetMapping("/api/maintenance/schedules/{id}/logs")
+    public ApiResponse<List<MaintenanceInspectionLogResponse>> scheduleInspectionLogs(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.listInspectionLogs(id, null, null));
+    }
+
+    @GetMapping("/api/maintenance/inspection-logs")
+    public ApiResponse<List<MaintenanceInspectionLogResponse>> allInspectionLogs(
+            @RequestParam(required = false) Long lockerId,
+            @RequestParam(required = false) Long technicianId) {
+        return ApiResponse.ok(lockerService.listInspectionLogs(null, lockerId, technicianId));
     }
 
     @PostMapping("/api/admin/lockers/schedules")
     public ApiResponse<MaintenanceScheduleResponse> adminCreateSchedule(
             @Valid @RequestBody MaintenanceScheduleRequest request) {
         return ApiResponse.ok("SCHEDULE_CREATED", "Schedule created", lockerService.createSchedule(request));
+    }
+
+    @PutMapping({"/api/admin/lockers/schedules/{id}/assign", "/api/maintenance/schedules/{id}/assign"})
+    public ApiResponse<MaintenanceScheduleResponse> assignTechnicianToSchedule(
+            @PathVariable Long id,
+            @RequestBody AssignTechnicianScheduleRequest request) {
+        return ApiResponse.ok(
+                "SCHEDULE_TECHNICIAN_ASSIGNED",
+                "Technician assigned to schedule",
+                lockerService.assignTechnician(id, request.technicianId()));
+    }
+
+    @PutMapping({"/api/admin/lockers/schedules/{id}", "/api/maintenance/schedules/{id}"})
+    public ApiResponse<MaintenanceScheduleResponse> adminUpdateSchedule(
+            @PathVariable Long id,
+            @RequestBody MaintenanceScheduleRequest request) {
+        return ApiResponse.ok(
+                "SCHEDULE_UPDATED",
+                "Schedule updated",
+                lockerService.updateSchedule(id, request));
     }
 
     @DeleteMapping("/api/admin/lockers/schedules/{id}")
