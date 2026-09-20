@@ -84,5 +84,5 @@ app:
       enabled: ${APP_DRONE_DEMO_ENABLED:true}
       allowed-user-ids: ${APP_DRONE_DEMO_ALLOWED_USER_IDS:}
       source-locker-id: ${APP_DRONE_DEMO_SOURCE_LOCKER_ID:1}
-      stage-delay-ms: ${APP_DRONE_DEMO_STAGE_DELAY_MS:7000}
+      stage-delay-ms: ${APP_DRONE_DEMO_STAGE_DELAY_MS:3000}
       scheduler-delay-ms: ${APP_DRONE_DEMO_SCHEDULER_DELAY_MS:1000}
