@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.order.client;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.order.dto.DroneStatusUpdateRequest;
+import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -22,4 +23,8 @@ public interface LockerDroneClient {
     @PostMapping("/internal/drones/{id}/status")
     ApiResponse<DroneUnitDto> updateDroneStatus(
             @PathVariable Long id, @RequestBody DroneStatusUpdateRequest request);
+
+    @PostMapping("/internal/drones/{id}/status-transition")
+    ApiResponse<DroneUnitDto> transitionDroneStatus(
+            @PathVariable Long id, @RequestBody DroneStatusTransitionRequest request);
 }

@@ -1089,7 +1089,20 @@ public class LockerService {
 
     @Transactional
     public DroneUnitResponse updateDroneStatus(Long id, String status, String reason, Long actorUserId) {
-        return updateDroneStatusInternal(id, status, reason, actorUserId, true);
+        DroneUnit unit = findDroneUnit(id);
+        requireDroneOwnership(unit, actorUserId);
+        if (DroneStatus.RESERVED.equals(status) || DroneStatus.IN_FLIGHT.equals(status)) {
+            throw new BusinessException(
+                    "DRONE_STATUS_WORKFLOW_MANAGED",
+                    status + " is managed by the dispatch workflow");
+        }
+        if ((DroneStatus.RESERVED.equals(unit.getStatus()) || DroneStatus.IN_FLIGHT.equals(unit.getStatus()))
+                && !DroneStatus.FAULT.equals(status)) {
+            throw new BusinessException(
+                    "DRONE_ACTIVE_MISSION",
+                    "Only FAULT can be reported manually while a drone has an active mission");
+        }
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
     }
 
     @Transactional
@@ -1097,8 +1110,27 @@ public class LockerService {
         return updateDroneStatusInternal(id, status, reason, null, false);
     }
 
+    @Transactional
+    public DroneUnitResponse transitionDroneStatusInternal(
+            Long id, String expectedStatus, String status, String reason) {
+        DroneUnit unit = droneUnitRepository
+                .findByIdForUpdate(id)
+                .orElseThrow(() -> new NotFoundException("DroneUnit", id));
+        if (!expectedStatus.equals(unit.getStatus())) {
+            throw new BusinessException(
+                    "DRONE_STATUS_CONFLICT",
+                    "Drone status changed; expected " + expectedStatus + " but was " + unit.getStatus());
+        }
+        return updateDroneStatusInternal(unit, status, reason, null, false);
+    }
+
     private DroneUnitResponse updateDroneStatusInternal(
             Long id, String status, String reason, Long actorUserId, boolean requireOwnership) {
+        return updateDroneStatusInternal(findDroneUnit(id), status, reason, actorUserId, requireOwnership);
+    }
+
+    private DroneUnitResponse updateDroneStatusInternal(
+            DroneUnit unit, String status, String reason, Long actorUserId, boolean requireOwnership) {
         if (!DroneStatus.ALL.contains(status)) {
             throw new BusinessException("DRONE_STATUS_INVALID", "Unknown drone status: " + status);
         }
@@ -1107,9 +1139,11 @@ public class LockerService {
         if (fault && !StringUtils.hasText(normalizedReason)) {
             throw new BusinessException("DRONE_FAULT_REASON_REQUIRED", "A reason is required to mark a drone as FAULT");
         }
-        DroneUnit unit = findDroneUnit(id);
         if (requireOwnership) {
             requireDroneOwnership(unit, actorUserId);
+        }
+        if (DroneStatus.IN_FLIGHT.equals(status) && !Boolean.TRUE.equals(unit.getActive())) {
+            throw new BusinessException("DRONE_INACTIVE", "Inactive drone cannot take off");
         }
         // #7 An toan: khong cho cat canh khi pin qua thap.
         if (DroneStatus.IN_FLIGHT.equals(status)

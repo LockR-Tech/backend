@@ -97,14 +97,12 @@ public class DroneDeliveryService {
         if (droneUnitId != null) {
             DroneUnit drone =
                     droneUnitRepository
-                            .findById(droneUnitId)
+                            .findByIdForUpdate(droneUnitId)
                             .orElseThrow(() -> new BusinessException("DRONE_NOT_FOUND", "Drone not found"));
             if (!Boolean.TRUE.equals(drone.getActive())) {
                 throw new BusinessException("DRONE_INACTIVE", "Drone has been decommissioned");
             }
-            if (DroneStatus.FAULT.equals(drone.getStatus())
-                    || DroneStatus.MAINTENANCE.equals(drone.getStatus())
-                    || DroneStatus.IN_FLIGHT.equals(drone.getStatus())) {
+            if (!DroneStatus.IDLE.equals(drone.getStatus())) {
                 throw new BusinessException(
                         "DRONE_NOT_AVAILABLE", "Drone is not available for dispatch: " + drone.getStatus());
             }

@@ -4,7 +4,7 @@ import com.huynqb.laundrylocker.order.settings.TestOrderRules;
 
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
-import com.huynqb.laundrylocker.order.dto.DroneStatusUpdateRequest;
+import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
@@ -35,6 +35,11 @@ class DroneDeliverySimulatorTest {
     private NotificationClient notificationClient;
     @Mock
     private LockerDroneClient lockerDroneClient;
+
+    @Test
+    void defaultsDemoStagesToThreeSecondsForFastEndToEndTesting() {
+        assertEquals(3000, TestOrderRules.defaults().droneDemoStageDelayMs());
+    }
 
     @Test
     void advancesLaunchingDemoMissionToDepartedAfterConfiguredDelay() {
@@ -75,7 +80,7 @@ class DroneDeliverySimulatorTest {
         assertNotNull(order.getPinCode());
         assertNotNull(order.getPickupDeadline());
         verify(lockerDroneClient)
-                .updateDroneStatus(9L, new DroneStatusUpdateRequest("IDLE", null));
+                .transitionDroneStatus(9L, new DroneStatusTransitionRequest("IN_FLIGHT", "IDLE", null));
         verify(notificationClient).requestNotification(any());
     }
 
@@ -91,7 +96,7 @@ class DroneDeliverySimulatorTest {
         when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
         doThrow(new RuntimeException("locker-service unavailable"))
                 .when(lockerDroneClient)
-                .updateDroneStatus(9L, new DroneStatusUpdateRequest("IDLE", null));
+                .transitionDroneStatus(9L, new DroneStatusTransitionRequest("IN_FLIGHT", "IDLE", null));
 
         simulator.advanceEligibleMissions(LocalDateTime.now());
 

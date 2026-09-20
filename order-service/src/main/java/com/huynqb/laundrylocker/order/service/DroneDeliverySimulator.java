@@ -3,7 +3,7 @@ package com.huynqb.laundrylocker.order.service;
 import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
-import com.huynqb.laundrylocker.order.dto.DroneStatusUpdateRequest;
+import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
@@ -93,8 +93,8 @@ public class DroneDeliverySimulator {
             return;
         }
         try {
-            lockerDroneClient.updateDroneStatus(
-                    mission.getDroneUnitId(), new DroneStatusUpdateRequest("IDLE", null));
+            lockerDroneClient.transitionDroneStatus(
+                    mission.getDroneUnitId(), new DroneStatusTransitionRequest("IN_FLIGHT", "IDLE", null));
         } catch (Exception ignored) {
             // A delivered parcel stays authoritative even if fleet status sync is temporarily unavailable.
         }

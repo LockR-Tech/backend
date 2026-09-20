@@ -61,27 +61,40 @@ public class DroneOrderMaintenanceService {
             DroneUnitDto currentDrone = fetchDrone(existingMission.getDroneUnitId());
             return toResponse(order, existingMission, currentDrone);
         }
+        if (existingMission != null) {
+            throw new BusinessException(
+                    "DRONE_MISSION_ALREADY_EXISTS", "Order already has a drone mission");
+        }
 
         DroneUnitDto drone = fetchDrone(request.droneUnitId());
         validateDronePreflight(drone);
         LockerLayoutDto layout = fetchLockerLayout(requireDestinationLockerId(order));
         validateLockerPreflight(layout);
 
-        DroneMission mission = existingMission == null ? new DroneMission() : existingMission;
-        mission.setOrderId(order.getId());
-        mission.setDroneUnitId(drone.id());
-        mission.setSourceLockerId(drone.lockerId());
-        mission.setDestinationLockerId(requireDestinationLockerId(order));
-        mission.setAssignedByUserId(userId);
-        mission.setStatus("READY_TO_LAUNCH");
-        mission.setLastAcceptIdempotencyKey(idempotencyKey);
-        mission.setReadyToLaunchAt(LocalDateTime.now());
-        mission = missionRepository.save(mission);
+        DroneUnitDto reservedDrone = transitionDroneStatus(
+                drone.id(), "IDLE", "RESERVED", "Reserved for order " + order.getOrderCode());
 
-        order.setDeliveryStage("ACCEPTED");
-        order.setStaffId(userId);
-        orderRepository.save(order);
-        return toResponse(order, mission, drone);
+        try {
+            DroneMission mission = new DroneMission();
+            mission.setOrderId(order.getId());
+            mission.setDroneUnitId(reservedDrone.id());
+            mission.setDroneCode(reservedDrone.code());
+            mission.setSourceLockerId(reservedDrone.lockerId());
+            mission.setDestinationLockerId(requireDestinationLockerId(order));
+            mission.setAssignedByUserId(userId);
+            mission.setStatus("READY_TO_LAUNCH");
+            mission.setLastAcceptIdempotencyKey(idempotencyKey);
+            mission.setReadyToLaunchAt(LocalDateTime.now());
+            mission = missionRepository.save(mission);
+
+            order.setDeliveryStage("ACCEPTED");
+            order.setStaffId(userId);
+            orderRepository.save(order);
+            return toResponse(order, mission, reservedDrone);
+        } catch (RuntimeException failure) {
+            releaseReservationQuietly(reservedDrone.id());
+            throw failure;
+        }
     }
 
     @Transactional
@@ -98,8 +111,12 @@ public class DroneOrderMaintenanceService {
             throw new BusinessException("DRONE_MISSION_STATUS_INVALID", "Drone mission is not ready to launch");
         }
 
-        DroneStatusUpdateRequest statusRequest = new DroneStatusUpdateRequest("IN_FLIGHT", null);
-        DroneUnitDto updatedDrone = requireData(lockerDroneClient.updateDroneStatus(mission.getDroneUnitId(), statusRequest), "DRONE_STATUS_SYNC_FAILED");
+        DroneUnitDto drone = fetchDrone(mission.getDroneUnitId());
+        validateReservedDroneForLaunch(drone);
+        LockerLayoutDto layout = fetchLockerLayout(requireDestinationLockerId(order));
+        validateLockerPreflight(layout);
+        DroneUnitDto updatedDrone = transitionDroneStatus(
+                mission.getDroneUnitId(), "RESERVED", "IN_FLIGHT", null);
         mission.setStatus("LAUNCHING");
         mission.setLastLaunchIdempotencyKey(idempotencyKey);
         mission.setLaunchingAt(LocalDateTime.now());
@@ -135,6 +152,7 @@ public class DroneOrderMaintenanceService {
         }
 
         String oldStatus = order.getStatus();
+        releaseReservationIfHeld(mission.getDroneUnitId());
         if (order.getReservedBoxId() != null) {
             lockerClient.releaseBox(order.getReservedBoxId());
         }
@@ -184,7 +202,9 @@ public class DroneOrderMaintenanceService {
     }
 
     private LockerOrder findDroneOrder(Long orderId) {
-        LockerOrder order = orderRepository.findById(orderId).orElseThrow(() -> new NotFoundException("Order", orderId));
+        LockerOrder order = orderRepository
+                .findByIdForUpdate(orderId)
+                .orElseThrow(() -> new NotFoundException("Order", orderId));
         if (!"DRONE_DELIVERY".equals(order.getType())) {
             throw new BusinessException("DRONE_ORDER_REQUIRED", "Order is not a drone delivery order");
         }
@@ -219,6 +239,45 @@ public class DroneOrderMaintenanceService {
         }
         if (drone.batteryPercent() != null && drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
             throw new BusinessException("DRONE_BATTERY_TOO_LOW", "Drone battery is too low for launch");
+        }
+    }
+
+    private void validateReservedDroneForLaunch(DroneUnitDto drone) {
+        if (!Boolean.TRUE.equals(drone.active())) {
+            throw new BusinessException("DRONE_INACTIVE", "Drone is inactive");
+        }
+        if (!"RESERVED".equals(drone.status())) {
+            throw new BusinessException(
+                    "DRONE_RESERVATION_LOST", "Drone is no longer reserved for this mission");
+        }
+        if (drone.batteryPercent() != null && drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
+            throw new BusinessException("DRONE_BATTERY_TOO_LOW", "Drone battery is too low for launch");
+        }
+    }
+
+    private DroneUnitDto transitionDroneStatus(
+            Long droneUnitId, String expectedStatus, String status, String reason) {
+        return requireData(
+                lockerDroneClient.transitionDroneStatus(
+                        droneUnitId, new DroneStatusTransitionRequest(expectedStatus, status, reason)),
+                "DRONE_STATUS_SYNC_FAILED");
+    }
+
+    private void releaseReservationIfHeld(Long droneUnitId) {
+        DroneUnitDto drone = fetchDrone(droneUnitId);
+        if ("RESERVED".equals(drone.status())) {
+            transitionDroneStatus(droneUnitId, "RESERVED", "IDLE", null);
+        } else if ("IN_FLIGHT".equals(drone.status())) {
+            throw new BusinessException(
+                    "DRONE_ALREADY_IN_FLIGHT", "An in-flight drone cannot be released by pre-launch cancellation");
+        }
+    }
+
+    private void releaseReservationQuietly(Long droneUnitId) {
+        try {
+            transitionDroneStatus(droneUnitId, "RESERVED", "IDLE", null);
+        } catch (RuntimeException ignored) {
+            // Preserve a newer fleet state (for example FAULT) instead of overwriting it.
         }
     }
 

@@ -148,18 +148,67 @@ class LockerServiceDroneFleetTest {
 
     @Test
     void takeOffBatteryThresholdFollowsAdminSetting() {
-        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+        when(droneUnitRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.RESERVED, 80)));
         settings.update(Map.of("app.locker.drone-low-battery-percent", 85), null);
 
         BusinessException ex =
                 assertThrows(
                         BusinessException.class,
-                        () -> service.updateDroneStatus(1L, DroneStatus.IN_FLIGHT, null, 42L));
+                        () -> service.transitionDroneStatusInternal(
+                                1L, DroneStatus.RESERVED, DroneStatus.IN_FLIGHT, null));
 
         assertEquals("DRONE_BATTERY_TOO_LOW", ex.getCode());
 
         settings.update(Map.of("app.locker.drone-low-battery-percent", 50), null);
-        assertEquals(DroneStatus.IN_FLIGHT, service.updateDroneStatus(1L, DroneStatus.IN_FLIGHT, null, 42L).status());
+        assertEquals(
+                DroneStatus.IN_FLIGHT,
+                service.transitionDroneStatusInternal(
+                                1L, DroneStatus.RESERVED, DroneStatus.IN_FLIGHT, null)
+                        .status());
+    }
+
+    @Test
+    void operatorCannotOverrideWorkflowManagedStatuses() {
+        when(droneUnitRepository.findById(1L))
+                .thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.RESERVED, 80)));
+
+        BusinessException releaseError = assertThrows(
+                BusinessException.class,
+                () -> service.updateDroneStatus(1L, DroneStatus.IDLE, null, 42L));
+        BusinessException launchError = assertThrows(
+                BusinessException.class,
+                () -> service.updateDroneStatus(1L, DroneStatus.IN_FLIGHT, null, 42L));
+
+        assertEquals("DRONE_ACTIVE_MISSION", releaseError.getCode());
+        assertEquals("DRONE_STATUS_WORKFLOW_MANAGED", launchError.getCode());
+        verify(droneUnitRepository, never()).save(any());
+    }
+
+    @Test
+    void internalReservationUsesLockedCompareAndSet() {
+        when(droneUnitRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(droneUnit(1L, null, DroneStatus.IDLE, 80)));
+
+        DroneUnitResponse response = service.transitionDroneStatusInternal(
+                1L, DroneStatus.IDLE, DroneStatus.RESERVED, "Reserved for order ORD-21");
+
+        assertEquals(DroneStatus.RESERVED, response.status());
+        verify(droneUnitRepository).findByIdForUpdate(1L);
+    }
+
+    @Test
+    void internalReservationRejectsStaleExpectedStatus() {
+        when(droneUnitRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(droneUnit(1L, null, DroneStatus.RESERVED, 80)));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> service.transitionDroneStatusInternal(
+                        1L, DroneStatus.IDLE, DroneStatus.RESERVED, "Reserved for another order"));
+
+        assertEquals("DRONE_STATUS_CONFLICT", error.getCode());
+        verify(droneUnitRepository, never()).save(any());
     }
 
     @Test
