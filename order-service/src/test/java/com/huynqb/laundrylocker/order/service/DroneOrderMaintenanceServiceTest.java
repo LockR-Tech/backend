@@ -52,12 +52,15 @@ class DroneOrderMaintenanceServiceTest {
                         notificationClient,
                         TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
         when(lockerDroneClient.getDroneUnit(9L))
                 .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
         when(lockerDroneClient.getLockerLayout(5L))
                 .thenReturn(ApiResponse.ok(new LockerLayoutDto(5L, "CAB-05", "Locker 5", "ACTIVE", true, "OK")));
+        when(lockerDroneClient.transitionDroneStatus(
+                        9L, new DroneStatusTransitionRequest("IDLE", "RESERVED", "Reserved for order ORD-21")))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)));
         when(missionRepository.save(any(DroneMission.class)))
                 .thenAnswer(
                         invocation -> {
@@ -99,7 +102,7 @@ class DroneOrderMaintenanceServiceTest {
         mission.setDestinationLockerId(5L);
         mission.setStatus("READY_TO_LAUNCH");
         mission.setLastAcceptIdempotencyKey("accept-1");
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
         when(lockerDroneClient.getDroneUnit(9L))
                 .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
@@ -132,10 +135,15 @@ class DroneOrderMaintenanceServiceTest {
         mission.setSourceLockerId(3L);
         mission.setDestinationLockerId(5L);
         mission.setStatus("READY_TO_LAUNCH");
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
         when(missionRepository.save(any(DroneMission.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(lockerDroneClient.updateDroneStatus(9L, new DroneStatusUpdateRequest("IN_FLIGHT", null)))
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)));
+        when(lockerDroneClient.getLockerLayout(5L))
+                .thenReturn(ApiResponse.ok(new LockerLayoutDto(5L, "CAB-05", "Locker 5", "ACTIVE", true, "OK")));
+        when(lockerDroneClient.transitionDroneStatus(
+                        9L, new DroneStatusTransitionRequest("RESERVED", "IN_FLIGHT", null)))
                 .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IN_FLIGHT", 87, true)));
 
         DroneMissionResponse response = service.launch(21L, 99L, "launch-1");
@@ -143,7 +151,8 @@ class DroneOrderMaintenanceServiceTest {
         assertSame(order.getId(), response.orderId());
         assertEquals("LAUNCHING", response.missionStatus());
         assertEquals("LAUNCHING", response.deliveryStage());
-        verify(lockerDroneClient).updateDroneStatus(9L, new DroneStatusUpdateRequest("IN_FLIGHT", null));
+        verify(lockerDroneClient).transitionDroneStatus(
+                9L, new DroneStatusTransitionRequest("RESERVED", "IN_FLIGHT", null));
         verify(missionRepository).save(mission);
         verify(orderRepository).save(order);
     }
@@ -168,10 +177,15 @@ class DroneOrderMaintenanceServiceTest {
         mission.setSourceLockerId(3L);
         mission.setDestinationLockerId(5L);
         mission.setStatus("READY_TO_LAUNCH");
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
         when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(
+                        ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)),
+                        ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
+        when(lockerDroneClient.transitionDroneStatus(
+                        9L, new DroneStatusTransitionRequest("RESERVED", "IDLE", null)))
                 .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
 
         DroneMissionResponse response =
@@ -183,6 +197,8 @@ class DroneOrderMaintenanceServiceTest {
         assertEquals("Gio giat manh", order.getStaffNote());
         assertEquals("CANCELED", order.getStatus());
         verify(lockerClient).releaseBox(9001L);
+        verify(lockerDroneClient).transitionDroneStatus(
+                9L, new DroneStatusTransitionRequest("RESERVED", "IDLE", null));
         verify(missionRepository).delete(mission);
         verify(historyRepository).save(any());
         verify(notificationClient).requestNotification(any());
@@ -203,7 +219,7 @@ class DroneOrderMaintenanceServiceTest {
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
         mission.setStatus("READY_TO_LAUNCH");
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
 
         BusinessException error =
@@ -214,6 +230,35 @@ class DroneOrderMaintenanceServiceTest {
         assertEquals("DRONE_CANCEL_NOTE_REQUIRED", error.getCode());
         verify(lockerClient, never()).releaseBox(any());
         verify(missionRepository, never()).delete(any());
+    }
+
+    @Test
+    void launchRejectsMissionWhenReservationWasLost() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = new DroneMission();
+        mission.setOrderId(21L);
+        mission.setDroneUnitId(9L);
+        mission.setStatus("READY_TO_LAUNCH");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "FAULT", 87, true)));
+
+        BusinessException error =
+                assertThrows(BusinessException.class, () -> service.launch(21L, 99L, "launch-1"));
+
+        assertEquals("DRONE_RESERVATION_LOST", error.getCode());
+        verify(lockerDroneClient, never()).transitionDroneStatus(any(), any());
+        verify(orderRepository, never()).save(any());
     }
 
     private LockerOrder droneOrder(Long orderId, String deliveryStage) {
