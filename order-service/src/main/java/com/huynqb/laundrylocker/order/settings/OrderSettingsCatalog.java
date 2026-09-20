@@ -105,7 +105,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 string(DRONE_DEMO_ALLOWED_USER_IDS, DRONE, "User được dùng drone DEMO",
                         "Danh sách user id cách nhau bởi dấu phẩy. Để trống = mọi người.", "", List.of()),
                 integer(DRONE_DEMO_STAGE_DELAY_MS, DRONE, "Thời gian mỗi chặng bay giả lập",
-                        "", 7000, 1000, 600_000, "ms"),
+                        "", 3000, 1000, 600_000, "ms"),
                 integer(DRONE_MIN_PREFLIGHT_BATTERY, DRONE, "Pin tối thiểu để nhận đơn drone",
                         "Drone có pin ≤ ngưỡng này không được nhận đơn.", 20, 0, 100, "%"),
                 integer(DRONE_DEFAULT_PARCEL_WEIGHT, DRONE, "Khối lượng kiện mặc định trên app",
