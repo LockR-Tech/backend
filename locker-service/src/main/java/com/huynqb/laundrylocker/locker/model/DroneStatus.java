@@ -17,6 +17,11 @@ public final class DroneStatus {
     public static final String IDLE = "IDLE";
 
     /**
+     * Da duoc giu rieng cho mot mission, chua duoc phep cat canh.
+     */
+    public static final String RESERVED = "RESERVED";
+
+    /**
      * Đang sạc pin.
      */
     public static final String CHARGING = "CHARGING";
@@ -36,5 +41,5 @@ public final class DroneStatus {
      */
     public static final String FAULT = "FAULT";
 
-    public static final Set<String> ALL = Set.of(IDLE, CHARGING, IN_FLIGHT, MAINTENANCE, FAULT);
+    public static final Set<String> ALL = Set.of(IDLE, RESERVED, CHARGING, IN_FLIGHT, MAINTENANCE, FAULT);
 }
