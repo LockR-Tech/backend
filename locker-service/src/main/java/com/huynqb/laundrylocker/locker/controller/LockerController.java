@@ -354,6 +354,13 @@ public class LockerController {
         return ApiResponse.ok(lockerService.updateDroneStatusInternal(id, request.status(), request.reason()));
     }
 
+    @PostMapping("/internal/drones/{id}/status-transition")
+    public ApiResponse<DroneUnitResponse> internalDroneStatusTransition(
+            @PathVariable Long id, @Valid @RequestBody DroneStatusTransitionRequest request) {
+        return ApiResponse.ok(lockerService.transitionDroneStatusInternal(
+                id, request.expectedStatus(), request.status(), request.reason()));
+    }
+
     @PostMapping("/api/maintenance/drones/{id}/claim")
     public ApiResponse<DroneUnitResponse> maintenanceClaimDrone(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
