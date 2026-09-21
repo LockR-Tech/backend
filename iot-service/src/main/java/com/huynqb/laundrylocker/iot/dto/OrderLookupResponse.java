@@ -10,5 +10,18 @@ public record OrderLookupResponse(
         Long receiveBoxId,
         String status,
         String pinCode,
-        LocalDateTime completedAt) {
+        LocalDateTime completedAt,
+        String type) {
+
+    public OrderLookupResponse(
+            Long id,
+            Long userId,
+            Long lockerId,
+            Long sendBoxId,
+            Long receiveBoxId,
+            String status,
+            String pinCode,
+            LocalDateTime completedAt) {
+        this(id, userId, lockerId, sendBoxId, receiveBoxId, status, pinCode, completedAt, null);
+    }
 }

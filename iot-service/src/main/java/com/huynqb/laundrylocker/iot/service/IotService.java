@@ -69,7 +69,8 @@ public class IotService {
             }
             lockerClient.openBox(request.boxId());
             logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "SUCCESS", null);
-            completeIfPickup(verification.orderId(), verification.orderStatus(), verification.orderUserId());
+            completeIfPickup(
+                    verification.orderId(), verification.orderStatus(), verification.orderType(), verification.orderUserId());
             return Map.of("accepted", true, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Unlock command accepted");
         } catch (Exception e) {
             log.error("Timeout or error waiting for IoT device", e);
@@ -147,7 +148,7 @@ public class IotService {
             }
             lockerClient.openBox(boxId);
             logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "SUCCESS", null);
-            completeIfPickup(order.id(), order.status(), order.userId());
+            completeIfPickup(order.id(), order.status(), order.type(), order.userId());
             return Map.of(
                     "accepted", true,
                     "lockerId", request.lockerId(),
@@ -183,7 +184,8 @@ public class IotService {
                 return new VerifyPinResponse(false, order.id(), boxId, order.status(), "Access code does not match this box", order.userId());
             }
             resetAttempts(boxId);
-            return new VerifyPinResponse(true, order.id(), boxId, order.status(), "Access verified", order.userId());
+            return new VerifyPinResponse(
+                    true, order.id(), boxId, order.status(), "Access verified", order.userId(), order.type());
         } catch (Exception ex) {
             recordFailedAttempt(boxId);
             return new VerifyPinResponse(false, null, boxId, null, "Invalid access code", null);
@@ -200,8 +202,14 @@ public class IotService {
     /// Best-effort, có chủ đích: cửa đã mở thật rồi, một lỗi hoàn tất (VD đơn chưa thanh
     /// toán) không được biến phản hồi mở khoá thành "thất bại" — khách vẫn đang đứng
     /// trước tủ đã mở. Nút "Tôi đã lấy đồ — hoàn tất" trên app vẫn còn để tự làm lại.
-    private void completeIfPickup(Long orderId, String orderStatus, Long orderUserId) {
+    ///
+    /// Đơn RENTAL dùng PIN nhiều lần tới hạn — mở lại để lấy/cất đồ không được kết thúc
+    /// lượt thuê; thuê chỉ kết thúc qua pickup-storage.
+    private void completeIfPickup(Long orderId, String orderStatus, String orderType, Long orderUserId) {
         if (orderId == null || orderUserId == null) {
+            return;
+        }
+        if ("RENTAL".equalsIgnoreCase(orderType)) {
             return;
         }
         if (!"STORING".equalsIgnoreCase(orderStatus) && !"RETURNED".equalsIgnoreCase(orderStatus)) {
