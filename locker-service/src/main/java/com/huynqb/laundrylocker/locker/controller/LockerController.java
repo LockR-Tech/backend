@@ -88,12 +88,13 @@ public class LockerController {
         return ApiResponse.ok("BOX_RELEASED", "Box released", lockerService.releaseBox(id));
     }
 
+    // Gọi nội bộ không có X-User-Roles ⇒ service tự tra vai trò người báo.
     @PostMapping("/internal/boxes/{id}/fault")
     public ApiResponse<CellResponse> markFaultInternal(
             @PathVariable Long id,
             @Valid @RequestBody(required = false) BoxFaultRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return markFault(id, body, userId);
+        return markFault(id, body, userId, null);
     }
 
     // Nguồn dữ liệu cho job đối soát ô ↔ đơn của order-service (Gap G4).
@@ -116,16 +117,19 @@ public class LockerController {
     public ApiResponse<CellResponse> markFault(
             @PathVariable Long id,
             @Valid @RequestBody(required = false) BoxFaultRequest body,
-            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         String reason = body == null ? null : body.reason();
         List<ReportAttachmentRequest> attachments = body == null ? null : body.attachments();
         return ApiResponse.ok(
-                "BOX_FAULT_REPORTED", "Box marked as faulty", lockerService.markFault(id, reason, userId, attachments));
+                "BOX_FAULT_REPORTED", "Box marked as faulty",
+                lockerService.markFault(id, reason, userId, attachments, roles));
     }
 
     @PostMapping("/api/admin/lockers/boxes/{id}/clear-fault")
-    public ApiResponse<CellResponse> clearFault(@PathVariable Long id) {
-        return ApiResponse.ok("BOX_FAULT_CLEARED", "Box fault cleared", lockerService.clearFault(id));
+    public ApiResponse<CellResponse> clearFault(
+            @PathVariable Long id, @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok("BOX_FAULT_CLEARED", "Box fault cleared", lockerService.clearFault(id, userId, true));
     }
 
     // ---- Admin ops (role ADMIN qua gateway; MANAGER/STAFF đã bỏ) ----
@@ -144,13 +148,18 @@ public class LockerController {
         return ApiResponse.ok(lockerService.openFaults());
     }
 
+    // mine = phiếu mình đang được giao; routed = phiếu OPEN của các tủ mình phụ trách, chờ nhận.
     @GetMapping("/api/locker-technician/reports")
     public ApiResponse<List<LockerReportResponse>> maintenanceReports(
             @RequestParam(required = false, defaultValue = "false") boolean mine,
+            @RequestParam(required = false, defaultValue = "false") boolean routed,
             @RequestParam(required = false, defaultValue = "false") boolean all,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         if (mine && userId != null) {
             return ApiResponse.ok(lockerService.assignedReports(userId));
+        }
+        if (routed && userId != null) {
+            return ApiResponse.ok(lockerService.routedReports(userId));
         }
         if (all) {
             return ApiResponse.ok(lockerService.allReports());
@@ -210,9 +219,22 @@ public class LockerController {
         return ApiResponse.ok("REPORT_ATTACHMENT_DELETED", "Report photo deleted");
     }
 
+    // Ô có phiếu mở ⇒ phải là KTV được giao phiếu (hoặc admin); đóng phiếu áp luật ảnh nghiệm thu.
     @PostMapping("/api/locker-technician/boxes/{id}/clear-fault")
-    public ApiResponse<CellResponse> maintenanceClearFault(@PathVariable Long id) {
-        return ApiResponse.ok("BOX_FAULT_CLEARED", "Box fault cleared", lockerService.clearFault(id));
+    public ApiResponse<CellResponse> maintenanceClearFault(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(
+                "BOX_FAULT_CLEARED", "Box fault cleared", lockerService.clearFault(id, userId, UserRoles.isAdmin(roles)));
+    }
+
+    // Danh sách tủ kèm KTV phụ trách; mine=true ⇒ chỉ tủ mình phụ trách.
+    @GetMapping("/api/locker-technician/lockers")
+    public ApiResponse<List<LockerResponse>> maintenanceLockers(
+            @RequestParam(required = false, defaultValue = "false") boolean mine,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok(lockerService.listLockersForStaff(null, mine ? userId : null));
     }
 
     @PostMapping("/api/locker-technician/boxes/{id}/out-of-service")
@@ -280,18 +302,24 @@ public class LockerController {
     }
 
     // L5 — bảo trì phòng ngừa (lịch kiểm tra định kỳ)
+    // mine=true ⇒ lịch mình phụ trách; target=LOCKER|DRONE lọc theo đối tượng.
     @GetMapping("/api/maintenance/schedules")
-    public ApiResponse<List<MaintenanceScheduleResponse>> maintenanceSchedules() {
-        return ApiResponse.ok(lockerService.listSchedules());
+    public ApiResponse<List<MaintenanceScheduleResponse>> maintenanceSchedules(
+            @RequestParam(required = false, defaultValue = "false") boolean mine,
+            @RequestParam(required = false) String target,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok(lockerService.listSchedules(mine ? userId : null, target));
     }
 
     @PostMapping("/api/maintenance/schedules/{id}/complete")
     public ApiResponse<MaintenanceScheduleResponse> maintenanceCompleteSchedule(
             @PathVariable Long id,
-            @RequestBody(required = false) CompleteScheduleRequest body,
-            @RequestHeader(value = "X-User-Id", required = false) Long actorUserId) {
+            @Valid @RequestBody(required = false) CompleteScheduleRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long actorUserId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return ApiResponse.ok(
-                "SCHEDULE_COMPLETED", "Inspection completed", lockerService.completeSchedule(id, body, actorUserId));
+                "SCHEDULE_COMPLETED", "Inspection completed",
+                lockerService.completeSchedule(id, body, actorUserId, UserRoles.isAdmin(roles)));
     }
 
     @GetMapping("/api/maintenance/schedules/{id}/logs")
@@ -449,10 +477,11 @@ public class LockerController {
     public ApiResponse<LockerLayoutResponse> maintenanceLandingPadStatus(
             @PathVariable Long id,
             @RequestBody Map<String, String> body,
-            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return ApiResponse.ok(
                 "LANDING_PAD_UPDATED", "Landing pad status updated",
-                lockerService.updateLandingPadStatus(id, body.get("status"), body.get("reason"), userId));
+                lockerService.updateLandingPadStatus(id, body.get("status"), body.get("reason"), userId, roles));
     }
 
     @GetMapping("/api/admin/drones")
@@ -479,8 +508,10 @@ public class LockerController {
     public ApiResponse<LockerReportResponse> report(
             @PathVariable Long id,
             @Valid @RequestBody LockerReportRequest request,
-            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return ApiResponse.ok("LOCKER_REPORTED", "Locker report created", lockerService.report(id, request, userId));
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(
+                "LOCKER_REPORTED", "Locker report created", lockerService.report(id, request, userId, roles));
     }
 
     @GetMapping("/api/lockers/my-reports")
@@ -591,8 +622,9 @@ public class LockerController {
     }
 
     @GetMapping("/api/admin/lockers")
-    public ApiResponse<List<LockerResponse>> adminList(@RequestParam(required = false) Long storeId) {
-        return listLockers(storeId);
+    public ApiResponse<List<LockerResponse>> adminList(
+            @RequestParam(required = false) Long storeId, @RequestParam(required = false) Long technicianId) {
+        return ApiResponse.ok(lockerService.listLockersForStaff(storeId, technicianId));
     }
 
     @PostMapping("/api/admin/lockers")
@@ -602,12 +634,22 @@ public class LockerController {
 
     @GetMapping("/api/admin/lockers/{id}")
     public ApiResponse<LockerResponse> adminGet(@PathVariable Long id) {
-        return getLocker(id);
+        return ApiResponse.ok(lockerService.getLockerForStaff(id));
     }
 
     @GetMapping("/api/admin/lockers/store/{storeId}")
     public ApiResponse<List<LockerResponse>> adminByStore(@PathVariable Long storeId) {
-        return listLockers(storeId);
+        return ApiResponse.ok(lockerService.listLockersForStaff(storeId, null));
+    }
+
+    // Endpoint riêng thay vì trường trong LockerRequest: updateLocker ghi đè cả tủ, client cũ
+    // không gửi trường này sẽ vô tình xoá việc gán.
+    @PutMapping("/api/admin/lockers/{id}/technician")
+    public ApiResponse<LockerResponse> adminAssignLockerTechnician(
+            @PathVariable Long id, @RequestBody LockerTechnicianRequest request) {
+        return ApiResponse.ok(
+                "LOCKER_TECHNICIAN_ASSIGNED", "Locker technician updated",
+                lockerService.assignLockerTechnician(id, request.technicianId()));
     }
 
     @PutMapping("/api/admin/lockers/{id}")

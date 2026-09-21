@@ -34,6 +34,10 @@ public class LockerRules {
         return settings.getBoolean(REQUIRE_RESOLUTION_PHOTO);
     }
 
+    public int scheduleReminderLeadHours() {
+        return settings.getInt(SCHEDULE_REMINDER_LEAD_HOURS);
+    }
+
     public int reportPhotosPerRequestReporter() {
         return settings.getInt(REPORT_PHOTOS_PER_REQUEST_REPORTER);
     }

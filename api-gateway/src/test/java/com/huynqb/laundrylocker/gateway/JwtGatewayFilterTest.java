@@ -263,6 +263,34 @@ class JwtGatewayFilterTest {
         }
     }
 
+    // KTV tủ chỉ đọc danh sách phiếu bản admin; giao/đóng/gia hạn bản admin chỉ ADMIN.
+    @Test
+    void lockerTechnicianOnlyReadsAdminReportList() {
+        assertForwarded(MockServerHttpRequest.get("/api/admin/lockers/reports"), "LOCKER_TECHNICIAN", true);
+        assertForwarded(MockServerHttpRequest.put("/api/admin/lockers/reports/9/assign"), "LOCKER_TECHNICIAN", false);
+        assertForwarded(MockServerHttpRequest.put("/api/admin/lockers/reports/9/resolve"), "LOCKER_TECHNICIAN", false);
+        assertForwarded(MockServerHttpRequest.put("/api/admin/lockers/reports/9/extend-sla"), "LOCKER_TECHNICIAN", false);
+        assertForwarded(MockServerHttpRequest.get("/api/admin/lockers/reports"), "DRONE_TECHNICIAN", false);
+        assertForwarded(MockServerHttpRequest.put("/api/admin/lockers/reports/9/assign"), "ADMIN", true);
+    }
+
+    // Sửa lịch/đổi KTV phụ trách lịch là việc của ADMIN; KTV vẫn hoàn tất kiểm tra được.
+    @Test
+    void scheduleEditsNeedAdminButTechniciansCompleteInspections() {
+        for (String role : new String[] {"LOCKER_TECHNICIAN", "DRONE_TECHNICIAN"}) {
+            assertForwarded(MockServerHttpRequest.put("/api/maintenance/schedules/3"), role, false);
+            assertForwarded(MockServerHttpRequest.put("/api/maintenance/schedules/3/assign"), role, false);
+            assertForwarded(MockServerHttpRequest.post("/api/maintenance/schedules/3/complete"), role, true);
+        }
+        assertForwarded(MockServerHttpRequest.put("/api/maintenance/schedules/3/assign"), "ADMIN", true);
+    }
+
+    @Test
+    void onlyAdminAssignsLockerTechnician() {
+        assertForwarded(MockServerHttpRequest.put("/api/admin/lockers/5/technician"), "LOCKER_TECHNICIAN", false);
+        assertForwarded(MockServerHttpRequest.put("/api/admin/lockers/5/technician"), "ADMIN", true);
+    }
+
     @Test
     void allowsCustomerToRateResolvedReport() {
         MockServerWebExchange exchange =
@@ -381,6 +409,19 @@ class JwtGatewayFilterTest {
         filter.filter(exchange, chainThatMarks(chainCalled)).block();
 
         assertTrue(chainCalled.get());
+    }
+
+    private void assertForwarded(MockServerHttpRequest.BaseBuilder<?> request, String role, boolean expected) {
+        MockServerWebExchange exchange = exchangeWithBearer(request, token("access", role));
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+        filter.filter(exchange, chainThatMarks(chainCalled)).block();
+
+        String call = exchange.getRequest().getMethod() + " " + exchange.getRequest().getPath() + " as " + role;
+        assertEquals(expected, chainCalled.get(), call);
+        if (!expected) {
+            assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode(), call);
+        }
     }
 
     private MockServerWebExchange exchangeWithBearer(MockServerHttpRequest.BaseBuilder<?> request, String token) {

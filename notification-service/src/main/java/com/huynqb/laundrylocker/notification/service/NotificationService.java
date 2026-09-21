@@ -170,6 +170,9 @@ public class NotificationService {
             case DomainEventNames.PAYMENT_FAILED -> "Payment failed";
             case DomainEventNames.LOCKER_REPORT_CLAIMED -> "Báo cáo đang được xử lý";
             case DomainEventNames.LOCKER_REPORT_RESOLVED -> "Báo cáo đã được xử lý xong";
+            case DomainEventNames.LOCKER_REPORT_ROUTED -> "Phiếu sự cố mới cần xử lý";
+            case DomainEventNames.LOCKER_REPORT_ASSIGNED -> "Bạn được giao việc bảo trì";
+            case DomainEventNames.LOCKER_SCHEDULE_DUE -> "Lịch kiểm tra định kỳ tới hạn";
             default -> "Notification";
         };
         Object message = payload.getOrDefault("message", event.type() + " event received");

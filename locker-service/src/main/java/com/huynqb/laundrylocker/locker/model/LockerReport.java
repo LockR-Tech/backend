@@ -59,6 +59,22 @@ public class LockerReport {
     @Column(name = "sla_extension_reason", length = 1000)
     private String slaExtensionReason;
 
+    /// KTV được báo khi phiếu còn OPEN (KTV phụ trách tủ). NULL = đã báo mọi KTV tủ.
+    @Column(name = "routed_to_user_id")
+    private Long routedToUserId;
+
+    /// Lịch kiểm tra định kỳ sinh ra phiếu này (lần kiểm tra KHÔNG ĐẠT).
+    @Column(name = "schedule_id")
+    private Long scheduleId;
+
+    /// Xem {@link ReportCategory}.
+    @Column(length = 20)
+    private String category = ReportCategory.LOCKER;
+
+    /// Phiếu đưa cả tủ vào MAINTENANCE; đóng phiếu cuối cùng loại này thì tủ về ACTIVE.
+    @Column(name = "blocks_locker", nullable = false)
+    private Boolean blocksLocker = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

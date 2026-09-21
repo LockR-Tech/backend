@@ -164,7 +164,7 @@ public class ReportAttachmentService {
         LockerReport report = findReport(reportId);
         assertReporter(report, userId);
         if ("RESOLVED".equalsIgnoreCase(report.getStatus())) {
-            throw new BusinessException("REPORT_ALREADY_RESOLVED", "Report is already resolved");
+            throw new BusinessException("REPORT_ALREADY_RESOLVED", "Phiếu đã được hoàn tất");
         }
         return attach(report, AttachmentStage.REPORT, requests, userId, null, rules.reportPhotosPerRequestReporter());
     }

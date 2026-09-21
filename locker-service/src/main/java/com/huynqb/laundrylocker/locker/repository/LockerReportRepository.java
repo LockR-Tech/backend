@@ -20,4 +20,19 @@ public interface LockerReportRepository extends JpaRepository<LockerReport, Long
             Long droneUnitId, List<String> statuses);
 
     long countByLockerIdAndStatusIn(Long lockerId, List<String> statuses);
+
+    List<LockerReport> findByRoutedToUserIdAndStatusOrderByCreatedAtDesc(Long routedToUserId, String status);
+
+    List<LockerReport> findByLockerIdAndStatusAndAssignedToUserIdIsNull(Long lockerId, String status);
+
+    Optional<LockerReport> findFirstByLockerIdAndCategoryAndStatusInOrderByCreatedAtDesc(
+            Long lockerId, String category, List<String> statuses);
+
+    // Còn phiếu mở KHÁC trên cùng tài sản ⇒ chưa được khôi phục khi đóng một phiếu.
+    boolean existsByBoxIdAndStatusInAndIdNot(Long boxId, List<String> statuses, Long id);
+
+    boolean existsByLockerIdAndCategoryAndStatusInAndIdNot(
+            Long lockerId, String category, List<String> statuses, Long id);
+
+    boolean existsByLockerIdAndBlocksLockerTrueAndStatusInAndIdNot(Long lockerId, List<String> statuses, Long id);
 }

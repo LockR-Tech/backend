@@ -21,6 +21,7 @@ public class LockerSettingsCatalog implements SettingsCatalog {
     public static final String PENALTY_RESTRICTED_OVERDUE = "app.maintenance.penalty-restricted-overdue";
     public static final String PENALTY_SUSPENDED_OVERDUE = "app.maintenance.penalty-suspended-overdue";
     public static final String REQUIRE_RESOLUTION_PHOTO = "app.maintenance.require-resolution-photo";
+    public static final String SCHEDULE_REMINDER_LEAD_HOURS = "app.maintenance.schedule-reminder-lead-hours";
     public static final String REPORT_PHOTOS_PER_REQUEST_REPORTER = "app.maintenance.report-photos-per-request-reporter";
     public static final String REPORT_PHOTOS_PER_REQUEST_STAFF = "app.maintenance.report-photos-per-request-staff";
     public static final String REPORT_PHOTOS_REPORTER_TOTAL = "app.maintenance.report-photos-reporter-total";
@@ -56,6 +57,10 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                 bool(REQUIRE_RESOLUTION_PHOTO, MAINTENANCE, "Bắt buộc ảnh nghiệm thu",
                         "KTV phải có ít nhất một ảnh nghiệm thu mới hoàn tất được phiếu (admin không bị chặn).",
                         false),
+                integer(SCHEDULE_REMINDER_LEAD_HOURS, MAINTENANCE, "Nhắc lịch kiểm tra trước hạn",
+                        "Mỗi sáng (07:00) nhắc KTV các lịch định kỳ sẽ tới hạn trong số giờ này hoặc đã quá hạn; "
+                                + "mỗi kỳ chỉ nhắc một lần. 0 = chỉ nhắc khi đã tới hạn.",
+                        24, 0, 720, "giờ"),
                 integer(REPORT_PHOTOS_PER_REQUEST_REPORTER, MAINTENANCE, "Số ảnh người báo gửi mỗi lần",
                         "Số ảnh hiện trường tối đa trong một lần báo sự cố hoặc bổ sung ảnh.", 5, 1, 50, "ảnh")
                         .asPublic(),

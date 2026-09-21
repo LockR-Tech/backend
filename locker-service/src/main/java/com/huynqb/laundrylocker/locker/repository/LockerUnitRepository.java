@@ -8,4 +8,6 @@ import java.util.List;
 public interface LockerUnitRepository extends JpaRepository<LockerUnit, Long> {
 
     List<LockerUnit> findByStoreId(Long storeId);
+
+    List<LockerUnit> findByAssignedTechnicianId(Long assignedTechnicianId);
 }

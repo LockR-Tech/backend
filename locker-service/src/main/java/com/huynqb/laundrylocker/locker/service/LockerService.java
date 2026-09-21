@@ -6,24 +6,32 @@ import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.*;
 import com.huynqb.laundrylocker.locker.model.*;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.LockerRules;
+import feign.FeignException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -32,6 +40,14 @@ public class LockerService {
 
     private static final List<String> OPEN_REPORT_STATUSES = List.of("OPEN", "IN_PROGRESS");
     private static final List<String> SIZE_ORDER = List.of("SMALL", "MEDIUM", "LARGE", "XL");
+    private static final String LOCKER_TECHNICIAN = "LOCKER_TECHNICIAN";
+    private static final String DRONE_TECHNICIAN = "DRONE_TECHNICIAN";
+    /// Tủ ở các trạng thái này không nhận đơn/đặt ô mới.
+    private static final Set<String> NON_BOOKABLE_LOCKER_STATUSES = Set.of("MAINTENANCE", "INACTIVE");
+    private static final String MAINTENANCE_SOURCE_ADMIN = "ADMIN";
+    private static final String MAINTENANCE_SOURCE_TICKET = "TICKET";
+    /// Trạng thái ô được nhớ lại khi báo hỏng — đơn vẫn đang giữ ô.
+    private static final Set<String> ORDER_HELD_BOX_STATUSES = Set.of("RESERVED", "OCCUPIED");
 
     private final LockerUnitRepository lockerRepository;
     private final LockerBoxRepository boxRepository;
@@ -61,11 +77,11 @@ public class LockerService {
         locker.setStoreId(request.storeId());
         locker.setCode(request.code());
         locker.setName(request.name());
-        locker.setStatus(StringUtils.hasText(request.status()) ? request.status() : "ACTIVE");
+        applyAdminStatus(locker, StringUtils.hasText(request.status()) ? request.status() : "ACTIVE");
         locker.setAddress(request.address());
         locker.setLatitude(request.latitude());
         locker.setLongitude(request.longitude());
-        return toResponse(lockerRepository.save(locker));
+        return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
     }
 
     @Transactional
@@ -88,11 +104,48 @@ public class LockerService {
         locker.setStoreId(request.storeId());
         locker.setCode(request.code());
         locker.setName(request.name());
-        locker.setStatus(StringUtils.hasText(request.status()) ? request.status() : locker.getStatus());
+        applyAdminStatus(locker, StringUtils.hasText(request.status()) ? request.status() : locker.getStatus());
         locker.setAddress(request.address());
         locker.setLatitude(request.latitude());
         locker.setLongitude(request.longitude());
-        return toResponse(lockerRepository.save(locker));
+        return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
+    }
+
+    /// Admin đổi trạng thái tủ bằng tay. Giữ nguyên trạng thái (lưu lại form) thì không đổi nguồn,
+    /// để tủ do phiếu chặn vẫn tự mở lại khi phiếu đóng.
+    private void applyAdminStatus(LockerUnit locker, String status) {
+        if (!status.equalsIgnoreCase(locker.getStatus())) {
+            locker.setMaintenanceSource("MAINTENANCE".equalsIgnoreCase(status) ? MAINTENANCE_SOURCE_ADMIN : null);
+        }
+        locker.setStatus(status);
+    }
+
+    /// Admin gán KTV tủ phụ trách; phiếu OPEN chưa ai nhận của tủ chuyển sang người mới.
+    @Transactional
+    public LockerResponse assignLockerTechnician(Long lockerId, Long technicianId) {
+        LockerUnit locker =
+                lockerRepository.findById(lockerId).orElseThrow(() -> new NotFoundException("Locker", lockerId));
+        if (technicianId != null) {
+            requireTechnician(technicianId, LOCKER_TECHNICIAN);
+        }
+        locker.setAssignedTechnicianId(technicianId);
+        LockerUnit saved = lockerRepository.save(locker);
+        List<LockerReport> waiting = reportRepository.findByLockerIdAndStatusAndAssignedToUserIdIsNull(lockerId, "OPEN")
+                .stream()
+                .filter(report -> !ReportCategory.DRONE.equals(report.getCategory()))
+                .toList();
+        waiting.forEach(report -> report.setRoutedToUserId(technicianId));
+        reportRepository.saveAll(waiting);
+        if (technicianId != null) {
+            String message = "Bạn được giao phụ trách tủ " + locker.getName()
+                    + (waiting.isEmpty() ? "." : " — có " + waiting.size() + " phiếu sự cố đang chờ nhận.");
+            publishStaffNotification(
+                    DomainEventNames.LOCKER_REPORT_ASSIGNED, technicianId, lockerId, "LOCKER", message);
+        } else {
+            // Bỏ người phụ trách ⇒ phiếu đang chờ chuyển sang "mọi KTV tủ", báo lại để không ai bỏ sót.
+            waiting.forEach(report -> notifyRouted(report, saved));
+        }
+        return toStaffResponse(saved, new HashMap<>());
     }
 
     @Transactional
@@ -105,8 +158,10 @@ public class LockerService {
     public LockerResponse setMaintenance(Long id, boolean maintenance) {
         LockerUnit locker =
                 lockerRepository.findById(id).orElseThrow(() -> new NotFoundException("Locker", id));
+        // Admin bật bảo trì là ý định rõ ràng ⇒ nguồn ADMIN kể cả khi tủ đang bị phiếu chặn.
         locker.setStatus(maintenance ? "MAINTENANCE" : "ACTIVE");
-        return toResponse(lockerRepository.save(locker));
+        locker.setMaintenanceSource(maintenance ? MAINTENANCE_SOURCE_ADMIN : null);
+        return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
     }
 
     @Transactional
@@ -126,6 +181,7 @@ public class LockerService {
     @Transactional
     public LockerBoxSummary reserveBox(Long boxId, String channel) {
         LockerBox box = findBox(boxId);
+        assertLockerBookable(box.getLockerId());
         if (!"AVAILABLE".equalsIgnoreCase(box.getStatus())) {
             throw new BusinessException("BOX_NOT_AVAILABLE", "Box is not available");
         }
@@ -197,6 +253,12 @@ public class LockerService {
                 || "CLEANING".equalsIgnoreCase(status)) {
             // Ô hỏng/ngưng dùng/đang vệ sinh phải được kỹ thuật khôi phục chủ động;
             // release thường (từ luồng đơn) không được tự đưa về AVAILABLE.
+            // Nhưng đơn đã trả ô ⇒ sửa xong ô về AVAILABLE chứ không về trạng thái đơn đang giữ lúc hỏng.
+            if (ORDER_HELD_BOX_STATUSES.contains(String.valueOf(box.getPreFaultStatus()))) {
+                box.setPreFaultStatus(null);
+                box.setReservedUntil(null);
+                boxRepository.save(box);
+            }
             return toSummary(box);
         }
         box.setStatus("AVAILABLE");
@@ -208,58 +270,102 @@ public class LockerService {
 
     @Transactional
     public CellResponse markFault(Long boxId, String reason, Long userId) {
-        return markFault(boxId, reason, userId, List.of());
+        return markFault(boxId, reason, userId, List.of(), null);
     }
 
-    /// Báo ô hỏng kèm ảnh hiện trường (stage REPORT) của người báo.
     @Transactional
     public CellResponse markFault(Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments) {
+        return markFault(boxId, reason, userId, attachments, null);
+    }
+
+    /// Báo ô hỏng kèm ảnh hiện trường (stage REPORT) của người báo. `rolesHeader` là
+    /// `X-User-Roles` từ gateway; gọi nội bộ (order-service) không có header thì tra user-service.
+    @Transactional
+    public CellResponse markFault(
+            Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments, String rolesHeader) {
         LockerBox box = findBox(boxId);
-        box.setStatus("FAULT");
-        box.setFaultReason(reason);
-        boxRepository.save(box);
-        LockerReport report = new LockerReport();
-        report.setLockerId(box.getLockerId());
-        report.setBoxId(box.getId());
-        report.setUserId(userId == null ? 0L : userId);
-        report.setTitle("Box " + box.getBoxNumber() + " fault");
-        report.setDescription(StringUtils.hasText(reason) ? reason : "Reported faulty");
-
-        if (userId != null && userId > 0) {
-            UserSummary reporter = lookupUserQuietly(userId);
-            boolean isTech = reporter != null && (
-                    (reporter.roles() != null && (reporter.roles().contains("LOCKER_TECHNICIAN")
-                            || reporter.roles().contains("ROLE_LOCKER_TECHNICIAN")
-                            || reporter.roles().contains("DRONE_TECHNICIAN")))
-                    || (reporter.fullName() != null && (reporter.fullName().toLowerCase().contains("kỹ thuật viên")
-                            || reporter.fullName().toLowerCase().contains("ktv")
-                            || reporter.fullName().toLowerCase().contains("technician")
-                            || reporter.fullName().toLowerCase().contains("maintenance")))
-            );
-            if (isTech) {
-                report.setAssignedToUserId(userId);
-                report.setAssignedAt(java.time.LocalDateTime.now());
-                report.setStatus("IN_PROGRESS");
-            }
-        }
-
-        reportRepository.save(report);
-        attachmentService.attach(
-                report, AttachmentStage.REPORT, attachments, userId, null,
-                rules.reportPhotosPerRequestReporter());
-        publishBoxFault(box, reason);
-        syncBoxStateQuietly(box, "FAULT");
+        // KTV tủ tự báo ⇒ tự nhận phiếu luôn.
+        Long assigneeId = actorRoles(userId, rolesHeader).contains(LOCKER_TECHNICIAN) ? userId : null;
+        reportBoxFault(box, reason, userId, attachments, assigneeId, null);
         return toCell(box);
     }
 
+    /// Đưa ô về FAULT và trả về phiếu đang mở của ô: gộp vào phiếu cũ nếu có, không thì mở phiếu
+    /// mới — giao luôn cho `assigneeId` hoặc định tuyến cho KTV phụ trách tủ khi null.
+    private LockerReport reportBoxFault(
+            LockerBox box, String reason, Long userId, List<ReportAttachmentRequest> attachments,
+            Long assigneeId, String title) {
+        Long boxId = box.getId();
+        boolean newlyFaulted = !"FAULT".equalsIgnoreCase(box.getStatus());
+        if (newlyFaulted) {
+            // Nhớ trạng thái đơn đang giữ ô để sửa xong trả lại đúng, không để ô chứa hàng về AVAILABLE.
+            box.setPreFaultStatus("AVAILABLE".equalsIgnoreCase(box.getStatus()) ? null : box.getStatus());
+            box.setStatus("FAULT");
+        }
+        if (newlyFaulted || StringUtils.hasText(reason)) {
+            box.setFaultReason(reason);
+        }
+        boxRepository.save(box);
+
+        Optional<LockerReport> open =
+                reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(boxId, OPEN_REPORT_STATUSES);
+        LockerReport report;
+        if (open.isPresent()) {
+            // Ô đã có phiếu mở ⇒ gộp vào phiếu đó thay vì mở phiếu trùng và báo KTV lần nữa.
+            report = open.get();
+            mergeIntoOpenReport(report, reason, userId, attachments);
+        } else {
+            LockerUnit locker = lockerRepository.findById(box.getLockerId()).orElse(null);
+            LockerReport created = new LockerReport();
+            created.setLockerId(box.getLockerId());
+            created.setBoxId(boxId);
+            created.setCategory(ReportCategory.BOX);
+            created.setUserId(userId == null ? 0L : userId);
+            created.setTitle(title != null ? title : "Box " + box.getBoxNumber() + " fault");
+            created.setDescription(StringUtils.hasText(reason) ? reason : "Reported faulty");
+            applyRouting(created, locker, assigneeId);
+            report = reportRepository.save(created);
+            attachmentService.attach(
+                    report, AttachmentStage.REPORT, attachments, userId, null,
+                    rules.reportPhotosPerRequestReporter());
+            notifyRouted(report, locker);
+        }
+        if (newlyFaulted) {
+            publishBoxFault(box, reason);
+            syncBoxStateQuietly(box, "FAULT");
+        }
+        return report;
+    }
+
+    /// Báo trùng một ô đang có phiếu mở: thêm một dòng nhật ký + ảnh hiện trường của người báo vào phiếu cũ.
+    private void mergeIntoOpenReport(
+            LockerReport report, String reason, Long userId, List<ReportAttachmentRequest> attachments) {
+        RepairLog log = new RepairLog();
+        log.setReportId(report.getId());
+        log.setActorUserId(userId);
+        log.setNote("[BÁO LẠI] " + (StringUtils.hasText(reason) ? reason.trim() : "Ô tiếp tục được báo hỏng"));
+        Long repairLogId = repairLogRepository.save(log).getId();
+        attachmentService.attach(
+                report, AttachmentStage.REPORT, attachments, userId, repairLogId,
+                rules.reportPhotosPerRequestReporter());
+    }
+
+    /// Đưa ô hỏng về hoạt động. Ô đang có phiếu mở phải đóng qua phiếu (người được giao hoặc
+    /// admin, áp luật ảnh nghiệm thu) — nút "đã sửa" không được bỏ qua quy trình phiếu.
     @Transactional
-    public CellResponse clearFault(Long boxId) {
+    public CellResponse clearFault(Long boxId, Long actorUserId, boolean admin) {
         LockerBox box = findBox(boxId);
-        box.setStatus("AVAILABLE");
-        box.setFaultReason(null);
-        LockerBox saved = boxRepository.save(box);
-        syncBoxStateQuietly(saved, "AVAILABLE");
-        return toCell(saved);
+        if (!"FAULT".equalsIgnoreCase(box.getStatus())) {
+            throw new BusinessException("BOX_NOT_FAULT", "Ô không ở trạng thái hỏng", HttpStatus.CONFLICT);
+        }
+        Optional<LockerReport> open =
+                reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(boxId, OPEN_REPORT_STATUSES);
+        if (open.isPresent()) {
+            closeReportOfAsset(open.get(), actorUserId, admin);
+            return toCell(findBox(boxId));
+        }
+        restoreBox(box);
+        return toCell(box);
     }
 
     /// Ngưng dùng ô có chủ đích (bảo trì/đóng). Ô bị loại khỏi mọi reserve vì
@@ -301,6 +407,12 @@ public class LockerService {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "BOX_IN_USE", "Ô đang có đơn — không thể " + action);
         }
+        // Ô hỏng chỉ về hoạt động qua phiếu/clear-fault; đi đường vệ sinh → khôi phục sẽ lách phiếu.
+        if ("FAULT".equalsIgnoreCase(status)) {
+            throw new BusinessException(
+                    "BOX_IN_FAULT", "Ô đang hỏng — hoàn tất phiếu sự cố hoặc dùng clear-fault trước khi " + action,
+                    HttpStatus.CONFLICT);
+        }
         box.setStatus(target);
         box.setFaultReason(reason);
         return toCell(boxRepository.save(box));
@@ -320,34 +432,67 @@ public class LockerService {
                 cells.size(), available, fault, cells);
     }
 
-    /// #6 KTV cap nhat trang thai bao tri bai dap drone: OK / FAULT / MAINTENANCE.
-    /// Khi khac OK se tao 1 phieu su co de theo doi (idempotent theo phieu dang mo).
     @Transactional
     public LockerLayoutResponse updateLandingPadStatus(Long lockerId, String status, String reason, Long actorUserId) {
+        return updateLandingPadStatus(lockerId, status, reason, actorUserId, null);
+    }
+
+    /// #6 KTV cap nhat trang thai bao tri bai dap drone: OK / FAULT / MAINTENANCE.
+    /// Khác OK ⇒ mở 1 phiếu LANDING_PAD (một phiếu mở mỗi bãi đáp). Về OK khi đang có phiếu
+    /// ⇒ hoàn tất phiếu đó (áp luật như ô hỏng); đóng phiếu sẽ tự trả bãi đáp về OK.
+    @Transactional
+    public LockerLayoutResponse updateLandingPadStatus(
+            Long lockerId, String status, String reason, Long actorUserId, String rolesHeader) {
         if (!LANDING_PAD_STATUSES.contains(status)) {
-            throw new BusinessException("LANDING_PAD_STATUS_INVALID", "Unknown landing pad status: " + status);
+            throw new BusinessException("LANDING_PAD_STATUS_INVALID", "Trạng thái bãi đáp không hợp lệ: " + status);
         }
         LockerUnit locker =
                 lockerRepository.findById(lockerId).orElseThrow(() -> new NotFoundException("Locker", lockerId));
         if (!Boolean.TRUE.equals(locker.getLandingPad())) {
-            throw new BusinessException("LANDING_PAD_ABSENT", "This locker has no drone landing pad");
+            throw new BusinessException("LANDING_PAD_ABSENT", "Tủ này không có bãi đáp drone");
         }
-        String previous = locker.getLandingPadStatus();
+        List<String> roles = actorRoles(actorUserId, rolesHeader);
+        Optional<LockerReport> open = reportRepository.findFirstByLockerIdAndCategoryAndStatusInOrderByCreatedAtDesc(
+                lockerId, ReportCategory.LANDING_PAD, OPEN_REPORT_STATUSES);
+        if ("OK".equals(status) && open.isPresent()) {
+            closeReportOfAsset(open.get(), actorUserId, roles.contains("ADMIN"));
+            return layout(lockerId);
+        }
         locker.setLandingPadStatus(status);
         lockerRepository.save(locker);
-        if (!"OK".equals(status) && !status.equals(previous)) {
+        if (!"OK".equals(status) && open.isEmpty()) {
             LockerReport report = new LockerReport();
             report.setLockerId(lockerId);
+            report.setCategory(ReportCategory.LANDING_PAD);
             report.setUserId(actorUserId == null ? 0L : actorUserId);
             report.setTitle("Bãi đáp drone — " + locker.getCode());
-            report.setDescription(StringUtils.hasText(reason) ? reason : "Landing pad needs attention: " + status);
-            reportRepository.save(report);
+            report.setDescription(StringUtils.hasText(reason) ? reason : "Bãi đáp cần xử lý: " + status);
+            applyRouting(report, locker, roles.contains(LOCKER_TECHNICIAN) ? actorUserId : null);
+            notifyRouted(reportRepository.save(report), locker);
         }
         return layout(lockerId);
     }
 
+    /// Tủ đang bảo trì/ngưng hoạt động không nhận đơn hay đặt ô mới (kể cả drone thả hàng).
+    private void assertLockerBookable(Long lockerId) {
+        lockerRepository.findById(lockerId)
+                .filter(locker -> !isBookable(locker))
+                .ifPresent(locker -> {
+                    throw new BusinessException(
+                            "LOCKER_NOT_ACTIVE",
+                            "Tủ " + locker.getName() + " đang bảo trì, tạm ngưng nhận đơn",
+                            HttpStatus.CONFLICT);
+                });
+    }
+
+    private boolean isBookable(LockerUnit locker) {
+        return locker.getStatus() == null
+                || !NON_BOOKABLE_LOCKER_STATUSES.contains(locker.getStatus().toUpperCase(Locale.ROOT));
+    }
+
     @Transactional(readOnly = true)
     public CellResponse findAvailableBox(Long lockerId, String size, String cellType) {
+        assertLockerBookable(lockerId);
         String type = StringUtils.hasText(cellType) ? cellType.toUpperCase() : "STANDARD";
         if (!StringUtils.hasText(size)) {
             return boxRepository
@@ -390,6 +535,25 @@ public class LockerService {
         return (storeId == null ? lockerRepository.findAll() : lockerRepository.findByStoreId(storeId)).stream().map(this::toResponse).toList();
     }
 
+    /// Góc nhìn admin/KTV: kèm KTV phụ trách. `technicianId` ⇒ chỉ các tủ người đó phụ trách.
+    @Transactional(readOnly = true)
+    public List<LockerResponse> listLockersForStaff(Long storeId, Long technicianId) {
+        List<LockerUnit> lockers;
+        if (technicianId != null) {
+            lockers = lockerRepository.findByAssignedTechnicianId(technicianId);
+        } else {
+            lockers = storeId == null ? lockerRepository.findAll() : lockerRepository.findByStoreId(storeId);
+        }
+        Map<Long, String> technicianNames = new HashMap<>();
+        return lockers.stream().map(locker -> toStaffResponse(locker, technicianNames)).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public LockerResponse getLockerForStaff(Long id) {
+        LockerUnit locker = lockerRepository.findById(id).orElseThrow(() -> new NotFoundException("Locker", id));
+        return toStaffResponse(locker, new HashMap<>());
+    }
+
     @Transactional(readOnly = true)
     public List<LockerBoxSummary> listBoxes(Long lockerId) {
         return boxRepository.findByLockerId(lockerId).stream().map(this::toSummary).toList();
@@ -397,30 +561,61 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerBoxSummary> listAvailableBoxes(Long lockerId) {
+        boolean bookable = lockerRepository.findById(lockerId).map(this::isBookable).orElse(true);
+        if (!bookable) {
+            return List.of();
+        }
         return boxRepository.findByLockerIdAndStatusAndActiveTrue(lockerId, "AVAILABLE").stream().map(this::toSummary).toList();
     }
 
     @Transactional
     public LockerReportResponse report(Long lockerId, LockerReportRequest request) {
-        return report(lockerId, request, null);
+        return report(lockerId, request, null, null);
     }
 
-    /// `headerUserId` (từ JWT qua gateway) được ưu tiên hơn `userId` trong body.
     @Transactional
     public LockerReportResponse report(Long lockerId, LockerReportRequest request, Long headerUserId) {
+        return report(lockerId, request, headerUserId, null);
+    }
+
+    /// Báo sự cố cấp tủ. `headerUserId` (từ JWT qua gateway) được ưu tiên hơn `userId` trong body.
+    /// `blocking` (chỉ KTV tủ/ADMIN) đưa tủ vào MAINTENANCE tới khi phiếu đóng — khách không thể
+    /// đưa cả tủ ra khỏi hoạt động.
+    @Transactional
+    public LockerReportResponse report(
+            Long lockerId, LockerReportRequest request, Long headerUserId, String rolesHeader) {
         Long userId = headerUserId != null ? headerUserId : request.userId();
         if (userId == null) {
             throw new BusinessException("REPORTER_REQUIRED", "userId is required");
         }
+        LockerUnit locker =
+                lockerRepository.findById(lockerId).orElseThrow(() -> new NotFoundException("Locker", lockerId));
+        List<String> roles = actorRoles(userId, rolesHeader);
+        boolean technician = roles.contains(LOCKER_TECHNICIAN);
+        boolean blocking = Boolean.TRUE.equals(request.blocking());
+        if (blocking && !technician && !roles.contains("ADMIN")) {
+            throw new BusinessException(
+                    "BLOCKING_REPORT_FORBIDDEN", "Chỉ KTV tủ hoặc admin được báo sự cố ngưng cả tủ",
+                    HttpStatus.FORBIDDEN);
+        }
         LockerReport report = new LockerReport();
         report.setLockerId(lockerId);
+        report.setCategory(ReportCategory.LOCKER);
+        report.setBlocksLocker(blocking);
         report.setUserId(userId);
         report.setTitle(request.title());
         report.setDescription(request.description());
+        applyRouting(report, locker, technician ? userId : null);
         LockerReport saved = reportRepository.save(report);
         attachmentService.attach(
                 saved, AttachmentStage.REPORT, request.attachments(), userId, null,
                 rules.reportPhotosPerRequestReporter());
+        if (blocking && "ACTIVE".equalsIgnoreCase(locker.getStatus())) {
+            locker.setStatus("MAINTENANCE");
+            locker.setMaintenanceSource(MAINTENANCE_SOURCE_TICKET);
+            lockerRepository.save(locker);
+        }
+        notifyRouted(saved, locker);
         return toReport(saved);
     }
 
@@ -429,15 +624,11 @@ public class LockerService {
         return resolveReport(reportId, userId, null);
     }
 
-    /// Admin đóng phiếu từ web — không bắt buộc ảnh nghiệm thu (có thể là phiếu trùng/nhầm).
+    /// Admin đóng phiếu từ web — không bắt buộc ảnh nghiệm thu (có thể là phiếu trùng/nhầm),
+    /// nhưng vẫn trả ô/bãi đáp/tủ về hoạt động như khi KTV hoàn tất.
     @Transactional
     public LockerReportResponse resolveReport(Long reportId, Long userId, ResolveReportRequest request) {
-        LockerReport report = reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
-        attachResolutionEvidence(report, userId, true, request);
-        report.setStatus("RESOLVED");
-        report.setResolvedByUserId(userId);
-        report.setResolvedAt(java.time.LocalDateTime.now());
-        return toReport(reportRepository.save(report));
+        return resolveReportAndClearFault(reportId, userId, request, true);
     }
 
     @Transactional(readOnly = true)
@@ -502,13 +693,19 @@ public class LockerService {
         return toReports(reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId));
     }
 
+    /// Phiếu OPEN đang được định tuyến cho KTV (tủ người đó phụ trách), chờ nhận.
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> routedReports(Long userId) {
+        return toReports(reportRepository.findByRoutedToUserIdAndStatusOrderByCreatedAtDesc(userId, "OPEN"));
+    }
+
     @Transactional
     public LockerReportResponse claimReport(Long reportId, Long userId) {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         if (!"OPEN".equals(report.getStatus())) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
-                    "REPORT_NOT_CLAIMABLE", "Report is not open for claiming");
+                    "REPORT_NOT_CLAIMABLE", "Phiếu không còn ở trạng thái chờ tiếp nhận");
         }
         // Kiểm tra chế tài vi phạm SLA: KTV đang giữ từ N phiếu trễ hạn trở lên (admin cấu hình) thì chặn nhận việc mới
         int slaHours = rules.slaHours();
@@ -537,17 +734,24 @@ public class LockerService {
         return toReport(saved);
     }
 
-    /// Admin chủ động phân công một phiếu sự cố cho kỹ thuật viên
+    /// Admin chủ động phân công một phiếu sự cố cho kỹ thuật viên đúng mảng (phiếu drone ⇒ KTV drone).
     @Transactional
     public LockerReportResponse assignReport(Long reportId, Long technicianId) {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        assertNotResolved(report);
+        requireTechnician(
+                technicianId, ReportCategory.DRONE.equals(report.getCategory()) ? DRONE_TECHNICIAN : LOCKER_TECHNICIAN);
         report.setStatus("IN_PROGRESS");
         report.setAssignedToUserId(technicianId);
         report.setAssignedAt(java.time.LocalDateTime.now());
         LockerReport saved = reportRepository.save(report);
         publishReportNotification(saved, DomainEventNames.LOCKER_REPORT_CLAIMED,
                 "đang được đội bảo trì xử lý");
+        publishStaffNotification(
+                DomainEventNames.LOCKER_REPORT_ASSIGNED, technicianId, saved.getId(), "LOCKER_REPORT",
+                "Admin giao cho bạn phiếu #" + saved.getId() + " — " + saved.getTitle()
+                        + " tại tủ " + lockerLabel(saved.getLockerId()) + ".");
         return toReport(saved);
     }
 
@@ -556,6 +760,7 @@ public class LockerService {
     public LockerReportResponse unassignReport(Long reportId) {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        assertNotResolved(report);
         report.setStatus("OPEN");
         report.setAssignedToUserId(null);
         report.setAssignedAt(null);
@@ -682,32 +887,105 @@ public class LockerService {
     }
 
     /// Hoàn tất từ app KTV: ảnh nghiệm thu (stage RESOLUTION) + ghi chú được lưu trước khi đóng phiếu.
+    /// Không phải admin thì phải là KTV đang được giao phiếu.
     @Transactional
     public LockerReportResponse resolveReportAndClearFault(
             Long reportId, Long userId, ResolveReportRequest request, boolean admin) {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        return toReport(closeReport(report, userId, request, admin));
+    }
+
+    private LockerReport closeReport(
+            LockerReport report, Long userId, ResolveReportRequest request, boolean admin) {
+        assertNotResolved(report);
+        if (!admin && (userId == null || !userId.equals(report.getAssignedToUserId()))) {
+            throw new BusinessException(
+                    "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới hoàn tất được phiếu",
+                    HttpStatus.FORBIDDEN);
+        }
         attachResolutionEvidence(report, userId, admin, request);
         if (rules.requireResolutionPhoto() && !admin && !attachmentService.hasStage(report.getId(), AttachmentStage.RESOLUTION)) {
             throw new BusinessException(
-                    "RESOLUTION_PHOTO_REQUIRED", "Take at least one acceptance photo before resolving the report");
+                    "RESOLUTION_PHOTO_REQUIRED", "Cần ít nhất một ảnh nghiệm thu trước khi hoàn tất phiếu");
         }
         report.setStatus("RESOLVED");
         report.setResolvedByUserId(userId);
         report.setResolvedAt(java.time.LocalDateTime.now());
-        if (report.getBoxId() != null) {
-            boxRepository.findById(report.getBoxId())
-                    .filter(box -> "FAULT".equals(box.getStatus()))
-                    .ifPresent(box -> {
-                        box.setStatus("AVAILABLE");
-                        box.setFaultReason(null);
-                        boxRepository.save(box);
-                    });
-        }
         LockerReport saved = reportRepository.save(report);
+        restoreAssetsAfterClose(saved);
         publishReportNotification(saved, DomainEventNames.LOCKER_REPORT_RESOLVED,
                 "đã được xử lý xong");
-        return toReport(saved);
+        return saved;
+    }
+
+    /// Khôi phục ô/bãi đáp đang có phiếu mở = hoàn tất phiếu đó. Người chưa được giao phiếu nhận
+    /// thông báo rõ ràng thay vì lỗi chung chung.
+    private void closeReportOfAsset(LockerReport report, Long actorUserId, boolean admin) {
+        if (!admin && (actorUserId == null || !actorUserId.equals(report.getAssignedToUserId()))) {
+            throw new BusinessException(
+                    "REPORT_OPEN",
+                    "Đang có phiếu sự cố #" + report.getId() + " — nhận phiếu rồi hoàn tất phiếu để khôi phục",
+                    HttpStatus.CONFLICT);
+        }
+        closeReport(report, actorUserId, null, admin);
+    }
+
+    private void assertNotResolved(LockerReport report) {
+        if ("RESOLVED".equalsIgnoreCase(report.getStatus())) {
+            throw new BusinessException("REPORT_ALREADY_RESOLVED", "Phiếu đã được hoàn tất", HttpStatus.CONFLICT);
+        }
+    }
+
+    /// Đóng phiếu ⇒ trả tài sản về hoạt động nếu không còn phiếu mở nào khác giữ nó: ô về trạng
+    /// thái trước khi hỏng, bãi đáp về OK, tủ do phiếu chặn về ACTIVE, lịch kiểm tra đang chờ
+    /// phiếu này thì dời hạn.
+    private void restoreAssetsAfterClose(LockerReport report) {
+        if (report.getBoxId() != null
+                && !reportRepository.existsByBoxIdAndStatusInAndIdNot(
+                        report.getBoxId(), OPEN_REPORT_STATUSES, report.getId())) {
+            boxRepository.findById(report.getBoxId())
+                    .filter(box -> "FAULT".equalsIgnoreCase(box.getStatus()))
+                    .ifPresent(this::restoreBox);
+        }
+        if (ReportCategory.LANDING_PAD.equals(report.getCategory())
+                && !reportRepository.existsByLockerIdAndCategoryAndStatusInAndIdNot(
+                        report.getLockerId(), ReportCategory.LANDING_PAD, OPEN_REPORT_STATUSES, report.getId())) {
+            lockerRepository.findById(report.getLockerId())
+                    .filter(locker -> !"OK".equals(locker.getLandingPadStatus()))
+                    .ifPresent(locker -> {
+                        locker.setLandingPadStatus("OK");
+                        lockerRepository.save(locker);
+                    });
+        }
+        if (Boolean.TRUE.equals(report.getBlocksLocker())
+                && !reportRepository.existsByLockerIdAndBlocksLockerTrueAndStatusInAndIdNot(
+                        report.getLockerId(), OPEN_REPORT_STATUSES, report.getId())) {
+            lockerRepository.findById(report.getLockerId())
+                    .filter(locker -> "MAINTENANCE".equalsIgnoreCase(locker.getStatus())
+                            && MAINTENANCE_SOURCE_TICKET.equals(locker.getMaintenanceSource()))
+                    .ifPresent(locker -> {
+                        locker.setStatus("ACTIVE");
+                        locker.setMaintenanceSource(null);
+                        lockerRepository.save(locker);
+                    });
+        }
+        // Tra theo lịch (không theo report.scheduleId): kiểm tra KHÔNG ĐẠT có thể gộp vào phiếu ô đã mở sẵn.
+        for (MaintenanceSchedule schedule : scheduleRepository.findByPendingReportId(report.getId())) {
+            schedule.setPendingReportId(null);
+            schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+            schedule.setLastDueNotifiedAt(null);
+            scheduleRepository.save(schedule);
+        }
+    }
+
+    private void restoreBox(LockerBox box) {
+        String target = StringUtils.hasText(box.getPreFaultStatus()) ? box.getPreFaultStatus() : "AVAILABLE";
+        box.setStatus(target);
+        box.setPreFaultStatus(null);
+        box.setFaultReason(null);
+        LockerBox saved = boxRepository.save(box);
+        syncBoxStateQuietly(saved, target);
     }
 
     /// L5: kỹ thuật viên thêm 1 dòng nhật ký xử lý vào phiếu bảo trì.
@@ -797,6 +1075,9 @@ public class LockerService {
             findDroneUnit(request.droneUnitId());
             schedule.setDroneUnitId(request.droneUnitId());
         }
+        if (request.assignedTechnicianId() != null) {
+            requireTechnician(request.assignedTechnicianId(), scheduleTechnicianRole(schedule));
+        }
         schedule.setTitle(request.title());
         schedule.setIntervalDays(request.intervalDays());
         schedule.setAssignedTechnicianId(request.assignedTechnicianId());
@@ -815,80 +1096,256 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<MaintenanceScheduleResponse> listSchedules() {
+        return listSchedules(null, null);
+    }
+
+    /// `technicianId` ⇒ chỉ lịch người đó phụ trách; `target` = LOCKER / DRONE lọc theo đối tượng lịch.
+    @Transactional(readOnly = true)
+    public List<MaintenanceScheduleResponse> listSchedules(Long technicianId, String target) {
+        Map<Long, String> technicianNames = new HashMap<>();
         return scheduleRepository.findByActiveTrueOrderByNextDueAtAsc().stream()
-                .map(this::toSchedule)
+                .filter(s -> technicianId == null || technicianId.equals(s.getAssignedTechnicianId()))
+                .filter(s -> !"LOCKER".equalsIgnoreCase(target) || s.getLockerId() != null)
+                .filter(s -> !"DRONE".equalsIgnoreCase(target) || s.getDroneUnitId() != null)
+                .map(s -> toSchedule(s, technicianNames))
                 .toList();
     }
 
     /// KTV đã kiểm tra xong lần này: dời mốc đến hạn = now + intervalDays.
     @Transactional
     public MaintenanceScheduleResponse completeSchedule(Long id) {
-        return completeSchedule(id, null, null);
+        return completeSchedule(id, null, null, true);
     }
 
-    /// Hoàn tất kiểm tra định kỳ có kèm thông tin biên bản & lưu log kiểm tra.
     @Transactional
     public MaintenanceScheduleResponse completeSchedule(
             Long id, CompleteScheduleRequest req, Long actorUserId) {
+        return completeSchedule(id, req, actorUserId, true);
+    }
+
+    /// Hoàn tất một lượt kiểm tra định kỳ + lưu biên bản. ĐẠT ⇒ hạn kế tiếp = now + chu kỳ.
+    /// KHÔNG ĐẠT (lịch của tủ) ⇒ không dời hạn; tự mở phiếu gắn lịch, giao cho KTV vừa kiểm tra;
+    /// phiếu đóng mới dời hạn. Chỉ KTV phụ trách lịch (hoặc ADMIN) được hoàn tất.
+    @Transactional
+    public MaintenanceScheduleResponse completeSchedule(
+            Long id, CompleteScheduleRequest req, Long actorUserId, boolean admin) {
         MaintenanceSchedule schedule =
                 scheduleRepository
                         .findById(id)
                         .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        if (!Boolean.TRUE.equals(schedule.getActive())) {
+            throw new BusinessException("SCHEDULE_INACTIVE", "Lịch kiểm tra đã ngưng", HttpStatus.CONFLICT);
+        }
+        if (!admin && schedule.getAssignedTechnicianId() != null
+                && !schedule.getAssignedTechnicianId().equals(actorUserId)) {
+            throw new BusinessException(
+                    "SCHEDULE_NOT_ASSIGNED", "Chỉ KTV phụ trách lịch mới hoàn tất được lần kiểm tra",
+                    HttpStatus.FORBIDDEN);
+        }
+        Long pendingReportId = schedule.getPendingReportId();
+        if (pendingReportId != null && reportRepository.findById(pendingReportId)
+                .filter(r -> OPEN_REPORT_STATUSES.contains(r.getStatus())).isPresent()) {
+            throw new BusinessException(
+                    "SCHEDULE_PENDING_REPORT",
+                    "Lần kiểm tra trước chưa đạt — hoàn tất phiếu #" + pendingReportId + " trước",
+                    HttpStatus.CONFLICT);
+        }
+        InspectionOutcome outcome = evaluateInspection(schedule, req);
+        // Lịch drone là việc của KTV drone (drone FAULT tự mở phiếu) ⇒ vẫn dời hạn như cũ.
+        boolean opensReport = outcome.failed() && schedule.getLockerId() != null;
+
         LocalDateTime now = LocalDateTime.now();
         schedule.setLastDoneAt(now);
-        schedule.setNextDueAt(now.plusDays(schedule.getIntervalDays()));
-        MaintenanceSchedule saved = scheduleRepository.save(schedule);
-
-        // Lưu bản ghi nhật ký kiểm định định kỳ
-        MaintenanceInspectionLog inspectionLog = new MaintenanceInspectionLog();
-        inspectionLog.setScheduleId(saved.getId());
-        inspectionLog.setLockerId(saved.getLockerId());
-        inspectionLog.setDroneUnitId(saved.getDroneUnitId());
-
-        Long techId = req != null && req.technicianId() != null ? req.technicianId() : actorUserId;
-        if (techId == null) {
-            techId = saved.getAssignedTechnicianId();
+        schedule.setLastResult(outcome.failed() ? "FAILED" : "PASSED");
+        schedule.setPendingReportId(null);
+        if (!opensReport) {
+            schedule.setNextDueAt(now.plusDays(schedule.getIntervalDays()));
+            schedule.setLastDueNotifiedAt(null);
         }
+
+        MaintenanceInspectionLog inspectionLog = new MaintenanceInspectionLog();
+        inspectionLog.setScheduleId(schedule.getId());
+        inspectionLog.setLockerId(schedule.getLockerId());
+        inspectionLog.setDroneUnitId(schedule.getDroneUnitId());
+
+        // KTV ghi biên bản cho chính mình. Admin ghi hộ: người kiểm tra là KTV được chọn, không chọn
+        // thì là KTV phụ trách lịch. Phiếu KHÔNG ĐẠT giao cho người kiểm tra đó chứ không giao cho tài
+        // khoản admin; không xác định được thì định tuyến như phiếu thường.
+        Long inspectorId = admin
+                ? (req != null && req.technicianId() != null ? req.technicianId() : schedule.getAssignedTechnicianId())
+                : actorUserId;
+        Long techId = inspectorId != null ? inspectorId : actorUserId;
         inspectionLog.setTechnicianId(techId);
 
-        String techName = req != null ? req.technicianName() : null;
+        String techName = admin && req != null ? req.technicianName() : null;
         if (!StringUtils.hasText(techName) && techId != null) {
             techName = resolveUserName(techId);
         }
         inspectionLog.setTechnicianName(techName);
-        inspectionLog.setStatus(req != null && StringUtils.hasText(req.status()) ? req.status() : "PASSED");
+        inspectionLog.setStatus(outcome.status());
         inspectionLog.setNote(req != null ? req.note() : null);
         if (req != null && req.photoUrls() != null && !req.photoUrls().isEmpty()) {
             inspectionLog.setPhotoUrls(String.join(",", req.photoUrls()));
         }
-        inspectionLog.setChecklistResults(req != null ? req.checklistResults() : null);
+        inspectionLog.setChecklistResults(outcome.checklistResults());
 
-        // Nếu phát hiện hỏng hóc cần tạo phiếu sự cố tự động
-        if (req != null && Boolean.TRUE.equals(req.autoCreateReport()) && saved.getLockerId() != null) {
-            LockerReport report = new LockerReport();
-            report.setLockerId(saved.getLockerId());
-            report.setUserId(techId == null ? 0L : techId);
-            report.setTitle("Sự cố qua kiểm tra định kỳ: " + saved.getTitle());
-            report.setDescription(
-                    StringUtils.hasText(req.faultReason())
-                            ? req.faultReason()
-                            : (StringUtils.hasText(req.note())
-                                    ? req.note()
-                                    : "Phát hiện lỗi trong ca kiểm tra định kỳ"));
-            report.setStatus("OPEN");
-            if (req.faultBoxId() != null) {
-                report.setBoxId(req.faultBoxId());
-                boxRepository.findById(req.faultBoxId()).ifPresent(box -> {
-                    box.setStatus("FAULT");
-                    boxRepository.save(box);
-                });
-            }
-            LockerReport savedReport = reportRepository.save(report);
-            inspectionLog.setCreatedReportId(savedReport.getId());
+        if (opensReport) {
+            LockerReport report = openInspectionReport(schedule, req, outcome, techId, inspectorId);
+            schedule.setPendingReportId(report.getId());
+            inspectionLog.setCreatedReportId(report.getId());
         }
-
+        MaintenanceSchedule saved = scheduleRepository.save(schedule);
         inspectionLogRepository.save(inspectionLog);
         return toSchedule(saved);
+    }
+
+    private static final Set<String> LEGACY_PASSED_STATUSES = Set.of("PASSED", "ATTENTION");
+    private static final Set<String> LEGACY_FAILED_STATUSES = Set.of("DEFECT_DETECTED", "FAILED");
+    private static final Set<String> INSPECTION_ITEM_RESULTS = Set.of("PASS", "FAIL", "NA");
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /// `status` ghi vào biên bản; `checklistResults` là JSON các mục khi client gửi `items`.
+    private record InspectionOutcome(String status, boolean failed, String checklistResults, List<String> failedItems) {
+    }
+
+    /// Có `items` ⇒ đối chiếu checklist của lịch (đủ mục, không mục lạ) và tự suy kết quả: một mục
+    /// FAIL là KHÔNG ĐẠT. Client cũ không gửi `items` ⇒ dùng `status` (PASSED/ATTENTION là đạt).
+    private InspectionOutcome evaluateInspection(MaintenanceSchedule schedule, CompleteScheduleRequest req) {
+        if (req == null || req.items() == null || req.items().isEmpty()) {
+            String status = req == null || !StringUtils.hasText(req.status())
+                    ? "PASSED"
+                    : req.status().trim().toUpperCase(Locale.ROOT);
+            if (!LEGACY_PASSED_STATUSES.contains(status) && !LEGACY_FAILED_STATUSES.contains(status)) {
+                throw new BusinessException("INSPECTION_STATUS_INVALID", "Kết quả kiểm tra không hợp lệ: " + status);
+            }
+            return new InspectionOutcome(
+                    status, LEGACY_FAILED_STATUSES.contains(status), req == null ? null : req.checklistResults(),
+                    List.of());
+        }
+        List<String> expected = checklistItems(schedule.getChecklist());
+        Map<String, InspectionItemResult> byLabel = new java.util.LinkedHashMap<>();
+        for (InspectionItemResult item : req.items()) {
+            String label = item.label().trim();
+            String result = item.result().trim().toUpperCase(Locale.ROOT);
+            if (!INSPECTION_ITEM_RESULTS.contains(result)) {
+                throw new BusinessException(
+                        "INSPECTION_ITEM_RESULT_INVALID", "Mục \"" + label + "\" phải là PASS, FAIL hoặc NA");
+            }
+            if (!expected.isEmpty() && !expected.contains(label)) {
+                throw new BusinessException("CHECKLIST_ITEM_UNKNOWN", "Mục \"" + label + "\" không có trong checklist của lịch");
+            }
+            String note = StringUtils.hasText(item.note()) ? item.note().trim() : null;
+            if (byLabel.put(label, new InspectionItemResult(label, result, note)) != null) {
+                throw new BusinessException("CHECKLIST_ITEM_DUPLICATE", "Mục \"" + label + "\" bị gửi hai lần");
+            }
+        }
+        List<String> missing = expected.stream().filter(label -> !byLabel.containsKey(label)).toList();
+        if (!missing.isEmpty()) {
+            throw new BusinessException("CHECKLIST_INCOMPLETE", "Chưa đánh giá: " + String.join("; ", missing));
+        }
+        List<String> failedItems = byLabel.values().stream()
+                .filter(item -> "FAIL".equals(item.result()))
+                .map(InspectionItemResult::label)
+                .toList();
+        String json;
+        try {
+            json = JSON.writeValueAsString(byLabel.values());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new IllegalStateException("Could not serialise inspection items", ex);
+        }
+        boolean failed = !failedItems.isEmpty();
+        return new InspectionOutcome(failed ? "FAILED" : "PASSED", failed, json, failedItems);
+    }
+
+    /// Checklist lưu dạng văn bản; tách theo dòng hoặc ';' (web cũ nối bằng "; ").
+    static List<String> checklistItems(String checklist) {
+        if (!StringUtils.hasText(checklist)) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(checklist.split("\\r?\\n|;"))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .distinct()
+                .toList();
+    }
+
+    /// Phiếu cho lần kiểm tra KHÔNG ĐẠT: có ô hỏng ⇒ đi qua luồng báo ô hỏng (ô FAULT, gộp phiếu mở
+    /// sẵn); không thì phiếu cấp tủ. Giao cho `assigneeId` (KTV vừa kiểm tra); null ⇒ định tuyến.
+    private LockerReport openInspectionReport(
+            MaintenanceSchedule schedule, CompleteScheduleRequest req, InspectionOutcome outcome,
+            Long reporterId, Long assigneeId) {
+        String description = req != null && StringUtils.hasText(req.faultReason())
+                ? req.faultReason().trim()
+                : !outcome.failedItems().isEmpty()
+                        ? "Mục không đạt: " + String.join("; ", outcome.failedItems())
+                        : req != null && StringUtils.hasText(req.note())
+                                ? req.note().trim()
+                                : "Phát hiện lỗi trong ca kiểm tra định kỳ";
+        String title = "Kiểm tra định kỳ không đạt: " + schedule.getTitle();
+        LockerReport report;
+        if (req != null && req.faultBoxId() != null) {
+            LockerBox box = findBox(req.faultBoxId());
+            if (!schedule.getLockerId().equals(box.getLockerId())) {
+                throw new BusinessException("FAULT_BOX_NOT_IN_LOCKER", "Ô báo hỏng không thuộc tủ của lịch kiểm tra");
+            }
+            report = reportBoxFault(box, description, reporterId, List.of(), assigneeId, title);
+        } else {
+            LockerUnit locker = lockerRepository.findById(schedule.getLockerId()).orElse(null);
+            LockerReport created = new LockerReport();
+            created.setLockerId(schedule.getLockerId());
+            created.setCategory(ReportCategory.LOCKER);
+            created.setUserId(reporterId == null ? 0L : reporterId);
+            created.setTitle(title);
+            created.setDescription(description);
+            applyRouting(created, locker, assigneeId);
+            report = reportRepository.save(created);
+            notifyRouted(report, locker);
+        }
+        if (report.getScheduleId() == null) {
+            report.setScheduleId(schedule.getId());
+            report = reportRepository.save(report);
+        }
+        return report;
+    }
+
+    /// Nhắc KTV các lịch sắp/đã tới hạn — mỗi kỳ hạn một lần; lịch đang chờ phiếu KHÔNG ĐẠT thì bỏ
+    /// qua (KTV đã có phiếu). Lịch chưa có người phụ trách ⇒ nhắc mọi KTV của mảng đó.
+    @Transactional
+    public int remindDueSchedules() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime cutoff = now.plusHours(rules.scheduleReminderLeadHours());
+        int reminded = 0;
+        Map<String, List<Long>> techniciansByRole = new HashMap<>();
+        for (MaintenanceSchedule schedule :
+                scheduleRepository.findByActiveTrueAndLastDueNotifiedAtIsNullAndNextDueAtBefore(cutoff)) {
+            if (schedule.getPendingReportId() != null) {
+                continue;
+            }
+            if (scheduleRepository.markDueNotified(schedule.getId(), now) == 0) {
+                continue;
+            }
+            String target = schedule.getLockerId() != null
+                    ? "tủ " + lockerLabel(schedule.getLockerId())
+                    : "drone " + droneUnitRepository.findById(schedule.getDroneUnitId())
+                            .map(DroneUnit::getCode).orElse("#" + schedule.getDroneUnitId());
+            String when = schedule.getNextDueAt().isAfter(now) ? "sắp tới hạn" : "đã tới hạn";
+            String message = "Lịch \"" + schedule.getTitle() + "\" tại " + target + " " + when + " kiểm tra.";
+            List<Long> recipients = schedule.getAssignedTechnicianId() != null
+                    ? List.of(schedule.getAssignedTechnicianId())
+                    : techniciansByRole.computeIfAbsent(scheduleTechnicianRole(schedule), this::technicianIds);
+            for (Long technicianId : recipients) {
+                publishStaffNotification(
+                        DomainEventNames.LOCKER_SCHEDULE_DUE, technicianId, schedule.getId(),
+                        "MAINTENANCE_SCHEDULE", message);
+            }
+            reminded++;
+        }
+        return reminded;
+    }
+
+    private static String scheduleTechnicianRole(MaintenanceSchedule schedule) {
+        return schedule.getLockerId() != null ? LOCKER_TECHNICIAN : DRONE_TECHNICIAN;
     }
 
     /// Lấy danh sách lịch sử kiểm tra định kỳ
@@ -949,6 +1406,9 @@ public class LockerService {
         MaintenanceSchedule schedule = scheduleRepository
                 .findById(id)
                 .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        if (technicianId != null) {
+            requireTechnician(technicianId, scheduleTechnicianRole(schedule));
+        }
         schedule.setAssignedTechnicianId(technicianId);
         return toSchedule(scheduleRepository.save(schedule));
     }
@@ -965,7 +1425,9 @@ public class LockerService {
         if (request.intervalDays() != null && request.intervalDays() > 0) {
             schedule.setIntervalDays(request.intervalDays());
         }
-        if (request.assignedTechnicianId() != null) {
+        if (request.assignedTechnicianId() != null
+                && !request.assignedTechnicianId().equals(schedule.getAssignedTechnicianId())) {
+            requireTechnician(request.assignedTechnicianId(), scheduleTechnicianRole(schedule));
             schedule.setAssignedTechnicianId(request.assignedTechnicianId());
         }
         if (StringUtils.hasText(request.priority())) {
@@ -985,6 +1447,7 @@ public class LockerService {
         }
         if (request.firstDueDate() != null) {
             schedule.setNextDueAt(request.firstDueDate());
+            schedule.setLastDueNotifiedAt(null);
         }
         return toSchedule(scheduleRepository.save(schedule));
     }
@@ -1001,6 +1464,10 @@ public class LockerService {
     }
 
     private MaintenanceScheduleResponse toSchedule(MaintenanceSchedule s) {
+        return toSchedule(s, new HashMap<>());
+    }
+
+    private MaintenanceScheduleResponse toSchedule(MaintenanceSchedule s, Map<Long, String> technicianNames) {
         LockerUnit locker =
                 s.getLockerId() == null ? null : lockerRepository.findById(s.getLockerId()).orElse(null);
         DroneUnit drone =
@@ -1013,7 +1480,7 @@ public class LockerService {
                         && !LocalDateTime.now().isBefore(s.getNextDueAt());
         String techName = s.getAssignedTechnicianId() == null
                 ? null
-                : resolveUserName(s.getAssignedTechnicianId());
+                : technicianNames.computeIfAbsent(s.getAssignedTechnicianId(), this::resolveUserName);
         return new MaintenanceScheduleResponse(
                 s.getId(),
                 s.getLockerId(),
@@ -1035,7 +1502,10 @@ public class LockerService {
                 locker == null ? null : locker.getStoreId(),
                 locker == null ? null : locker.getAddress(),
                 s.getLocationNote(),
-                s.getScheduledTimeSlot());
+                s.getScheduledTimeSlot(),
+                checklistItems(s.getChecklist()),
+                s.getLastResult(),
+                s.getPendingReportId());
     }
 
     // ---- Drone fleet (thiết bị bay vật lý, khác ô tủ cellType=DRONE) ----
@@ -1227,6 +1697,7 @@ public class LockerService {
         LockerReport report = new LockerReport();
         report.setLockerId(unit.getLockerId());
         report.setDroneUnitId(unit.getId());
+        report.setCategory(ReportCategory.DRONE);
         report.setUserId(actorUserId == null ? 0L : actorUserId);
         report.setTitle("Drone " + unit.getCode() + " lỗi");
         report.setDescription(StringUtils.hasText(reason) ? reason : "Drone reported faulty");
@@ -1352,14 +1823,30 @@ public class LockerService {
         return boxRepository.findById(id).orElseThrow(() -> new NotFoundException("Box", id));
     }
 
+    /// API công khai (app khách, kiosk): không lộ KTV phụ trách.
     private LockerResponse toResponse(LockerUnit locker) {
+        return toResponse(locker, null);
+    }
+
+    /// Admin/KTV: kèm KTV phụ trách; `technicianNames` là cache tên trong một lần trả danh sách.
+    private LockerResponse toStaffResponse(LockerUnit locker, Map<Long, String> technicianNames) {
+        return toResponse(locker, technicianNames);
+    }
+
+    private LockerResponse toResponse(LockerUnit locker, Map<Long, String> technicianNames) {
         int totalBoxes = (int) boxRepository.countByLockerId(locker.getId());
-        int availableBoxes =
-                (int) boxRepository.countByLockerIdAndStatusAndActiveTrue(locker.getId(), "AVAILABLE");
+        // Tủ đang bảo trì không nhận đơn ⇒ app không được thấy còn ô trống.
+        int availableBoxes = isBookable(locker)
+                ? (int) boxRepository.countByLockerIdAndStatusAndActiveTrue(locker.getId(), "AVAILABLE")
+                : 0;
+        Long technicianId = technicianNames == null ? null : locker.getAssignedTechnicianId();
+        String technicianName =
+                technicianId == null ? null : technicianNames.computeIfAbsent(technicianId, this::resolveUserName);
         return new LockerResponse(
                 locker.getId(), locker.getStoreId(), locker.getCode(), locker.getName(), locker.getStatus(),
                 locker.getAddress(), locker.getLatitude(), locker.getLongitude(),
-                locker.getLandingPad(), locker.getLandingMarkerId(), totalBoxes, availableBoxes);
+                locker.getLandingPad(), locker.getLandingMarkerId(), totalBoxes, availableBoxes,
+                technicianId, technicianName);
     }
 
     private LockerBoxSummary toSummary(LockerBox box) {
@@ -1425,30 +1912,6 @@ public class LockerService {
                         && LocalDateTime.now().isAfter(slaDueAt);
         UserSummary reporter = lookupUserQuietly(report.getUserId());
 
-        Long assignedToUserId = report.getAssignedToUserId();
-        LocalDateTime assignedAt = report.getAssignedAt();
-        String status = report.getStatus();
-
-        boolean isTechReporter = reporter != null && (
-                (reporter.roles() != null && (reporter.roles().contains("LOCKER_TECHNICIAN")
-                        || reporter.roles().contains("ROLE_LOCKER_TECHNICIAN")
-                        || reporter.roles().contains("DRONE_TECHNICIAN")))
-                || (reporter.fullName() != null && (reporter.fullName().toLowerCase().contains("kỹ thuật viên")
-                        || reporter.fullName().toLowerCase().contains("ktv")
-                        || reporter.fullName().toLowerCase().contains("technician")
-                        || reporter.fullName().toLowerCase().contains("maintenance")))
-        );
-
-        if (assignedToUserId == null && isTechReporter) {
-            assignedToUserId = report.getUserId();
-            if (assignedAt == null) {
-                assignedAt = report.getCreatedAt();
-            }
-            if ("OPEN".equalsIgnoreCase(status)) {
-                status = "IN_PROGRESS";
-            }
-        }
-
         return new LockerReportResponse(
                 report.getId(),
                 report.getLockerId(),
@@ -1456,9 +1919,9 @@ public class LockerService {
                 report.getUserId(),
                 report.getTitle(),
                 report.getDescription(),
-                status,
-                assignedToUserId,
-                assignedAt,
+                report.getStatus(),
+                report.getAssignedToUserId(),
+                report.getAssignedAt(),
                 report.getResolvedByUserId(),
                 report.getResolvedAt(),
                 report.getCreatedAt(),
@@ -1476,7 +1939,128 @@ public class LockerService {
                 report.getSlaExtensionReason(),
                 reporter == null ? null : reporter.fullName(),
                 reporter == null ? null : reporter.phoneNumber(),
-                attachments);
+                attachments,
+                report.getCategory(),
+                Boolean.TRUE.equals(report.getBlocksLocker()),
+                report.getRoutedToUserId(),
+                report.getScheduleId());
+    }
+
+    // ---- Định tuyến phiếu cho KTV tủ ----
+
+    /// Có `assigneeId` (KTV tủ tự báo, KTV vừa kiểm tra) ⇒ giao luôn. Còn lại phiếu giữ OPEN và
+    /// được định tuyến cho KTV phụ trách tủ (null = mọi KTV tủ); KTV vẫn phải bấm nhận để chế tài
+    /// SLA áp vào.
+    private void applyRouting(LockerReport report, LockerUnit locker, Long assigneeId) {
+        if (assigneeId != null) {
+            report.setAssignedToUserId(assigneeId);
+            report.setAssignedAt(LocalDateTime.now());
+            report.setStatus("IN_PROGRESS");
+            return;
+        }
+        report.setRoutedToUserId(locker == null ? null : locker.getAssignedTechnicianId());
+    }
+
+    /// Báo phiếu mới cho KTV phụ trách tủ, hoặc mọi KTV tủ khi tủ chưa có người phụ trách.
+    /// Phiếu đã có người nhận (KTV tự báo) thì không báo.
+    private void notifyRouted(LockerReport report, LockerUnit locker) {
+        if (report.getAssignedToUserId() != null) {
+            return;
+        }
+        String message = "Phiếu #" + report.getId() + " — " + report.getTitle() + " tại tủ "
+                + (locker == null ? "#" + report.getLockerId() : locker.getName()) + " đang chờ KTV nhận.";
+        List<Long> recipients = report.getRoutedToUserId() != null
+                ? List.of(report.getRoutedToUserId())
+                : lockerTechnicianIds();
+        for (Long technicianId : recipients) {
+            publishStaffNotification(
+                    DomainEventNames.LOCKER_REPORT_ROUTED, technicianId, report.getId(), "LOCKER_REPORT", message);
+        }
+    }
+
+    private List<Long> lockerTechnicianIds() {
+        return technicianIds(LOCKER_TECHNICIAN);
+    }
+
+    private List<Long> technicianIds(String role) {
+        try {
+            List<UserSummary> users = userClient.listByRole(role).data();
+            return users == null ? List.of() : users.stream().map(UserSummary::id).filter(Objects::nonNull).toList();
+        } catch (Exception ex) {
+            log.warn("Could not list {} users to notify: {}", role, ex.getMessage());
+            return List.of();
+        }
+    }
+
+    /// Vai trò người thao tác: `X-User-Roles` từ gateway; gọi nội bộ không có header thì tra user-service.
+    private List<String> actorRoles(Long userId, String rolesHeader) {
+        if (rolesHeader != null) {
+            return UserRoles.parse(rolesHeader);
+        }
+        UserSummary user = lookupUserQuietly(userId);
+        if (user == null || user.roles() == null) {
+            return List.of();
+        }
+        return user.roles().stream().map(LockerService::normalizeRole).toList();
+    }
+
+    private static String normalizeRole(String role) {
+        String upper = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
+        return upper.startsWith("ROLE_") ? upper.substring(5) : upper;
+    }
+
+    /// Chỉ giao việc cho tài khoản ACTIVE có đúng vai trò KTV (hoặc ADMIN tự nhận việc).
+    private void requireTechnician(Long userId, String role) {
+        if (userId == null) {
+            throw new BusinessException("TECHNICIAN_REQUIRED", "technicianId is required");
+        }
+        UserSummary user;
+        try {
+            user = userClient.getUser(userId).data();
+        } catch (FeignException.NotFound ex) {
+            throw new NotFoundException("User", userId);
+        } catch (Exception ex) {
+            throw new BusinessException(
+                    "USER_SERVICE_UNAVAILABLE", "Chưa kiểm tra được tài khoản KTV, vui lòng thử lại",
+                    HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        List<String> roles = user == null || user.roles() == null
+                ? List.of()
+                : user.roles().stream().map(LockerService::normalizeRole).toList();
+        if (!roles.contains(role) && !roles.contains("ADMIN")) {
+            throw new BusinessException(
+                    "TECHNICIAN_ROLE_REQUIRED", "Tài khoản #" + userId + " không có vai trò " + role);
+        }
+        if (user.status() != null && !"ACTIVE".equalsIgnoreCase(user.status())) {
+            throw new BusinessException("TECHNICIAN_INACTIVE", "Tài khoản #" + userId + " đang không hoạt động");
+        }
+    }
+
+    private String lockerLabel(Long lockerId) {
+        return lockerRepository.findById(lockerId).map(LockerUnit::getName).orElse("#" + lockerId);
+    }
+
+    /// Thông báo in-app + push cho KTV (notification-service tạo theo `userId` trong payload).
+    private void publishStaffNotification(
+            String eventType, Long userId, Long referenceId, String referenceType, String message) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            rabbitTemplate.convertAndSend(
+                    DomainEventNames.EXCHANGE,
+                    eventType,
+                    DomainEvent.of(
+                            eventType,
+                            "locker-service",
+                            Map.of(
+                                    "userId", userId,
+                                    "referenceId", referenceId,
+                                    "referenceType", referenceType,
+                                    "message", message)));
+        } catch (AmqpException ex) {
+            log.warn("Could not publish {} to user {}: {}", eventType, userId, ex.getMessage());
+        }
     }
 
     // Best-effort: maintenance still needs to see status/SLA even if user-service

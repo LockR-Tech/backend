@@ -30,5 +30,12 @@ public record LockerReportResponse(
         String slaExtensionReason,
         String reporterName,
         String reporterPhone,
-        List<ReportAttachmentResponse> attachments) {
+        List<ReportAttachmentResponse> attachments,
+        // BOX / DRONE / LANDING_PAD / LOCKER
+        String category,
+        Boolean blocksLocker,
+        // KTV được báo khi phiếu còn OPEN; null = đã báo mọi KTV tủ
+        Long routedToUserId,
+        // Lịch kiểm tra định kỳ sinh ra phiếu (lần kiểm tra KHÔNG ĐẠT)
+        Long scheduleId) {
 }
