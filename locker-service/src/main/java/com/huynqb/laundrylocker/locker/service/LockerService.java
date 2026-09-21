@@ -1561,6 +1561,18 @@ public class LockerService {
     public DroneUnitResponse updateDroneStatus(Long id, String status, String reason, Long actorUserId) {
         DroneUnit unit = findDroneUnit(id);
         requireDroneOwnership(unit, actorUserId);
+        validateManualDroneStatusChange(unit, status);
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
+    }
+
+    @Transactional
+    public DroneUnitResponse updateDroneStatusAsAdmin(Long id, String status, String reason, Long actorUserId) {
+        DroneUnit unit = findDroneUnit(id);
+        validateManualDroneStatusChange(unit, status);
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
+    }
+
+    private void validateManualDroneStatusChange(DroneUnit unit, String status) {
         if (DroneStatus.RESERVED.equals(status) || DroneStatus.IN_FLIGHT.equals(status)) {
             throw new BusinessException(
                     "DRONE_STATUS_WORKFLOW_MANAGED",
@@ -1572,7 +1584,6 @@ public class LockerService {
                     "DRONE_ACTIVE_MISSION",
                     "Only FAULT can be reported manually while a drone has an active mission");
         }
-        return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
     }
 
     @Transactional
@@ -1658,6 +1669,7 @@ public class LockerService {
     @Transactional
     public DroneUnitResponse updateDroneUnit(Long id, DroneUpdateRequest request) {
         DroneUnit unit = findDroneUnit(id);
+        requireDroneWithoutActiveMission(unit, "edit");
         if (request.lockerId() != null && !request.lockerId().equals(unit.getLockerId())) {
             lockerRepository
                     .findById(request.lockerId())
@@ -1677,6 +1689,7 @@ public class LockerService {
     @Transactional
     public void decommissionDrone(Long id, Long actorUserId) {
         DroneUnit unit = findDroneUnit(id);
+        requireDroneWithoutActiveMission(unit, "decommission");
         unit.setActive(false);
         unit.setAssignedTechnicianId(null);
         unit.setStatus(DroneStatus.MAINTENANCE);
@@ -1721,6 +1734,16 @@ public class LockerService {
     public DroneUnitResponse updateDroneBattery(Long id, Integer batteryPercent, Long actorUserId) {
         DroneUnit unit = findDroneUnit(id);
         requireDroneOwnership(unit, actorUserId);
+        return updateDroneBattery(unit, batteryPercent, actorUserId);
+    }
+
+    @Transactional
+    public DroneUnitResponse updateDroneBatteryAsAdmin(Long id, Integer batteryPercent, Long actorUserId) {
+        return updateDroneBattery(findDroneUnit(id), batteryPercent, actorUserId);
+    }
+
+    private DroneUnitResponse updateDroneBattery(
+            DroneUnit unit, Integer batteryPercent, Long actorUserId) {
         unit.setBatteryPercent(batteryPercent);
         if (batteryPercent == 100) {
             unit.setLastChargedAt(LocalDateTime.now());
@@ -1728,6 +1751,14 @@ public class LockerService {
         DroneUnit saved = droneUnitRepository.save(unit);
         appendDroneLog(saved.getId(), "Cập nhật pin " + batteryPercent + "%", actorUserId);
         return toDroneUnit(saved);
+    }
+
+    private void requireDroneWithoutActiveMission(DroneUnit unit, String action) {
+        if (DroneStatus.RESERVED.equals(unit.getStatus()) || DroneStatus.IN_FLIGHT.equals(unit.getStatus())) {
+            throw new BusinessException(
+                    "DRONE_ACTIVE_MISSION",
+                    "Cannot " + action + " a drone while it has an active mission");
+        }
     }
 
     @Transactional(readOnly = true)

@@ -449,6 +449,26 @@ public class LockerController {
         return ApiResponse.ok("DRONE_UPDATED", "Drone updated", lockerService.updateDroneUnit(id, request));
     }
 
+    @PostMapping("/api/admin/drones/{id}/status")
+    public ApiResponse<DroneUnitResponse> adminDroneStatus(
+            @PathVariable Long id,
+            @Valid @RequestBody DroneStatusRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "DRONE_STATUS_UPDATED", "Drone status updated",
+                lockerService.updateDroneStatusAsAdmin(id, request.status(), request.reason(), userId));
+    }
+
+    @PostMapping("/api/admin/drones/{id}/battery")
+    public ApiResponse<DroneUnitResponse> adminDroneBattery(
+            @PathVariable Long id,
+            @Valid @RequestBody DroneBatteryRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "DRONE_BATTERY_UPDATED", "Drone battery updated",
+                lockerService.updateDroneBatteryAsAdmin(id, request.batteryPercent(), userId));
+    }
+
     @DeleteMapping("/api/admin/drones/{id}")
     public ApiResponse<Void> adminDecommissionDrone(
             @PathVariable Long id, @RequestHeader(value = "X-User-Id", required = false) Long userId) {
