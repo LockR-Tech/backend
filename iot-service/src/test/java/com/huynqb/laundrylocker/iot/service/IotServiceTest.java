@@ -218,6 +218,144 @@ class IotServiceTest {
         verify(orderClient, never()).complete(anyLong(), anyLong());
     }
 
+    // ---- Mã đúng nhưng đơn tạm chưa mở được (order-service báo accessBlockReason) ----
+
+    @Test
+    void unlockWithCodeDeniesUnpaidDropOffWithoutLockingTheBox() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                lookup("INITIALIZED", "SEND", "ORDER_UNPAID")));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertFalse(Boolean.TRUE.equals(result.get("accepted")));
+        assertEquals("ORDER_UNPAID", result.get("reasonCode"));
+        verify(accessAttemptRepository, never()).save(any(AccessAttempt.class));
+        verify(lockerMqttService, never()).sendUnlockCommandAsync(anyLong(), anyLong());
+    }
+
+    @Test
+    void unlockWithCodeDeniesExpiredRental() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                lookup("STORING", "RENTAL", "RENTAL_EXPIRED")));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertFalse(Boolean.TRUE.equals(result.get("accepted")));
+        assertEquals("RENTAL_EXPIRED", result.get("reasonCode"));
+        verify(lockerMqttService, never()).sendUnlockCommandAsync(anyLong(), anyLong());
+    }
+
+    // ---- Mở ô bỏ hàng: ghi mốc cho order-service và báo kiosk bước xác nhận ----
+
+    @Test
+    void unlockWithCodeAtDropOffRecordsOpeningAndAsksForConfirmation() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("INITIALIZED", "SEND", null)));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        assertEquals("CONFIRM_DROP", result.get("nextStep"));
+        verify(orderClient).dropOpened(51L);
+        verify(orderClient, never()).complete(anyLong(), anyLong());
+    }
+
+    @Test
+    void unlockWithCodeOnActiveRentalReportsRentalAccess() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("STORING", "RENTAL", null)));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertEquals("RENTAL_ACCESS", result.get("nextStep"));
+        verify(orderClient, never()).dropOpened(anyLong());
+    }
+
+    // ---- Kiosk: xác nhận bỏ hàng / kết thúc thuê bằng mã ----
+
+    @Test
+    void confirmDropWithCodeConfirmsOnBehalfOfOwnerAfterRecentOpen() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("INITIALIZED", "SEND", null)));
+        when(accessLogRepository.existsByOrderIdAndResultAndCreatedAtAfter(eq(51L), eq("SUCCESS"), any()))
+                .thenReturn(true);
+        when(orderClient.confirm(51L, 44L)).thenReturn(ApiResponse.ok(lookup("STORING", "SEND", null)));
+
+        Map<String, Object> result = iotService.confirmDropWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        assertEquals("STORING", result.get("orderStatus"));
+        assertFalse(result.containsKey("pinCode"));
+        verify(orderClient).confirm(51L, 44L);
+    }
+
+    @Test
+    void confirmDropWithCodeRequiresARecentOpening() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("INITIALIZED", "SEND", null)));
+        when(accessLogRepository.existsByOrderIdAndResultAndCreatedAtAfter(eq(51L), eq("SUCCESS"), any()))
+                .thenReturn(false);
+
+        Map<String, Object> result = iotService.confirmDropWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertFalse(Boolean.TRUE.equals(result.get("accepted")));
+        assertEquals("NOT_OPENED_RECENTLY", result.get("reasonCode"));
+        verify(orderClient, never()).confirm(anyLong(), anyLong());
+    }
+
+    @Test
+    void confirmDropWithCodeRejectsCodeFromAnotherLocker() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("INITIALIZED", "SEND", null)));
+
+        Map<String, Object> result = iotService.confirmDropWithCode(new UnlockWithCodeRequest(8L, "PIN-123"));
+
+        assertFalse(Boolean.TRUE.equals(result.get("accepted")));
+        verify(orderClient, never()).confirm(anyLong(), anyLong());
+    }
+
+    @Test
+    void confirmDropWithCodeRejectsOrderPastDropOff() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("STORING", "SEND", null)));
+
+        Map<String, Object> result = iotService.confirmDropWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertEquals("ORDER_STATUS_INVALID", result.get("reasonCode"));
+        verify(orderClient, never()).confirm(anyLong(), anyLong());
+    }
+
+    @Test
+    void endRentalWithCodeReleasesRentalAfterRecentOpen() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("STORING", "RENTAL", null)));
+        when(accessLogRepository.existsByOrderIdAndResultAndCreatedAtAfter(eq(51L), eq("SUCCESS"), any()))
+                .thenReturn(true);
+        when(orderClient.pickupStorage(51L, 44L)).thenReturn(ApiResponse.ok(lookup("COMPLETED", "RENTAL", null)));
+
+        Map<String, Object> result = iotService.endRentalWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        assertEquals("COMPLETED", result.get("orderStatus"));
+        verify(orderClient).pickupStorage(51L, 44L);
+    }
+
+    @Test
+    void endRentalWithCodeRejectsNonRentalOrder() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("STORING", "SEND", null)));
+
+        Map<String, Object> result = iotService.endRentalWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertEquals("ORDER_TYPE_INVALID", result.get("reasonCode"));
+        verify(orderClient, never()).pickupStorage(anyLong(), anyLong());
+    }
+
+    private static OrderLookupResponse lookup(String status, String type, String blockReason) {
+        return new OrderLookupResponse(
+                51L, 44L, 7L, 9002L, null, status, "PIN-123", null, type, "PAID", null, blockReason);
+    }
+
     @Test
     void unlockWithCodeStillCompletesSendPickup() {
         when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(

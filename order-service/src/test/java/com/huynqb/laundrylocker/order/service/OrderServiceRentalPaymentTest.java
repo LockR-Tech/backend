@@ -151,23 +151,20 @@ class OrderServiceRentalPaymentTest {
     }
 
     @Test
-    void confirmAllowsUnpaidRentalAndStartsDeadlineFromConfirmTime() {
-        LockerOrder order = new LockerOrder();
-        order.setId(22L);
-        order.setUserId(44L);
-        order.setOrderCode("ORD-22");
-        order.setType("RENTAL");
-        order.setServiceCategory("RENTAL");
-        order.setStatus("INITIALIZED");
-        order.setSendBoxId(901L);
-        order.setLockerId(5L);
-        order.setPinCode("490912");
-        order.setTotalPrice(BigDecimal.valueOf(20000));
-        order.setOriginalPrice(BigDecimal.valueOf(20000));
-        order.setPaymentStatus("UNPAID");
-        order.setCreatedAt(LocalDateTime.now().minusHours(2));
-        order.setPickupDeadline(LocalDateTime.now().plusHours(2));
+    void confirmRejectsUnpaidRental() {
+        LockerOrder order = rentalAwaitingDrop(22L, "UNPAID");
+        when(orderRepository.findById(22L)).thenReturn(Optional.of(order));
 
+        BusinessException error = assertThrows(BusinessException.class, () -> orderService.confirm(22L, 44L));
+
+        assertEquals("ORDER_UNPAID", error.getCode());
+        assertEquals("INITIALIZED", order.getStatus());
+        verify(lockerClient, never()).occupyBox(any());
+    }
+
+    @Test
+    void confirmPaidRentalStartsDeadlineFromConfirmTime() {
+        LockerOrder order = rentalAwaitingDrop(22L, "PAID");
         when(orderRepository.findById(22L)).thenReturn(Optional.of(order));
         when(lockerClient.occupyBox(901L))
                 .thenReturn(ApiResponse.ok(new LockerBoxSummary(5L, 901L, "CAB-05", 4, "OCCUPIED")));
@@ -178,9 +175,27 @@ class OrderServiceRentalPaymentTest {
         var after = LocalDateTime.now();
 
         assertEquals("STORING", response.status());
-        assertEquals("UNPAID", response.paymentStatus());
         assertTrue(response.pickupDeadline() != null && !response.pickupDeadline().isBefore(before.plusHours(4)));
         assertTrue(!response.pickupDeadline().isAfter(after.plusHours(4).plusSeconds(1)));
+    }
+
+    private static LockerOrder rentalAwaitingDrop(Long id, String paymentStatus) {
+        LockerOrder order = new LockerOrder();
+        order.setId(id);
+        order.setUserId(44L);
+        order.setOrderCode("ORD-" + id);
+        order.setType("RENTAL");
+        order.setServiceCategory("RENTAL");
+        order.setStatus("INITIALIZED");
+        order.setSendBoxId(901L);
+        order.setLockerId(5L);
+        order.setPinCode("490912");
+        order.setRentalDurationHours(4);
+        order.setTotalPrice(BigDecimal.valueOf(20000));
+        order.setOriginalPrice(BigDecimal.valueOf(20000));
+        order.setPaymentStatus(paymentStatus);
+        order.setCreatedAt(LocalDateTime.now().minusHours(2));
+        return order;
     }
 
     @Test

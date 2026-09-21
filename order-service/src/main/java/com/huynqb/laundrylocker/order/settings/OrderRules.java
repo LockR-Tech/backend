@@ -81,6 +81,14 @@ public class OrderRules {
         return settings.getBoolean(REQUIRE_PAYMENT_BEFORE_DROP);
     }
 
+    public boolean sendConfirmRequiresOpen() {
+        return settings.getBoolean(SEND_CONFIRM_REQUIRES_OPEN);
+    }
+
+    public boolean blockUnpaidRentalAccess() {
+        return settings.getBoolean(BLOCK_UNPAID_RENTAL_ACCESS);
+    }
+
     /// Gửi mã mở tủ cho người nhận qua SMS. Bật mà máy chủ chưa nạp khoá nhà cung cấp
     /// thì vẫn không gửi được — notification-service báo lại `smsChannelAvailable=false`.
     public boolean receiverNotifySms() {

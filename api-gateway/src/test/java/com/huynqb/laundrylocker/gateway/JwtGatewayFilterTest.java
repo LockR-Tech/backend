@@ -317,7 +317,8 @@ class JwtGatewayFilterTest {
     void allowsKioskUnlockEndpointsWithoutJwtButKeepsOtherIotProtected() {
         for (String path :
                 new String[]{
-                        "/api/iot/verify-pin", "/api/iot/verify-access", "/api/iot/unlock", "/api/iot/unlock-with-code"
+                        "/api/iot/verify-pin", "/api/iot/verify-access", "/api/iot/unlock", "/api/iot/unlock-with-code",
+                        "/api/iot/confirm-drop-with-code", "/api/iot/end-rental-with-code"
                 }) {
             MockServerWebExchange exchange =
                     MockServerWebExchange.from(MockServerHttpRequest.post(path).build());

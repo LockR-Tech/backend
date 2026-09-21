@@ -47,5 +47,7 @@ public record OrderResponse(
         String receiverPhone,
         String customerNote,
         String deliveryAddress,
-        Integer rentalDurationHours) {
+        Integer rentalDurationHours,
+        // Mã đúng nhưng tạm chưa mở được ô (null = mở được) — xem OrderAccessPolicy.
+        String accessBlockReason) {
 }
