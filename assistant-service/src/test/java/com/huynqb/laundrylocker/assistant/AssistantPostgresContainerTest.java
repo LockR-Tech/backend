@@ -215,6 +215,36 @@ class AssistantPostgresContainerTest {
         assertEquals(KnowledgeDocument.PENDING, knowledge.reindex(broken.id()).status());
     }
 
+    // Đánh chỉ mục lại không rút tài liệu khỏi câu trả lời trong lúc chờ.
+    @Test
+    void reindexingKeepsServingTheOldChunks() {
+        KnowledgeDocument refund = upload("refund.md", "Chính sách hoàn tiền", List.of("ALL"),
+                "Hoàn tiền trong 7 ngày làm việc.");
+        indexer.indexPending();
+
+        assertEquals(KnowledgeDocument.PENDING, knowledge.reindex(refund.id()).status());
+        AskResponse answer = assistant.ask(7L, List.of("CUSTOMER"), new AskRequest(null, "Hoàn tiền trong bao lâu?"));
+
+        assertFalse(answer.refused());
+        assertEquals("Chính sách hoàn tiền", answer.sources().get(0).documentTitle());
+    }
+
+    @Test
+    void evalWithGenerationAnswersOnlyCasesThatRetrievedSomething() {
+        upload("refund.md", "Chính sách hoàn tiền", List.of("ALL"), "Hoàn tiền trong 7 ngày làm việc.");
+        indexer.indexPending();
+        eval.add(List.of(
+                new EvalService.EvalCaseRequest("Hoàn tiền trong bao lâu?", List.of("CUSTOMER"), "Chính sách hoàn tiền", false),
+                new EvalService.EvalCaseRequest("Giá vàng hôm nay?", List.of("CUSTOMER"), null, true)));
+
+        EvalService.EvalReport report = eval.run(true);
+
+        assertEquals(1, generatorCalls.get());
+        assertNotNull(report.results().get(0).answer());
+        assertNull(report.results().get(1).answer());
+        assertTrue(report.results().get(0).topScore() > 0);
+    }
+
     @Test
     void evalMeasuresRetrievalHitsAndCorrectRefusals() {
         upload("refund.md", "Chính sách hoàn tiền", List.of("ALL"), "Hoàn tiền trong 7 ngày làm việc.");

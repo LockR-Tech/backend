@@ -21,6 +21,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /// Bộ câu hỏi đánh giá chất lượng truy xuất: câu phải trúng đúng tài liệu, câu ngoài phạm vi (hoặc
 /// tài liệu nội bộ mà vai trò đó không được đọc) phải bị từ chối. Mặc định chỉ đo truy xuất (chỉ tốn
@@ -49,6 +53,8 @@ public class EvalService {
             int total, int passed, int retrievalCases, int retrievalHits, int refusalCases, int refusalCorrect,
             double minScore, List<EvalResult> results) {
     }
+
+    private static final int GENERATION_THREADS = 4;
 
     private final JdbcTemplate jdbc;
     private final EmbeddingProvider embeddings;
@@ -123,15 +129,23 @@ public class EvalService {
             List<float[]> vectors = cases.isEmpty()
                     ? List.of()
                     : embeddings.embed(cases.stream().map(EvalCase::question).toList(), EmbeddingProvider.InputType.QUERY);
+            List<List<RetrievedChunk>> relevantByCase = new ArrayList<>();
+            List<Double> topScores = new ArrayList<>();
             for (int i = 0; i < cases.size(); i++) {
                 EvalCase evalCase = cases.get(i);
                 List<String> readerRoles = evalCase.roles().contains(RoleSet.ADMIN)
                         ? null
                         : RoleSet.readerRoles(evalCase.roles());
-                List<RetrievedChunk> relevant = chunks.search(vectors.get(i), readerRoles, topK).stream()
-                        .filter(chunk -> chunk.score() >= minScore)
-                        .toList();
-                double topScore = relevant.isEmpty() ? 0 : relevant.get(0).score();
+                List<RetrievedChunk> found = chunks.search(vectors.get(i), readerRoles, topK);
+                // Điểm cao nhất kể cả dưới ngưỡng — để chỉnh ngưỡng.
+                topScores.add(found.isEmpty() ? 0 : found.get(0).score());
+                relevantByCase.add(found.stream().filter(chunk -> chunk.score() >= minScore).toList());
+            }
+            List<String> answers = generate ? generateAnswers(cases, relevantByCase) : null;
+            for (int i = 0; i < cases.size(); i++) {
+                EvalCase evalCase = cases.get(i);
+                List<RetrievedChunk> relevant = relevantByCase.get(i);
+                double topScore = topScores.get(i);
                 List<String> titles = relevant.stream().map(RetrievedChunk::documentTitle).distinct().toList();
                 boolean ok;
                 if (evalCase.mustRefuse()) {
@@ -147,16 +161,12 @@ public class EvalService {
                         retrievalHits++;
                     }
                 }
-                String answer = null;
-                if (generate && !relevant.isEmpty()) {
-                    answer = generator.generate(evalCase.question(), relevant, List.of()).text();
-                }
                 if (ok) {
                     passed++;
                 }
                 results.add(new EvalResult(
                         evalCase.id(), evalCase.question(), evalCase.roles(), evalCase.expectedDocumentTitle(),
-                        evalCase.mustRefuse(), topScore, titles, ok, answer));
+                        evalCase.mustRefuse(), topScore, titles, ok, answers == null ? null : answers.get(i)));
             }
         } catch (ProviderException ex) {
             throw new BusinessException(
@@ -164,5 +174,35 @@ public class EvalService {
         }
         return new EvalReport(
                 cases.size(), passed, retrievalCases, retrievalHits, refusalCases, refusalCorrect, minScore, results);
+    }
+
+    /// Gọi Claude song song (4 luồng) để cả bộ câu hỏi xong trong giới hạn đọc 300 s của Nginx.
+    private List<String> generateAnswers(List<EvalCase> cases, List<List<RetrievedChunk>> relevantByCase) {
+        ExecutorService pool = Executors.newFixedThreadPool(GENERATION_THREADS);
+        try {
+            List<CompletableFuture<String>> futures = new ArrayList<>();
+            for (int i = 0; i < cases.size(); i++) {
+                String question = cases.get(i).question();
+                List<RetrievedChunk> relevant = relevantByCase.get(i);
+                futures.add(relevant.isEmpty()
+                        ? CompletableFuture.completedFuture(null)
+                        : CompletableFuture.supplyAsync(
+                                () -> generator.generate(question, relevant, List.of()).text(), pool));
+            }
+            return futures.stream().map(EvalService::join).toList();
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private static String join(CompletableFuture<String> future) {
+        try {
+            return future.join();
+        } catch (CompletionException ex) {
+            if (ex.getCause() instanceof ProviderException provider) {
+                throw provider;
+            }
+            throw ex;
+        }
     }
 }

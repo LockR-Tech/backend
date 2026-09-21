@@ -64,7 +64,9 @@ public class AssistantService {
     }
 
     public AssistantStatus status() {
-        return new AssistantStatus(rules.enabled(), embeddings.configured() && generator.configured());
+        boolean embedding = embeddings.configured();
+        boolean chat = generator.configured();
+        return new AssistantStatus(rules.enabled(), embedding && chat, embedding, chat);
     }
 
     public AskResponse ask(long userId, List<String> roles, AskRequest request) {

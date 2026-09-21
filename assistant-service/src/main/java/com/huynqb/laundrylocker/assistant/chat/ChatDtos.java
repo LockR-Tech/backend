@@ -37,7 +37,9 @@ public final class ChatDtos {
     public record ConversationDetail(ConversationView conversation, List<MessageView> messages) {
     }
 
-    /// App dùng để ẩn/hiện lối vào trợ lý.
-    public record AssistantStatus(boolean enabled, boolean configured) {
+    /// App dùng để ẩn/hiện lối vào trợ lý. `configured` = cả hai khoá; hai cờ sau để admin biết thiếu
+    /// khoá nào (thiếu khoá nhúng thì tài liệu nằm PENDING).
+    public record AssistantStatus(
+            boolean enabled, boolean configured, boolean embeddingConfigured, boolean chatConfigured) {
     }
 }

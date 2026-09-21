@@ -36,7 +36,9 @@ public class ChunkRepository {
                 rows);
     }
 
-    /// Top `limit` đoạn gần câu hỏi nhất trong các tài liệu READY mà người hỏi được đọc.
+    /// Top `limit` đoạn gần câu hỏi nhất trong các tài liệu người hỏi được đọc. Không lọc theo
+    /// trạng thái: đoạn chỉ tồn tại khi đã đánh chỉ mục xong, và đánh chỉ mục lại thay đoạn trong một
+    /// transaction ⇒ tài liệu đang (hoặc lỗi khi) đánh chỉ mục lại vẫn trả lời bằng đoạn cũ.
     /// `readerRoles` null ⇒ không lọc (ADMIN).
     public List<RetrievedChunk> search(float[] query, List<String> readerRoles, int limit) {
         String vector = vectorLiteral(query);
@@ -46,7 +48,7 @@ public class ChunkRepository {
                 "SELECT c.id, c.document_id, d.title, c.ordinal, c.heading, c.content, "
                         + "1 - (c.embedding <=> CAST(? AS vector)) AS score "
                         + "FROM kb_chunks c JOIN kb_documents d ON d.id = c.document_id "
-                        + "WHERE d.status = 'READY'");
+                        + "WHERE TRUE");
         if (readerRoles != null) {
             sql.append(" AND d.allowed_roles && CAST(? AS text[])");
             args.add(RoleSet.toArrayLiteral(readerRoles));
