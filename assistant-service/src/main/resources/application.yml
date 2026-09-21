@@ -24,7 +24,8 @@ app:
     anthropic-api-key: ${ANTHROPIC_API_KEY:}
     chat-model: ${ASSISTANT_CHAT_MODEL:claude-opus-5}
     max-output-tokens: ${ASSISTANT_MAX_OUTPUT_TOKENS:2048}
-    chat-timeout-seconds: ${ASSISTANT_CHAT_TIMEOUT_SECONDS:90}
+    # 55 s × tối đa 2 lần (1 lần thử lại) < 120 s app chờ; Nginx cho tới 300 s.
+    chat-timeout-seconds: ${ASSISTANT_CHAT_TIMEOUT_SECONDS:55}
     embedding-api-key: ${EMBEDDING_API_KEY:}
     embedding-model: ${EMBEDDING_MODEL:voyage-4}
     embedding-base-url: ${EMBEDDING_BASE_URL:https://api.voyageai.com/v1}

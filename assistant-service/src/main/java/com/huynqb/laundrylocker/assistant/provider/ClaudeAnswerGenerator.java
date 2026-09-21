@@ -142,7 +142,7 @@ public class ClaudeAnswerGenerator implements AnswerGenerator {
                     current = AnthropicOkHttpClient.builder()
                             .apiKey(properties.anthropicApiKey())
                             .timeout(Duration.ofSeconds(properties.chatTimeoutSeconds()))
-                            .maxRetries(2)
+                            .maxRetries(1)
                             .build();
                     client = current;
                 }
