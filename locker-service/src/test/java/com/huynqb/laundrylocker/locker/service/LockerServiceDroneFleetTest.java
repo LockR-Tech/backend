@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.DroneMaintenanceLogResponse;
+import com.huynqb.laundrylocker.locker.dto.DroneUpdateRequest;
 import com.huynqb.laundrylocker.locker.dto.DroneUnitResponse;
 import com.huynqb.laundrylocker.locker.model.DroneMaintenanceLog;
 import com.huynqb.laundrylocker.locker.model.DroneStatus;
@@ -147,6 +148,36 @@ class LockerServiceDroneFleetTest {
     }
 
     @Test
+    void adminCanUpdateStatusWithoutTakingTechnicianOwnership() {
+        when(droneUnitRepository.findById(1L))
+                .thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+
+        DroneUnitResponse response =
+                service.updateDroneStatusAsAdmin(1L, DroneStatus.CHARGING, null, 7L);
+
+        assertEquals(DroneStatus.CHARGING, response.status());
+        assertEquals(42L, response.assignedTechnicianId());
+        ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
+        verify(droneMaintenanceLogRepository).save(logCaptor.capture());
+        assertEquals(7L, logCaptor.getValue().getActorUserId());
+    }
+
+    @Test
+    void adminBatteryUpdateKeepsTechnicianAssignmentAndWritesAuditLog() {
+        when(droneUnitRepository.findById(1L))
+                .thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.CHARGING, 40)));
+
+        DroneUnitResponse response = service.updateDroneBatteryAsAdmin(1L, 95, 7L);
+
+        assertEquals(95, response.batteryPercent());
+        assertEquals(42L, response.assignedTechnicianId());
+        ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
+        verify(droneMaintenanceLogRepository).save(logCaptor.capture());
+        assertEquals("Cập nhật pin 95%", logCaptor.getValue().getNote());
+        assertEquals(7L, logCaptor.getValue().getActorUserId());
+    }
+
+    @Test
     void takeOffBatteryThresholdFollowsAdminSetting() {
         when(droneUnitRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.RESERVED, 80)));
@@ -182,6 +213,40 @@ class LockerServiceDroneFleetTest {
 
         assertEquals("DRONE_ACTIVE_MISSION", releaseError.getCode());
         assertEquals("DRONE_STATUS_WORKFLOW_MANAGED", launchError.getCode());
+        verify(droneUnitRepository, never()).save(any());
+    }
+
+    @Test
+    void adminCannotOverrideWorkflowManagedStatuses() {
+        when(droneUnitRepository.findById(1L))
+                .thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.RESERVED, 80)));
+
+        BusinessException releaseError = assertThrows(
+                BusinessException.class,
+                () -> service.updateDroneStatusAsAdmin(1L, DroneStatus.IDLE, null, 7L));
+        BusinessException launchError = assertThrows(
+                BusinessException.class,
+                () -> service.updateDroneStatusAsAdmin(1L, DroneStatus.IN_FLIGHT, null, 7L));
+
+        assertEquals("DRONE_ACTIVE_MISSION", releaseError.getCode());
+        assertEquals("DRONE_STATUS_WORKFLOW_MANAGED", launchError.getCode());
+        verify(droneUnitRepository, never()).save(any());
+    }
+
+    @Test
+    void adminCannotEditOrDecommissionDroneWithActiveMission() {
+        when(droneUnitRepository.findById(1L))
+                .thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IN_FLIGHT, 80)));
+
+        BusinessException editError = assertThrows(
+                BusinessException.class,
+                () -> service.updateDroneUnit(1L, new DroneUpdateRequest(10L, "DRONE-02")));
+        BusinessException decommissionError = assertThrows(
+                BusinessException.class,
+                () -> service.decommissionDrone(1L, 7L));
+
+        assertEquals("DRONE_ACTIVE_MISSION", editError.getCode());
+        assertEquals("DRONE_ACTIVE_MISSION", decommissionError.getCode());
         verify(droneUnitRepository, never()).save(any());
     }
 
