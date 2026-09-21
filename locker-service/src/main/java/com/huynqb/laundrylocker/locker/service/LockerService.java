@@ -407,6 +407,12 @@ public class LockerService {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "BOX_IN_USE", "Ô đang có đơn — không thể " + action);
         }
+        // Ô hỏng chỉ về hoạt động qua phiếu/clear-fault; đi đường vệ sinh → khôi phục sẽ lách phiếu.
+        if ("FAULT".equalsIgnoreCase(status)) {
+            throw new BusinessException(
+                    "BOX_IN_FAULT", "Ô đang hỏng — hoàn tất phiếu sự cố hoặc dùng clear-fault trước khi " + action,
+                    HttpStatus.CONFLICT);
+        }
         box.setStatus(target);
         box.setFaultReason(reason);
         return toCell(boxRepository.save(box));

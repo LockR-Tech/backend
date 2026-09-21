@@ -259,6 +259,17 @@ class LockerServiceTicketRoutingTest {
         assertEquals("FAULT", box.getStatus());
     }
 
+    // Hỏng → vệ sinh → khôi phục từng là đường lách phiếu sự cố.
+    @Test
+    void faultyBoxCannotBeParkedInCleaningOrOutOfService() {
+        box.setStatus("FAULT");
+
+        assertEquals("BOX_IN_FAULT", assertThrows(BusinessException.class, () -> service.setCleaning(BOX_ID)).getCode());
+        assertEquals("BOX_IN_FAULT",
+                assertThrows(BusinessException.class, () -> service.setOutOfService(BOX_ID, "x")).getCode());
+        assertEquals("FAULT", box.getStatus());
+    }
+
     @Test
     void faultWithoutTicketClearsStraightBackToPreviousState() {
         box.setStatus("FAULT");
