@@ -1,0 +1,57 @@
+server:
+  port: ${SERVER_PORT:8093}
+spring:
+  application:
+    name: assistant-service
+  # Container pgvector riêng (assistant-db), không đụng Postgres chính ⇒ dùng schema public.
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:15433/assistant_db}
+    username: ${SPRING_DATASOURCE_USERNAME:assistant_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:assistant_pass}
+  flyway:
+    enabled: true
+  # Nginx cho body tối đa 20 MB.
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 21MB
+app:
+  # Quy tắc admin chỉnh được (ADR-0005) — /api/admin/settings/assistant.
+  settings:
+    scope: assistant
+  assistant:
+    # Thiếu khoá ⇒ service vẫn chạy, /api/assistant/ask trả 503 "chưa cấu hình".
+    anthropic-api-key: ${ANTHROPIC_API_KEY:}
+    chat-model: ${ASSISTANT_CHAT_MODEL:claude-opus-5}
+    max-output-tokens: ${ASSISTANT_MAX_OUTPUT_TOKENS:2048}
+    chat-timeout-seconds: ${ASSISTANT_CHAT_TIMEOUT_SECONDS:90}
+    embedding-api-key: ${EMBEDDING_API_KEY:}
+    embedding-model: ${EMBEDDING_MODEL:voyage-4}
+    embedding-base-url: ${EMBEDDING_BASE_URL:https://api.voyageai.com/v1}
+    # Phải khớp cột kb_chunks.embedding vector(1024).
+    embedding-dimension: 1024
+    index-poll-ms: ${ASSISTANT_INDEX_POLL_MS:5000}
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,sbom
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:unknown},%X{correlationId:-}]"

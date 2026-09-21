@@ -386,8 +386,61 @@ services:
     networks:
       - laundry-ms-network
 
+  # Kho vector của trợ lý RAG: container riêng để không phải đổi image Postgres chính.
+  assistant-db:
+    image: pgvector/pgvector:pg16
+    container_name: ll-ms-assistant-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: assistant_user
+      # Chỉ có hiệu lực lần đầu tạo volume.
+      POSTGRES_PASSWORD: ${ASSISTANT_DB_PASSWORD:-assistant_pass}
+      POSTGRES_DB: assistant_db
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    command: [ "postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=20", "-c", "work_mem=8MB" ]
+    ports:
+      - "127.0.0.1:15433:5432"
+    volumes:
+      - assistant_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U assistant_user -d assistant_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - laundry-ms-network
+
+  assistant-service:
+    build:
+      context: .
+      dockerfile: assistant-service/Dockerfile
+    container_name: ll-ms-assistant-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8093
+      SPRING_DATASOURCE_URL: jdbc:postgresql://assistant-db:5432/assistant_db
+      SPRING_DATASOURCE_USERNAME: assistant_user
+      SPRING_DATASOURCE_PASSWORD: ${ASSISTANT_DB_PASSWORD:-assistant_pass}
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 3
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      # Thiếu khoá ⇒ service vẫn chạy, API hỏi đáp trả 503 "chưa cấu hình".
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ASSISTANT_CHAT_MODEL: ${ASSISTANT_CHAT_MODEL:-claude-opus-5}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-voyage-4}
+      JAVA_OPTS: "-Xms64m -Xmx320m -XX:+UseContainerSupport"
+    depends_on:
+      assistant-db:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    networks:
+      - laundry-ms-network
+
 volumes:
   postgres_data:
+  assistant_db_data:
 
 networks:
   laundry-ms-network:
