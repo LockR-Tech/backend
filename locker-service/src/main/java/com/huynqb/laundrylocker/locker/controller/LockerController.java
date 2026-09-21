@@ -135,14 +135,16 @@ public class LockerController {
         return ApiResponse.ok(lockerService.stats(storeId));
     }
 
-    // ---- Maintenance (role MAINTENANCE/ADMIN qua gateway) ----
+    // ---- Việc của KTV tủ (role LOCKER_TECHNICIAN/ADMIN qua gateway) ----
+    // Riêng /api/maintenance/schedules* và /inspection-logs ở dưới là dùng chung
+    // với KTV drone.
 
-    @GetMapping("/api/maintenance/faults")
+    @GetMapping("/api/locker-technician/faults")
     public ApiResponse<List<FaultCellResponse>> maintenanceFaults() {
         return ApiResponse.ok(lockerService.openFaults());
     }
 
-    @GetMapping("/api/maintenance/reports")
+    @GetMapping("/api/locker-technician/reports")
     public ApiResponse<List<LockerReportResponse>> maintenanceReports(
             @RequestParam(required = false, defaultValue = "false") boolean mine,
             @RequestParam(required = false, defaultValue = "false") boolean all,
@@ -156,18 +158,18 @@ public class LockerController {
         return ApiResponse.ok(lockerService.openReports());
     }
 
-    @PutMapping("/api/maintenance/reports/{id}/claim")
+    @PutMapping("/api/locker-technician/reports/{id}/claim")
     public ApiResponse<LockerReportResponse> maintenanceClaim(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("REPORT_CLAIMED", "Report claimed", lockerService.claimReport(id, userId));
     }
 
-    @GetMapping("/api/maintenance/reports/{id}")
+    @GetMapping("/api/locker-technician/reports/{id}")
     public ApiResponse<LockerReportResponse> maintenanceReport(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.getReport(id));
     }
 
-    @PutMapping("/api/maintenance/reports/{id}/resolve")
+    @PutMapping("/api/locker-technician/reports/{id}/resolve")
     public ApiResponse<LockerReportResponse> maintenanceResolve(
             @PathVariable Long id,
             @Valid @RequestBody(required = false) ResolveReportRequest body,
@@ -180,13 +182,13 @@ public class LockerController {
 
     // ---- Ảnh phiếu sự cố (Cloudinary, ADR-0004) ----
 
-    @GetMapping("/api/maintenance/reports/{id}/attachments")
+    @GetMapping("/api/locker-technician/reports/{id}/attachments")
     public ApiResponse<List<ReportAttachmentResponse>> maintenanceReportAttachments(
             @PathVariable Long id, @RequestParam(required = false) String stage) {
         return ApiResponse.ok(attachmentService.list(id, stage));
     }
 
-    @PostMapping("/api/maintenance/reports/{id}/attachments")
+    @PostMapping("/api/locker-technician/reports/{id}/attachments")
     public ApiResponse<List<ReportAttachmentResponse>> maintenanceAddReportAttachments(
             @PathVariable Long id,
             @Valid @RequestBody ReportAttachmentsRequest body,
@@ -198,7 +200,7 @@ public class LockerController {
                         id, body.stage(), body.note(), body.attachments(), userId, UserRoles.isAdmin(roles)));
     }
 
-    @DeleteMapping("/api/maintenance/reports/{id}/attachments/{attachmentId}")
+    @DeleteMapping("/api/locker-technician/reports/{id}/attachments/{attachmentId}")
     public ApiResponse<Void> maintenanceDeleteReportAttachment(
             @PathVariable Long id,
             @PathVariable Long attachmentId,
@@ -208,12 +210,12 @@ public class LockerController {
         return ApiResponse.ok("REPORT_ATTACHMENT_DELETED", "Report photo deleted");
     }
 
-    @PostMapping("/api/maintenance/boxes/{id}/clear-fault")
+    @PostMapping("/api/locker-technician/boxes/{id}/clear-fault")
     public ApiResponse<CellResponse> maintenanceClearFault(@PathVariable Long id) {
         return ApiResponse.ok("BOX_FAULT_CLEARED", "Box fault cleared", lockerService.clearFault(id));
     }
 
-    @PostMapping("/api/maintenance/boxes/{id}/out-of-service")
+    @PostMapping("/api/locker-technician/boxes/{id}/out-of-service")
     public ApiResponse<CellResponse> maintenanceOutOfService(
             @PathVariable Long id, @RequestBody(required = false) Map<String, String> body) {
         String reason = body == null ? null : body.get("reason");
@@ -221,12 +223,12 @@ public class LockerController {
                 "BOX_OUT_OF_SERVICE", "Box taken out of service", lockerService.setOutOfService(id, reason));
     }
 
-    @PostMapping("/api/maintenance/boxes/{id}/cleaning")
+    @PostMapping("/api/locker-technician/boxes/{id}/cleaning")
     public ApiResponse<CellResponse> maintenanceCleaning(@PathVariable Long id) {
         return ApiResponse.ok("BOX_CLEANING", "Box marked as cleaning", lockerService.setCleaning(id));
     }
 
-    @PostMapping("/api/maintenance/boxes/{id}/return-to-service")
+    @PostMapping("/api/locker-technician/boxes/{id}/return-to-service")
     public ApiResponse<CellResponse> maintenanceReturnToService(@PathVariable Long id) {
         return ApiResponse.ok(
                 "BOX_RETURNED_TO_SERVICE", "Box returned to service", lockerService.returnToService(id));
@@ -234,23 +236,23 @@ public class LockerController {
 
     // Emergency override: open a box without the customer's PIN/QR. Always
     // audited (credential type MASTER) by iot-service's box_access_logs.
-    @PostMapping("/api/maintenance/boxes/{id}/force-open")
+    @PostMapping("/api/locker-technician/boxes/{id}/force-open")
     public ApiResponse<Map<String, Object>> maintenanceForceOpen(
             @PathVariable Long id, @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         return ApiResponse.ok("BOX_FORCE_OPEN_ACCEPTED", "Force open accepted", lockerService.forceOpen(id, userId));
     }
 
-    @GetMapping("/api/maintenance/my-rating-average")
+    @GetMapping("/api/locker-technician/my-rating-average")
     public ApiResponse<Map<String, Object>> maintenanceMyRatingAverage(@RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(lockerService.myRatingAverage(userId));
     }
 
-    @GetMapping("/api/maintenance/my-performance")
+    @GetMapping("/api/locker-technician/my-performance")
     public ApiResponse<Map<String, Object>> maintenanceMyPerformance(@RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(lockerService.technicianPerformance(userId));
     }
 
-    @PutMapping("/api/maintenance/reports/{id}/extend-sla")
+    @PutMapping("/api/locker-technician/reports/{id}/extend-sla")
     public ApiResponse<LockerReportResponse> maintenanceExtendReportSla(
             @PathVariable Long id,
             @Valid @RequestBody ExtendSlaRequest body,
@@ -261,12 +263,12 @@ public class LockerController {
                 lockerService.extendSla(id, body.extensionHours(), body.reason(), actorUserId));
     }
 
-    @GetMapping("/api/maintenance/reports/{id}/logs")
+    @GetMapping("/api/locker-technician/reports/{id}/logs")
     public ApiResponse<List<RepairLogResponse>> maintenanceReportLogs(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.repairLogs(id));
     }
 
-    @PostMapping("/api/maintenance/reports/{id}/logs")
+    @PostMapping("/api/locker-technician/reports/{id}/logs")
     public ApiResponse<RepairLogResponse> maintenanceAddReportLog(
             @PathVariable Long id,
             @Valid @RequestBody RepairLogRequest body,
@@ -336,9 +338,9 @@ public class LockerController {
         return ApiResponse.ok("SCHEDULE_DELETED", "Schedule deleted", null);
     }
 
-    // ---- Drone fleet (role MAINTENANCE/ADMIN qua gateway) ----
+    // ---- Drone fleet (role DRONE_TECHNICIAN/ADMIN qua gateway) ----
 
-    @GetMapping("/api/maintenance/drones")
+    @GetMapping("/api/drone-technician/drones")
     public ApiResponse<List<DroneUnitResponse>> maintenanceDrones() {
         return ApiResponse.ok(lockerService.listDroneUnits());
     }
@@ -361,19 +363,19 @@ public class LockerController {
                 id, request.expectedStatus(), request.status(), request.reason()));
     }
 
-    @PostMapping("/api/maintenance/drones/{id}/claim")
+    @PostMapping("/api/drone-technician/drones/{id}/claim")
     public ApiResponse<DroneUnitResponse> maintenanceClaimDrone(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("DRONE_CLAIMED", "Drone claimed", lockerService.claimDrone(id, userId));
     }
 
-    @PostMapping("/api/maintenance/drones/{id}/release")
+    @PostMapping("/api/drone-technician/drones/{id}/release")
     public ApiResponse<DroneUnitResponse> maintenanceReleaseDrone(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("DRONE_RELEASED", "Drone released", lockerService.releaseDrone(id, userId));
     }
 
-    @PostMapping("/api/maintenance/drones/{id}/status")
+    @PostMapping("/api/drone-technician/drones/{id}/status")
     public ApiResponse<DroneUnitResponse> maintenanceDroneStatus(
             @PathVariable Long id,
             @Valid @RequestBody DroneStatusRequest request,
@@ -383,7 +385,7 @@ public class LockerController {
                 lockerService.updateDroneStatus(id, request.status(), request.reason(), userId));
     }
 
-    @PostMapping("/api/maintenance/drones/{id}/battery")
+    @PostMapping("/api/drone-technician/drones/{id}/battery")
     public ApiResponse<DroneUnitResponse> maintenanceDroneBattery(
             @PathVariable Long id,
             @Valid @RequestBody DroneBatteryRequest request,
@@ -393,12 +395,12 @@ public class LockerController {
                 lockerService.updateDroneBattery(id, request.batteryPercent(), userId));
     }
 
-    @GetMapping("/api/maintenance/drones/{id}/logs")
+    @GetMapping("/api/drone-technician/drones/{id}/logs")
     public ApiResponse<List<DroneMaintenanceLogResponse>> maintenanceDroneLogs(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.droneLogs(id));
     }
 
-    @PostMapping("/api/maintenance/drones/{id}/logs")
+    @PostMapping("/api/drone-technician/drones/{id}/logs")
     public ApiResponse<DroneMaintenanceLogResponse> maintenanceAddDroneLog(
             @PathVariable Long id,
             @RequestBody Map<String, String> body,
@@ -428,21 +430,22 @@ public class LockerController {
 
     // Maintenance box-health: logical (order-driven) status side-by-side with the
     // cabinet-reported hardware door state (iot-service, GAP 2), flagging doors open
-    // on non-occupied boxes. Role MAINTENANCE/ADMIN (gateway-guarded /api/maintenance/**).
-    @GetMapping("/api/maintenance/lockers/{lockerId}/box-health")
+    // on non-occupied boxes. Role LOCKER_TECHNICIAN/ADMIN (gateway-guarded
+    // /api/locker-technician/**).
+    @GetMapping("/api/locker-technician/lockers/{lockerId}/box-health")
     public ApiResponse<List<BoxHealthResponse>> maintenanceBoxHealth(@PathVariable Long lockerId) {
         return ApiResponse.ok(lockerService.boxHealth(lockerId));
     }
 
     // Shift overview: every box across all lockers whose hardware door is OPEN while
     // not OCCUPIED (likely left ajar), with locker location for directions.
-    @GetMapping("/api/maintenance/box-anomalies")
+    @GetMapping("/api/locker-technician/box-anomalies")
     public ApiResponse<List<BoxAnomalyResponse>> maintenanceBoxAnomalies() {
         return ApiResponse.ok(lockerService.boxAnomalies());
     }
 
-    // #6 — bao tri bai dap drone (role MAINTENANCE/ADMIN)
-    @PostMapping("/api/maintenance/lockers/{id}/landing-pad")
+    // #6 — bao tri bai dap drone (role LOCKER_TECHNICIAN/ADMIN)
+    @PostMapping("/api/locker-technician/lockers/{id}/landing-pad")
     public ApiResponse<LockerLayoutResponse> maintenanceLandingPadStatus(
             @PathVariable Long id,
             @RequestBody Map<String, String> body,

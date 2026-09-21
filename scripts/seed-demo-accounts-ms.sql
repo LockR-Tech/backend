@@ -6,7 +6,7 @@
 --   demo@laundry.test       / secret123     → USER (id=1)
 --   admin@laundry.test      / Admin@123456  → ADMIN (id=2)
 --   manager@laundry.test    / Manager@123456→ MANAGER (id=5)
---   maintenance@laundry.test/ Maint@123456  → MAINTENANCE (id=7)
+--   maintenance@laundry.test/ Maint@123456  → DRONE_TECHNICIAN (id=7)
 --
 -- BCrypt hashes generated with strength=10
 -- =============================================
@@ -24,7 +24,7 @@ VALUES (1, 'demo@laundry.test', '0900000001', 'Demo', 'Customer', DATE '2000-01-
        (2, 'admin@laundry.test', '0900000002', 'Admin', 'System', DATE '1990-01-01', 'ACTIVE', 'ADMIN', NOW(), NOW()),
        (5, 'manager@laundry.test', '0900000005', 'Manager', 'Store', DATE '1990-01-01', 'ACTIVE', 'MANAGER', NOW(),
         NOW()),
-       (7, 'maintenance@laundry.test', '0900000007', 'Maintenance', 'Team', DATE '1990-01-01', 'ACTIVE', 'MAINTENANCE',
+       (7, 'maintenance@laundry.test', '0900000007', 'Maintenance', 'Team', DATE '1990-01-01', 'ACTIVE', 'DRONE_TECHNICIAN',
         NOW(), NOW()) ON CONFLICT (id) DO
 UPDATE SET
     email = EXCLUDED.email,

@@ -5,7 +5,7 @@
 \set
 ON_ERROR_STOP on
 
-\echo '1. Tìm user_id của huynqbse180211@fpt.edu.vn và gán quyền TECHNICIAN'
+\echo '1. Tìm user_id của huynqbse180211@fpt.edu.vn và gán quyền LOCKER_TECHNICIAN'
 \connect user_db
 DO $$
 DECLARE
@@ -22,7 +22,7 @@ v_user_id IS NULL THEN
 END IF;
 
 UPDATE user_schema.user_profiles
-SET roles = 'TECHNICIAN'
+SET roles = 'LOCKER_TECHNICIAN'
 WHERE id = v_user_id;
 END $$;
 

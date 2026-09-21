@@ -152,35 +152,13 @@ class JwtGatewayFilterTest {
         assertEquals("CUSTOMER", forwarded.get().getRequest().getHeaders().getFirst("X-User-Roles"));
     }
 
+    // Trước khi tách prefix, KTV drone vào được cả việc của tủ (lỗ hổng F3.02).
     @Test
-    void allowsMaintenanceForMaintenanceApi() {
+    void blocksDroneTechnicianFromLockerTechnicianApi() {
         MockServerWebExchange exchange =
                 exchangeWithBearer(
-                        MockServerHttpRequest.get("/api/maintenance/reports"), token("access", "MAINTENANCE"));
-        AtomicBoolean chainCalled = new AtomicBoolean(false);
-
-        filter.filter(exchange, chainThatMarks(chainCalled)).block();
-
-        assertTrue(chainCalled.get());
-    }
-
-    @Test
-    void allowsTechnicianForLockerMaintenanceApi() {
-        MockServerWebExchange exchange =
-                exchangeWithBearer(
-                        MockServerHttpRequest.get("/api/maintenance/reports"), token("access", "TECHNICIAN"));
-        AtomicBoolean chainCalled = new AtomicBoolean(false);
-
-        filter.filter(exchange, chainThatMarks(chainCalled)).block();
-
-        assertTrue(chainCalled.get());
-    }
-
-    @Test
-    void blocksTechnicianFromDroneFleetApi() {
-        MockServerWebExchange exchange =
-                exchangeWithBearer(
-                        MockServerHttpRequest.get("/api/maintenance/drones"), token("access", "TECHNICIAN"));
+                        MockServerHttpRequest.get("/api/locker-technician/reports"),
+                        token("access", "DRONE_TECHNICIAN"));
         AtomicBoolean chainCalled = new AtomicBoolean(false);
 
         filter.filter(exchange, chainThatMarks(chainCalled)).block();
@@ -190,11 +168,37 @@ class JwtGatewayFilterTest {
     }
 
     @Test
-    void blocksTechnicianFromDroneDeliveryQueue() {
+    void allowsLockerTechnicianForLockerTechnicianApi() {
         MockServerWebExchange exchange =
                 exchangeWithBearer(
-                        MockServerHttpRequest.get("/api/maintenance/drone-deliveries"),
-                        token("access", "TECHNICIAN"));
+                        MockServerHttpRequest.get("/api/locker-technician/reports"),
+                        token("access", "LOCKER_TECHNICIAN"));
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+        filter.filter(exchange, chainThatMarks(chainCalled)).block();
+
+        assertTrue(chainCalled.get());
+    }
+
+    @Test
+    void allowsLockerTechnicianForIotDevices() {
+        MockServerWebExchange exchange =
+                exchangeWithBearer(
+                        MockServerHttpRequest.get("/api/locker-technician/devices"),
+                        token("access", "LOCKER_TECHNICIAN"));
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+        filter.filter(exchange, chainThatMarks(chainCalled)).block();
+
+        assertTrue(chainCalled.get());
+    }
+
+    @Test
+    void blocksLockerTechnicianFromDroneFleetApi() {
+        MockServerWebExchange exchange =
+                exchangeWithBearer(
+                        MockServerHttpRequest.get("/api/drone-technician/drones"),
+                        token("access", "LOCKER_TECHNICIAN"));
         AtomicBoolean chainCalled = new AtomicBoolean(false);
 
         filter.filter(exchange, chainThatMarks(chainCalled)).block();
@@ -204,11 +208,25 @@ class JwtGatewayFilterTest {
     }
 
     @Test
-    void allowsMaintenanceForDroneDeliveryQueue() {
+    void blocksLockerTechnicianFromDroneDeliveryQueue() {
         MockServerWebExchange exchange =
                 exchangeWithBearer(
-                        MockServerHttpRequest.get("/api/maintenance/drone-deliveries"),
-                        token("access", "MAINTENANCE"));
+                        MockServerHttpRequest.get("/api/drone-technician/drone-deliveries"),
+                        token("access", "LOCKER_TECHNICIAN"));
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+        filter.filter(exchange, chainThatMarks(chainCalled)).block();
+
+        assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
+        assertFalse(chainCalled.get());
+    }
+
+    @Test
+    void allowsDroneTechnicianForDroneDeliveryQueue() {
+        MockServerWebExchange exchange =
+                exchangeWithBearer(
+                        MockServerHttpRequest.get("/api/drone-technician/drone-deliveries"),
+                        token("access", "DRONE_TECHNICIAN"));
         AtomicBoolean chainCalled = new AtomicBoolean(false);
 
         filter.filter(exchange, chainThatMarks(chainCalled)).block();
@@ -217,15 +235,32 @@ class JwtGatewayFilterTest {
     }
 
     @Test
-    void allowsMaintenanceForDroneFleetApi() {
+    void allowsDroneTechnicianForDroneFleetApi() {
         MockServerWebExchange exchange =
                 exchangeWithBearer(
-                        MockServerHttpRequest.get("/api/maintenance/drones"), token("access", "MAINTENANCE"));
+                        MockServerHttpRequest.get("/api/drone-technician/drones"),
+                        token("access", "DRONE_TECHNICIAN"));
         AtomicBoolean chainCalled = new AtomicBoolean(false);
 
         filter.filter(exchange, chainThatMarks(chainCalled)).block();
 
         assertTrue(chainCalled.get());
+    }
+
+    // Lịch bảo trì dùng chung: cả hai KTV đều phải vào được.
+    @Test
+    void allowsBothTechniciansForSharedScheduleApi() {
+        for (String role : new String[] {"LOCKER_TECHNICIAN", "DRONE_TECHNICIAN"}) {
+            MockServerWebExchange exchange =
+                    exchangeWithBearer(
+                            MockServerHttpRequest.get("/api/maintenance/schedules"),
+                            token("access", role));
+            AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+            filter.filter(exchange, chainThatMarks(chainCalled)).block();
+
+            assertTrue(chainCalled.get(), role + " phải vào được lịch bảo trì dùng chung");
+        }
     }
 
     @Test

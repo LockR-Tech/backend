@@ -86,8 +86,8 @@ public class AuthService {
     @Transactional
     public AuthResponse createAccount(CreateAccountRequest request) {
         // Role model after the mobile split: CUSTOMER, ADMIN (web console),
-        // MAINTENANCE (drone fleet), TECHNICIAN (locker upkeep + IoT).
-        Set<String> allowedRoles = Set.of("CUSTOMER", "ADMIN", "MAINTENANCE", "TECHNICIAN");
+        // DRONE_TECHNICIAN (drone fleet), LOCKER_TECHNICIAN (locker upkeep + IoT).
+        Set<String> allowedRoles = Set.of("CUSTOMER", "ADMIN", "DRONE_TECHNICIAN", "LOCKER_TECHNICIAN");
         Set<String> roles = request.roles() == null ? Set.of("CUSTOMER") : request.roles();
         for (String role : roles) {
             if (!allowedRoles.contains(role)) {

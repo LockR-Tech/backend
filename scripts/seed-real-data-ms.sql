@@ -12,7 +12,7 @@
 -- 4 named accounts (password = 12345678, bcrypt strength 10):
 --   ADMIN       baohuy2k12k4@gmail.com                user_id 9001
 --   CUSTOMER    nqbhuy2004nt@gmail.com                user_id 9002
---   MAINTENANCE se180211nguyenquocbaohuy@gmail.com    user_id 9003
+--   DRONE_TECHNICIAN se180211nguyenquocbaohuy@gmail.com    user_id 9003
 --   MANAGER     huynqbse180211@fpt.edu.vn             user_id 9004
 -- + 100 bulk customers (user_id 9101-9200, *@demo.laundry.test)
 -- =====================================================================
@@ -39,7 +39,7 @@ VALUES (9001, 'baohuy2k12k4@gmail.com', '0980000001', 'Bảo Huy', 'Quản trị
        (9002, 'nqbhuy2004nt@gmail.com', '0980000002', 'Quốc Bảo', 'Huy', DATE '2004-04-04', NULL, 'ACTIVE', 'CUSTOMER',
         NOW(), NOW()),
        (9003, 'se180211nguyenquocbaohuy@gmail.com', '0980000003', 'Bảo Huy', 'Bảo Trì', DATE '1998-02-02', NULL,
-        'ACTIVE', 'MAINTENANCE', NOW(), NOW()),
+        'ACTIVE', 'DRONE_TECHNICIAN', NOW(), NOW()),
        (9004, 'huynqbse180211@fpt.edu.vn', '0980000004', 'Huy', 'Quản Lý', DATE '1995-03-03', NULL, 'ACTIVE', 'MANAGER',
         NOW(), NOW());
 

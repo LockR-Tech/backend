@@ -52,7 +52,7 @@ public class IotController {
     }
 
     // Service-to-service only (blocked at gateway): maintenance force-open,
-    // called from locker-service's /api/maintenance/boxes/{id}/force-open.
+    // called from locker-service's /api/locker-technician/boxes/{id}/force-open.
     @PostMapping("/internal/iot/force-unlock")
     public ApiResponse<Map<String, Object>> forceUnlock(@Valid @RequestBody ForceUnlockRequest request) {
         return ApiResponse.ok("IOT_FORCE_UNLOCK_ACCEPTED", "Force unlock accepted", iotService.forceUnlock(request));

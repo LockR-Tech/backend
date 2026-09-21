@@ -15,12 +15,13 @@
 -- 4 TÀI KHOẢN CHÍNH — mật khẩu đều là 12345678
 --   id 1  ADMIN                        baohuy2k12k4@gmail.com               (web admin)
 --   id 2  CUSTOMER                     nqbhuy2004nt@gmail.com               (mobile khách)
---   id 3  MAINTENANCE                  se180211nguyenquocbaohuy@gmail.com   (mobile bảo trì)
---   id 4  TECHNICIAN                   huynqbse180211@fpt.edu.vn            (mobile kỹ thuật/quản lý vận hành)
+--   id 3  DRONE_TECHNICIAN             se180211nguyenquocbaohuy@gmail.com   (mobile KTV drone)
+--   id 4  LOCKER_TECHNICIAN            huynqbse180211@fpt.edu.vn            (mobile KTV tủ/quản lý vận hành)
 --
 -- Role model chuẩn của hệ thống (JwtGatewayFilter.hasRequiredRole):
---   CUSTOMER · ADMIN (web console) · TECHNICIAN (bảo trì tủ + IoT) · MAINTENANCE (đội drone)
--- MANAGER/STAFF đã khai tử. Persona "Quản lý vận hành" dùng TECHNICIAN.
+--   CUSTOMER · ADMIN (web console) · LOCKER_TECHNICIAN (KTV tủ: bảo trì tủ + IoT)
+--   · DRONE_TECHNICIAN (KTV drone: đội bay)
+-- MANAGER/STAFF đã khai tử. Persona "Quản lý vận hành" dùng LOCKER_TECHNICIAN.
 -- =====================================================================
 
 
@@ -36,15 +37,15 @@ INSERT INTO user_schema.user_profiles
 VALUES
 (1,  'baohuy2k12k4@gmail.com',             '0901000001', 'Bảo Huy',  'Nguyễn Quốc', DATE '1999-03-12', 'https://i.pravatar.cc/300?img=12', 'ACTIVE', 'ADMIN',                        NOW() - INTERVAL '400 days', NOW() - INTERVAL '2 days'),
 (2,  'nqbhuy2004nt@gmail.com',             '0901000002', 'Quốc Bảo', 'Nguyễn',      DATE '2004-04-04', 'https://i.pravatar.cc/300?img=33', 'ACTIVE', 'CUSTOMER',                     NOW() - INTERVAL '320 days', NOW() - INTERVAL '1 day'),
-(3,  'se180211nguyenquocbaohuy@gmail.com', '0901000003', 'Bảo Huy',  'Nguyễn',      DATE '2001-08-21', 'https://i.pravatar.cc/300?img=51', 'ACTIVE', 'MAINTENANCE',                  NOW() - INTERVAL '300 days', NOW() - INTERVAL '3 days'),
-(4,  'huynqbse180211@fpt.edu.vn',          '0901000004', 'Bảo Huy',  'Huỳnh',       DATE '2000-11-02', 'https://i.pravatar.cc/300?img=68', 'ACTIVE', 'TECHNICIAN',                   NOW() - INTERVAL '300 days', NOW() - INTERVAL '4 days'),
+(3,  'se180211nguyenquocbaohuy@gmail.com', '0901000003', 'Bảo Huy',  'Nguyễn',      DATE '2001-08-21', 'https://i.pravatar.cc/300?img=51', 'ACTIVE', 'DRONE_TECHNICIAN',             NOW() - INTERVAL '300 days', NOW() - INTERVAL '3 days'),
+(4,  'huynqbse180211@fpt.edu.vn',          '0901000004', 'Bảo Huy',  'Huỳnh',       DATE '2000-11-02', 'https://i.pravatar.cc/300?img=68', 'ACTIVE', 'LOCKER_TECHNICIAN',            NOW() - INTERVAL '300 days', NOW() - INTERVAL '4 days'),
 (5,  'minhanh.tran@gmail.com',             '0901000005', 'Minh Anh', 'Trần',        DATE '1998-01-15', NULL, 'ACTIVE',   'CUSTOMER',            NOW() - INTERVAL '210 days', NOW() - INTERVAL '9 days'),
 (6,  'yenvi.le@gmail.com',                 '0901000006', 'Yến Vi',   'Lê Thị',      DATE '2002-06-30', NULL, 'ACTIVE',   'CUSTOMER',            NOW() - INTERVAL '180 days', NOW() - INTERVAL '7 days'),
 (7,  'khang.nguyen@gmail.com',             '0901000007', 'Văn Khang','Nguyễn',      DATE '1997-09-09', NULL, 'ACTIVE',   'CUSTOMER',            NOW() - INTERVAL '150 days', NOW() - INTERVAL '5 days'),
 (8,  'thuha.pham@gmail.com',               '0901000008', 'Thu Hà',   'Phạm',        DATE '2003-02-18', NULL, 'ACTIVE',   'CUSTOMER',            NOW() - INTERVAL '120 days', NOW() - INTERVAL '6 days'),
 (9,  'quocbao.do@gmail.com',               '0901000009', 'Quốc Bảo', 'Đỗ',          DATE '1996-12-25', NULL, 'INACTIVE', 'CUSTOMER',            NOW() - INTERVAL '110 days', NOW() - INTERVAL '40 days'),
 (10, 'hoangnam.vu@gmail.com',              '0901000010', 'Hoàng Nam','Vũ',          DATE '2001-05-05', NULL, 'ACTIVE',   'CUSTOMER',            NOW() - INTERVAL '90 days',  NOW() - INTERVAL '3 days'),
-(11, 'thaibinh.truong@gmail.com',          '0901000011', 'Thái Bình','Trương Nguyễn', DATE '1999-07-07', NULL, 'ACTIVE', 'TECHNICIAN',           NOW() - INTERVAL '260 days', NOW() - INTERVAL '8 days'),
+(11, 'thaibinh.truong@gmail.com',          '0901000011', 'Thái Bình','Trương Nguyễn', DATE '1999-07-07', NULL, 'ACTIVE', 'LOCKER_TECHNICIAN',    NOW() - INTERVAL '260 days', NOW() - INTERVAL '8 days'),
 (12, 'baochau.ngo@gmail.com',              '0901000012', 'Bảo Châu', 'Ngô',         DATE '2000-10-10', NULL, 'ACTIVE',   'CUSTOMER',            NOW() - INTERVAL '60 days',  NOW() - INTERVAL '2 days');
 
 SELECT setval('user_schema.user_profiles_id_seq', 12, true);

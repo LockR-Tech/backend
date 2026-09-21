@@ -143,26 +143,29 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
     }
 
     // Path-prefix RBAC. ADMIN is a superset of every operational role.
-    // Role model: CUSTOMER, ADMIN (web console), TECHNICIAN (locker upkeep + IoT),
-    // MAINTENANCE (drone team). MANAGER/STAFF were retired.
+    // Role model: CUSTOMER, ADMIN (web console), LOCKER_TECHNICIAN (locker upkeep
+    // + IoT), DRONE_TECHNICIAN (drone team). MANAGER/STAFF were retired.
+    //
+    // Route prefixes mirror the roles:
+    //   /api/drone-technician/**  drone fleet, dispatch queue, drone orders
+    //   /api/locker-technician/** faults, reports, box actions, landing pad, IoT
+    //   /api/maintenance/**       lịch bảo trì + inspection log, dùng chung vì cả
+    //                             hai KTV đều xem lịch của mảng mình
     private boolean hasRequiredRole(String path, List<String> roles) {
         if (path.startsWith("/api/admin/lockers/reports")) {
-            return hasAny(roles, "ADMIN", "TECHNICIAN");
+            return hasAny(roles, "ADMIN", "LOCKER_TECHNICIAN");
         }
         if (path.startsWith("/api/admin")) {
             return hasAny(roles, "ADMIN");
         }
-        // Drone fleet + drone-delivery dispatch queue are the MAINTENANCE (drone
-        // team) surface; the rest of the maintenance API (faults, reports, box
-        // actions, schedules, landing pad) belongs to TECHNICIAN.
-        if (path.startsWith("/api/maintenance/drone")) {
-            return hasAny(roles, "MAINTENANCE", "ADMIN");
+        if (path.startsWith("/api/drone-technician")) {
+            return hasAny(roles, "DRONE_TECHNICIAN", "ADMIN");
+        }
+        if (path.startsWith("/api/locker-technician")) {
+            return hasAny(roles, "LOCKER_TECHNICIAN", "ADMIN");
         }
         if (path.startsWith("/api/maintenance")) {
-            return hasAny(roles, "MAINTENANCE", "TECHNICIAN", "ADMIN");
-        }
-        if (path.startsWith("/api/technician")) {
-            return hasAny(roles, "TECHNICIAN", "ADMIN");
+            return hasAny(roles, "DRONE_TECHNICIAN", "LOCKER_TECHNICIAN", "ADMIN");
         }
         return true;
     }

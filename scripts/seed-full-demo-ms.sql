@@ -12,7 +12,7 @@
 -- 4 named accounts (password = 12345678, bcrypt strength 10):
 --   ADMIN       baohuy2k12k4@gmail.com                user_id 9001
 --   CUSTOMER    nqbhuy2004nt@gmail.com                user_id 9002
---   MAINTENANCE se180211nguyenquocbaohuy@gmail.com    user_id 9003
+--   DRONE_TECHNICIAN se180211nguyenquocbaohuy@gmail.com    user_id 9003
 --   MANAGER     huynqbse180211@fpt.edu.vn             user_id 9004
 -- + 100 bulk customers (user_id 9101-9200, *@demo.laundry.test)
 -- =====================================================================
@@ -39,7 +39,7 @@ VALUES (9001, 'baohuy2k12k4@gmail.com', '0980000001', 'Bao Huy', 'Admin', DATE '
        (9002, 'nqbhuy2004nt@gmail.com', '0980000002', 'Quoc Bao', 'Huy', DATE '2004-04-04', NULL, 'ACTIVE', 'CUSTOMER',
         NOW(), NOW()),
        (9003, 'se180211nguyenquocbaohuy@gmail.com', '0980000003', 'Bao Huy', 'Bao Tri', DATE '1998-02-02', NULL,
-        'ACTIVE', 'MAINTENANCE', NOW(), NOW()),
+        'ACTIVE', 'DRONE_TECHNICIAN', NOW(), NOW()),
        (9004, 'huynqbse180211@fpt.edu.vn', '0980000004', 'Huy', 'Quan Ly', DATE '1995-03-03', NULL, 'ACTIVE', 'MANAGER',
         NOW(), NOW());
 
@@ -438,7 +438,7 @@ FROM generate_series(1, 100) AS g;
 -- =====================================================================
 -- STAFF test account (password = 12345678, same bcrypt as accounts above)
 --   STAFF       staff@lockr.test      user_id 9005
---   TECHNICIAN  tech@lockr.test       user_id 9006
+--   LOCKER_TECHNICIAN  tech@lockr.test       user_id 9006
 -- =====================================================================
 \connect
 user_db
@@ -452,7 +452,7 @@ INSERT INTO user_schema.user_profiles
 (id, email, phone_number, first_name, last_name, birthday, image_url, status, roles, created_at, updated_at)
 VALUES (9005, 'staff@lockr.test', '0980000005', 'Demo', 'Staff', DATE '1995-05-05', NULL, 'ACTIVE', 'STAFF', NOW(),
         NOW()),
-       (9006, 'tech@lockr.test', '0980000006', 'Demo', 'Technician', DATE '1993-06-06', NULL, 'ACTIVE', 'TECHNICIAN',
+       (9006, 'tech@lockr.test', '0980000006', 'Demo', 'Technician', DATE '1993-06-06', NULL, 'ACTIVE', 'LOCKER_TECHNICIAN',
         NOW(), NOW());
 
 \connect

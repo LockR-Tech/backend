@@ -115,12 +115,14 @@ class OrderServiceDroneDeliveryTest {
         when(orderRepository.findByUserIdAndIdempotencyKey(44L, "idem-2")).thenReturn(Optional.empty());
         when(userClient.getUser(44L))
                 .thenReturn(ApiResponse.ok(new UserSummary(44L, "u@test", "0901", "User", "ACTIVE")));
-        when(userClient.getUsersByRole("MAINTENANCE"))
+        when(userClient.getUsersByRole("DRONE_TECHNICIAN"))
                 .thenReturn(
                         ApiResponse.ok(
                                 List.of(
-                                        new UserSummary(91L, "m1@test", "0911", "M1", "ACTIVE", Set.of("MAINTENANCE")),
-                                        new UserSummary(92L, "m2@test", "0912", "M2", "ACTIVE", Set.of("MAINTENANCE")))));
+                                        new UserSummary(
+                                                91L, "m1@test", "0911", "M1", "ACTIVE", Set.of("DRONE_TECHNICIAN")),
+                                        new UserSummary(
+                                                92L, "m2@test", "0912", "M2", "ACTIVE", Set.of("DRONE_TECHNICIAN")))));
         when(lockerCellClient.getCell(9001L))
                 .thenReturn(ApiResponse.ok(new CellDto(9001L, 7, "M", "DRONE", 0, 0, "AVAILABLE", null)));
         when(lockerClient.reserveBox(9001L, "DRONE"))

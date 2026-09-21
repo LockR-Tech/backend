@@ -474,7 +474,7 @@ public class OrderService {
     private void notifyMaintenanceDroneOrderCreated(LockerOrder order) {
         try {
             ApiResponse<List<com.huynqb.laundrylocker.common.dto.UserSummary>> response =
-                    userClient.getUsersByRole("MAINTENANCE");
+                    userClient.getUsersByRole("DRONE_TECHNICIAN");
             if (response == null || response.data() == null) {
                 return;
             }

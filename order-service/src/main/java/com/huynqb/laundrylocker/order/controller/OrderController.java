@@ -167,13 +167,13 @@ public class OrderController {
         return ApiResponse.ok(orderService.getDroneDelivery(orderId, userId));
     }
 
-    @GetMapping("/api/maintenance/drone-orders")
+    @GetMapping("/api/drone-technician/drone-orders")
     public ApiResponse<List<DroneMissionResponse>> maintenanceDroneOrders(
             @RequestParam(required = false) String deliveryStage) {
         return ApiResponse.ok(droneOrderMaintenanceService.queue(deliveryStage));
     }
 
-    @PostMapping("/api/maintenance/drone-orders/{orderId}/accept")
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/accept")
     public ResponseEntity<ApiResponse<DroneMissionResponse>> acceptDroneOrder(
             @PathVariable Long orderId,
             @Valid @RequestBody AcceptDroneOrderRequest request,
@@ -187,7 +187,7 @@ public class OrderController {
                                 droneOrderMaintenanceService.accept(orderId, userId, idempotencyKey, request)));
     }
 
-    @PostMapping("/api/maintenance/drone-orders/{orderId}/launch")
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/launch")
     public ResponseEntity<ApiResponse<DroneMissionResponse>> launchDroneOrder(
             @PathVariable Long orderId,
             @RequestHeader("X-User-Id") Long userId,
@@ -200,7 +200,7 @@ public class OrderController {
                                 droneOrderMaintenanceService.launch(orderId, userId, idempotencyKey)));
     }
 
-    @PostMapping("/api/maintenance/drone-orders/{orderId}/cancel")
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/cancel")
     public ApiResponse<DroneMissionResponse> cancelDroneOrder(
             @PathVariable Long orderId,
             @Valid @RequestBody CancelDroneOrderRequest request,

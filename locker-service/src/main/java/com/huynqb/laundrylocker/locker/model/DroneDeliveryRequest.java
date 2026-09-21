@@ -6,7 +6,7 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
-/// Yêu cầu giao hàng bằng drone do KHÁCH tạo; đội bay (MAINTENANCE) điều phối.
+/// Yêu cầu giao hàng bằng drone do KHÁCH tạo; đội bay (DRONE_TECHNICIAN) điều phối.
 /// PENDING -> DISPATCHED -> DELIVERED; khách huỷ được khi còn PENDING.
 @Entity
 @Table(name = "drone_delivery_requests")

@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 /// Giao hàng bằng drone: khách tạo yêu cầu qua `/api/drone-deliveries`
-/// (JWT bất kỳ); đội bay điều phối qua `/api/maintenance/drone-deliveries`
-/// (gateway giới hạn MAINTENANCE/ADMIN — TECHNICIAN không vào được).
+/// (JWT bất kỳ); đội bay điều phối qua `/api/drone-technician/drone-deliveries`
+/// (gateway giới hạn DRONE_TECHNICIAN/ADMIN — LOCKER_TECHNICIAN không vào được).
 @RestController
 @RequiredArgsConstructor
 public class DroneDeliveryController {
@@ -55,15 +55,15 @@ public class DroneDeliveryController {
                 droneDeliveryService.cancel(id, userId));
     }
 
-    // ---- Đội bay (MAINTENANCE/ADMIN qua gateway) ----
+    // ---- Đội bay (DRONE_TECHNICIAN/ADMIN qua gateway) ----
 
-    @GetMapping("/api/maintenance/drone-deliveries")
+    @GetMapping("/api/drone-technician/drone-deliveries")
     public ApiResponse<List<DroneDeliveryResponse>> queue(
             @RequestParam(required = false) String status) {
         return ApiResponse.ok(droneDeliveryService.queue(status));
     }
 
-    @PostMapping("/api/maintenance/drone-deliveries/{id}/dispatch")
+    @PostMapping("/api/drone-technician/drone-deliveries/{id}/dispatch")
     public ApiResponse<DroneDeliveryResponse> dispatch(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> body,
@@ -78,7 +78,7 @@ public class DroneDeliveryController {
                 droneDeliveryService.dispatch(id, userId, droneUnitId));
     }
 
-    @PostMapping("/api/maintenance/drone-deliveries/{id}/complete")
+    @PostMapping("/api/drone-technician/drone-deliveries/{id}/complete")
     public ApiResponse<DroneDeliveryResponse> complete(@PathVariable Long id) {
         return ApiResponse.ok(
                 "DRONE_DELIVERY_COMPLETED", "Drone delivery completed", droneDeliveryService.complete(id));
