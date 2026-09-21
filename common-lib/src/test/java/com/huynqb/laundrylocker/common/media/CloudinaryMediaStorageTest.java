@@ -145,7 +145,7 @@ class CloudinaryMediaStorageTest {
     @Test
     void purposeRoleRules() {
         assertTrue(MediaPurpose.REPORT_EVIDENCE.isAllowedFor(List.of("CUSTOMER")));
-        assertFalse(MediaPurpose.STORE_IMAGE.isAllowedFor(List.of("TECHNICIAN")));
+        assertFalse(MediaPurpose.STORE_IMAGE.isAllowedFor(List.of("LOCKER_TECHNICIAN")));
         assertTrue(MediaPurpose.PROMOTION_IMAGE.isAllowedFor(List.of("ADMIN")));
         assertEquals(MediaPurpose.AVATAR, MediaPurpose.parse(" avatar "));
         assertThrows(BusinessException.class, () -> MediaPurpose.parse("VIDEO"));

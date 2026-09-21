@@ -19,8 +19,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Device management endpoints for TECHNICIAN role.
- * Gateway enforces TECHNICIAN|ADMIN — no JWT re-validation here.
+ * Device management endpoints for the LOCKER_TECHNICIAN role.
+ * Gateway enforces LOCKER_TECHNICIAN|ADMIN — no JWT re-validation here.
  * Depends on headers X-User-Id forwarded by gateway.
  */
 @Slf4j
@@ -35,7 +35,7 @@ public class TechnicianController {
     /**
      * List all registered IoT devices and their current status.
      */
-    @GetMapping("/api/technician/devices")
+    @GetMapping("/api/locker-technician/devices")
     public ApiResponse<List<DeviceStatusResponse>> listDevices() {
         List<DeviceStatusResponse> devices = deviceStatusRepository.findAll().stream()
                 .map(this::toResponse)
@@ -46,7 +46,7 @@ public class TechnicianController {
     /**
      * Get a single device by its DB id (health, last-seen, status).
      */
-    @GetMapping("/api/technician/devices/{id}")
+    @GetMapping("/api/locker-technician/devices/{id}")
     public ApiResponse<DeviceStatusResponse> getDevice(@PathVariable Long id) {
         DeviceStatus device = deviceStatusRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
@@ -58,7 +58,7 @@ public class TechnicianController {
      * is physically disconnected but heartbeat hasn't timed out yet).
      * Request body: {"status": "ONLINE"|"OFFLINE"|"ERROR"}
      */
-    @PutMapping("/api/technician/devices/{id}/status")
+    @PutMapping("/api/locker-technician/devices/{id}/status")
     public ApiResponse<DeviceStatusResponse> updateStatus(
             @PathVariable Long id,
             @RequestBody Map<String, String> body) {
@@ -75,7 +75,7 @@ public class TechnicianController {
      * Audit log for a device — returns box_access_logs for the locker that
      * this device is paired with, ordered newest-first.
      */
-    @GetMapping("/api/technician/devices/{id}/logs")
+    @GetMapping("/api/locker-technician/devices/{id}/logs")
     public ApiResponse<List<BoxAccessLogResponse>> deviceLogs(@PathVariable Long id) {
         DeviceStatus device = deviceStatusRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
@@ -95,7 +95,7 @@ public class TechnicianController {
      * If MQTT is unavailable the log entry is still written so the restart
      * request is auditable even without a physical response.
      */
-    @PostMapping("/api/technician/devices/{id}/restart")
+    @PostMapping("/api/locker-technician/devices/{id}/restart")
     public ApiResponse<Map<String, Object>> restartDevice(
             @PathVariable Long id,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {

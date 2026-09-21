@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
-/// Đọc header `X-User-Roles` (gateway gắn sau khi kiểm JWT, dạng `ADMIN,TECHNICIAN`).
+/// Đọc header `X-User-Roles` (gateway gắn sau khi kiểm JWT, dạng `ADMIN,LOCKER_TECHNICIAN`).
 public final class UserRoles {
 
     private UserRoles() {

@@ -45,7 +45,7 @@ VALUES (10006, '0991278677', 'user10006@laundry.test', 'Ngô', 'Văn Hùng',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10007, '0954565159', 'user10007@laundry.test', 'Dương', 'Thu Trang',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10007', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10007', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -95,12 +95,12 @@ VALUES (10016, '0986128270', 'user10016@laundry.test', 'Đỗ', 'Bảo Oanh',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10017, '0919670846', 'user10017@laundry.test', 'Bùi', 'Ngọc Linh',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10017', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10017', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10018, '0961819457', 'user10018@laundry.test', 'Phạm', 'Thanh Bình',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10018', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10018', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -175,7 +175,7 @@ VALUES (10032, '0901348091', 'user10032@laundry.test', 'Lý', 'Gia Linh',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10033, '0976660211', 'user10033@laundry.test', 'Đặng', 'Minh Sang',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10033', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10033', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -195,12 +195,12 @@ VALUES (10036, '0985415606', 'user10036@laundry.test', 'Hồ', 'Thị Minh',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10037, '0978042452', 'user10037@laundry.test', 'Nguyễn', 'Ngọc Đạt',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10037', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10037', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10038, '0961325215', 'user10038@laundry.test', 'Nguyễn', 'Thị Vinh',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10038', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10038', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -240,7 +240,7 @@ VALUES (10045, '0924856533', 'user10045@laundry.test', 'Hoàng', 'Hữu Trang',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10046, '0902305416', 'user10046@laundry.test', 'Đỗ', 'Bảo Quang',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10046', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10046', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -260,12 +260,12 @@ VALUES (10049, '0998153508', 'user10049@laundry.test', 'Phan', 'Hữu Hùng',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10050, '0915370722', 'user10050@laundry.test', 'Vũ', 'Minh Vinh',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10050', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10050', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10051, '0991889402', 'user10051@laundry.test', 'Huỳnh', 'Thu Đạt',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10051', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10051', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -280,7 +280,7 @@ VALUES (10053, '0965137998', 'user10053@laundry.test', 'Ngô', 'Văn Phong',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10054, '0974295686', 'user10054@laundry.test', 'Vũ', 'Minh Uyên',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10054', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10054', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -375,7 +375,7 @@ VALUES (10072, '0963427529', 'user10072@laundry.test', 'Ngô', 'Thanh Trang',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10073, '0939960010', 'user10073@laundry.test', 'Dương', 'Thanh Hoa',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10073', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10073', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -410,7 +410,7 @@ VALUES (10079, '0920585346', 'user10079@laundry.test', 'Phạm', 'Gia Anh',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10080, '0935209518', 'user10080@laundry.test', 'Hồ', 'Thị Anh',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10080', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10080', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -425,7 +425,7 @@ VALUES (10082, '0939682890', 'user10082@laundry.test', 'Hồ', 'Thanh Linh',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10083, '0929819176', 'user10083@laundry.test', 'Phạm', 'Minh Dương',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10083', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10083', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -435,7 +435,7 @@ VALUES (10084, '0946519739', 'user10084@laundry.test', 'Dương', 'Bảo Khánh'
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10085, '0984432005', 'user10085@laundry.test', 'Hồ', 'Văn Linh',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10085', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10085', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -445,17 +445,17 @@ VALUES (10086, '0998571325', 'user10086@laundry.test', 'Võ', 'Thị Oanh',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10087, '0940140710', 'user10087@laundry.test', 'Nguyễn', 'Minh Đạt',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10087', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10087', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10088, '0951936261', 'user10088@laundry.test', 'Trần', 'Hữu Tuấn',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10088', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10088', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10089, '0990457437', 'user10089@laundry.test', 'Võ', 'Thu Sang',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10089', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10089', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -465,7 +465,7 @@ VALUES (10090, '0987955159', 'user10090@laundry.test', 'Đặng', 'Bảo Minh',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10091, '0921882136', 'user10091@laundry.test', 'Hoàng', 'Thanh Ngọc',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10091', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10091', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
@@ -500,7 +500,7 @@ VALUES (10097, '0944155580', 'user10097@laundry.test', 'Bùi', 'Thị Sang',
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)
 VALUES (10098, '0938450829', 'user10098@laundry.test', 'Dương', 'Ngọc Vinh',
-        'https://api.dicebear.com/7.x/avataaars/svg?seed=10098', 'MAINTENANCE', 'ACTIVE', CURRENT_TIMESTAMP,
+        'https://api.dicebear.com/7.x/avataaars/svg?seed=10098', 'DRONE_TECHNICIAN', 'ACTIVE', CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP);
 INSERT INTO user_schema.user_profiles (id, phone_number, email, first_name, last_name, image_url, roles, status,
                                        created_at, updated_at)

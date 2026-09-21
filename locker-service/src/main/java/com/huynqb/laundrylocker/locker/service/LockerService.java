@@ -228,9 +228,9 @@ public class LockerService {
         if (userId != null && userId > 0) {
             UserSummary reporter = lookupUserQuietly(userId);
             boolean isTech = reporter != null && (
-                    (reporter.roles() != null && (reporter.roles().contains("TECHNICIAN")
-                            || reporter.roles().contains("ROLE_TECHNICIAN")
-                            || reporter.roles().contains("MAINTENANCE")))
+                    (reporter.roles() != null && (reporter.roles().contains("LOCKER_TECHNICIAN")
+                            || reporter.roles().contains("ROLE_LOCKER_TECHNICIAN")
+                            || reporter.roles().contains("DRONE_TECHNICIAN")))
                     || (reporter.fullName() != null && (reporter.fullName().toLowerCase().contains("kỹ thuật viên")
                             || reporter.fullName().toLowerCase().contains("ktv")
                             || reporter.fullName().toLowerCase().contains("technician")
@@ -1430,9 +1430,9 @@ public class LockerService {
         String status = report.getStatus();
 
         boolean isTechReporter = reporter != null && (
-                (reporter.roles() != null && (reporter.roles().contains("TECHNICIAN")
-                        || reporter.roles().contains("ROLE_TECHNICIAN")
-                        || reporter.roles().contains("MAINTENANCE")))
+                (reporter.roles() != null && (reporter.roles().contains("LOCKER_TECHNICIAN")
+                        || reporter.roles().contains("ROLE_LOCKER_TECHNICIAN")
+                        || reporter.roles().contains("DRONE_TECHNICIAN")))
                 || (reporter.fullName() != null && (reporter.fullName().toLowerCase().contains("kỹ thuật viên")
                         || reporter.fullName().toLowerCase().contains("ktv")
                         || reporter.fullName().toLowerCase().contains("technician")

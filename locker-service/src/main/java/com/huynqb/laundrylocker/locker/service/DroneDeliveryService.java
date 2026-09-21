@@ -14,7 +14,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 
-/// Luồng giao hàng bằng drone: KHÁCH tạo yêu cầu -> đội bay (MAINTENANCE)
+/// Luồng giao hàng bằng drone: KHÁCH tạo yêu cầu -> đội bay (DRONE_TECHNICIAN)
 /// điều phối một drone trong fleet -> đánh dấu đã thả hàng. Thay cho mock
 /// in-memory trên mobile (DroneDeliveryStore).
 @Service

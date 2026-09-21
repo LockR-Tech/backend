@@ -45,7 +45,7 @@ def main():
         name = gen_name()
         phone = gen_phone()
         email = f"user{user_id}@laundry.test"
-        role = random.choice(["CUSTOMER", "CUSTOMER", "CUSTOMER", "MANAGER", "MAINTENANCE"])
+        role = random.choice(["CUSTOMER", "CUSTOMER", "CUSTOMER", "MANAGER", "DRONE_TECHNICIAN"])
         avatar = f"https://api.dicebear.com/7.x/avataaars/svg?seed={user_id}"
         first_name = name.split()[0] if " " in name else name
         last_name = name.split(" ", 1)[1] if " " in name else ""
