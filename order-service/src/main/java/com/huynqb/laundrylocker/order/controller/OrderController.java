@@ -78,6 +78,13 @@ public class OrderController {
         return ApiResponse.ok(orderService.getByAccess(code));
     }
 
+    // iot-service báo ô của đơn đã được mở để bỏ hàng (chặn ở gateway như mọi /internal).
+    @PostMapping("/internal/orders/{id}/drop-opened")
+    public ApiResponse<Void> dropOpened(@PathVariable Long id) {
+        orderService.markDropOpened(id);
+        return ApiResponse.ok("ORDER_DROP_OPENED", "Drop-off opening recorded");
+    }
+
     @PatchMapping("/api/orders/{id}/status")
     public ApiResponse<OrderResponse> updateStatus(
             @PathVariable Long id, @Valid @RequestBody UpdateOrderStatusRequest request) {

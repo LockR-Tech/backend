@@ -36,6 +36,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String EXTEND_DEFAULT_HOURS = "app.order.extend-default-hours";
     public static final String EXTEND_MAX_HOURS = "app.order.extend-max-hours";
     public static final String REQUIRE_PAYMENT_BEFORE_DROP = "app.order.require-payment-before-drop";
+    public static final String SEND_CONFIRM_REQUIRES_OPEN = "app.order.send-confirm-requires-open";
+    public static final String BLOCK_UNPAID_RENTAL_ACCESS = "app.order.block-unpaid-rental-access";
     public static final String DRONE_DEMO_ENABLED = "app.drone.demo.enabled";
     public static final String DRONE_DEMO_ALLOWED_USER_IDS = "app.drone.demo.allowed-user-ids";
     public static final String DRONE_DEMO_STAGE_DELAY_MS = "app.drone.demo.stage-delay-ms";
@@ -91,7 +93,13 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(EXTEND_MAX_HOURS, RENTAL, "Số giờ gia hạn tối đa mỗi lần", "", 24, 1, 8760, "giờ").asPublic(),
 
                 bool(REQUIRE_PAYMENT_BEFORE_DROP, PAYMENT, "Bắt buộc thanh toán trước khi bỏ hàng",
-                        "Chặn xác nhận bỏ hàng/kết thúc thuê khi đơn chưa thanh toán.", true).asPublic(),
+                        "Chặn mở ô bỏ hàng, xác nhận bỏ hàng và kết thúc thuê khi đơn chưa thanh toán.",
+                        true).asPublic(),
+                bool(SEND_CONFIRM_REQUIRES_OPEN, PAYMENT, "Chỉ xác nhận bỏ hàng sau khi đã mở ô",
+                        "Đơn gửi hàng chỉ được xác nhận đã bỏ hàng khi ô đã từng được mở bằng mã gửi.", true),
+                bool(BLOCK_UNPAID_RENTAL_ACCESS, RENTAL, "Chặn mở ô thuê khi còn nợ tiền gia hạn",
+                        "Gia hạn làm đơn thuê chưa thanh toán; bật để PIN không mở được ô cho tới khi trả.",
+                        false),
 
                 bool(RECEIVER_NOTIFY_SMS, RECEIVER, "Gửi mã mở tủ qua SMS",
                         "Nhắn mã và hạn lấy hàng tới số điện thoại người nhận, kể cả người chưa có "

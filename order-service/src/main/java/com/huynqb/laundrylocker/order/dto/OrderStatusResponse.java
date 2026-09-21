@@ -11,5 +11,6 @@ public record OrderStatusResponse(
         Long boxId,
         LocalDateTime estimatedReadyAt,
         Boolean isPaid,
-        String nextAction) {
+        String nextAction,
+        String paymentStatus) {
 }

@@ -242,7 +242,10 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
         if (path.equals("/api/iot/verify-pin")
                 || path.equals("/api/iot/verify-access")
                 || path.equals("/api/iot/unlock")
-                || path.equals("/api/iot/unlock-with-code")) {
+                || path.equals("/api/iot/unlock-with-code")
+                // Chỉ có hiệu lực khi ô của đơn vừa được mở thành công bằng chính mã đó.
+                || path.equals("/api/iot/confirm-drop-with-code")
+                || path.equals("/api/iot/end-rental-with-code")) {
             return true;
         }
         if (path.startsWith("/api/auth")

@@ -122,12 +122,19 @@ public class OrderService {
         LockerOrder order = find(id);
         assertOwner(order, userId);
         validateStatus(order, Set.of("INITIALIZED"));
+        assertPaidBeforeDrop(order);
         if ("RENTAL".equalsIgnoreCase(order.getType())) {
             occupyBoxQuietly(order.getSendBoxId());
             order.setPickupDeadline(LocalDateTime.now().plusHours(resolveRentalDurationHours(order)));
             return transition(order, "STORING", userId, null, "Renter placed items; multi-use PIN active until deadline");
         }
-        assertPaidBeforeDrop(order);
+        if ("SEND".equalsIgnoreCase(order.getType())
+                && rules.sendConfirmRequiresOpen()
+                && order.getDropOpenedAt() == null) {
+            throw new BusinessException(
+                    "ORDER_DROP_NOT_OPENED",
+                    "Vui lòng mở ô bằng mã gửi hàng và bỏ hàng vào trước khi xác nhận.");
+        }
         occupyBoxQuietly(order.getSendBoxId());
         if ("SEND".equalsIgnoreCase(order.getType())) {
             // Stage 2 of the SEND flow: the drop PIN dies here, a fresh pickup PIN
@@ -140,6 +147,18 @@ public class OrderService {
                     "Sender dropped parcel; pickup PIN issued to receiver " + order.getReceiverPhone());
         }
         return transition(order, "STORING", userId, null, "Customer confirmed items dropped in locker");
+    }
+
+    /// iot-service báo ô vừa được mở bằng mã khi đơn còn INITIALIZED (người gửi đang bỏ
+    /// hàng). Chỉ ghi lần đầu; đơn đã qua bước bỏ hàng thì bỏ qua.
+    @Transactional
+    public void markDropOpened(Long id) {
+        LockerOrder order = find(id);
+        if (!"INITIALIZED".equalsIgnoreCase(order.getStatus()) || order.getDropOpenedAt() != null) {
+            return;
+        }
+        order.setDropOpenedAt(LocalDateTime.now());
+        orderRepository.save(order);
     }
 
     @Transactional
@@ -739,8 +758,16 @@ public class OrderService {
                 order.getLockerId(),
                 order.getReceiveBoxId() == null ? order.getSendBoxId() : order.getReceiveBoxId(),
                 order.getIntendedReceiveAt(),
-                "COMPLETED".equals(order.getStatus()),
-                nextAction(order));
+                isPaidOrFree(order),
+                nextAction(order),
+                order.getPaymentStatus());
+    }
+
+    private static boolean isPaidOrFree(LockerOrder order) {
+        BigDecimal total = order.getTotalPrice();
+        return "PAID".equalsIgnoreCase(order.getPaymentStatus())
+                || total == null
+                || total.compareTo(BigDecimal.ZERO) <= 0;
     }
 
     @Transactional(readOnly = true)
@@ -1782,7 +1809,8 @@ public class OrderService {
                 order.getReceiverPhone(),
                 order.getCustomerNote(),
                 order.getDeliveryAddress(),
-                order.getRentalDurationHours());
+                order.getRentalDurationHours(),
+                OrderAccessPolicy.blockReason(order, rules, LocalDateTime.now()));
     }
 
     private DroneDeliveryOrderResponse toDroneDeliveryResponse(LockerOrder order) {

@@ -139,6 +139,11 @@ public class LockerOrder {
     @Column(name = "pickup_deadline")
     private LocalDateTime pickupDeadline;
 
+    /// Lần đầu ô được mở để BỎ hàng (đơn còn INITIALIZED). Xác nhận bỏ hàng SEND
+    /// dựa vào mốc này để không cho xác nhận khi chưa từng mở ô.
+    @Column(name = "drop_opened_at")
+    private LocalDateTime dropOpenedAt;
+
     @Column(name = "rental_duration_hours")
     private Integer rentalDurationHours;
 

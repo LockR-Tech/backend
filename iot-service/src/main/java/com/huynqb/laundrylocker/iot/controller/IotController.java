@@ -87,6 +87,22 @@ public class IotController {
                 "IOT_UNLOCK_ACCEPTED", "Unlock command accepted", iotService.unlockWithCode(request));
     }
 
+    // Kiosk sau khi mở ô bằng mã: người gửi xác nhận đã bỏ hàng.
+    @PostMapping("/api/iot/confirm-drop-with-code")
+    public ApiResponse<Map<String, Object>> confirmDropWithCode(
+            @Valid @RequestBody UnlockWithCodeRequest request) {
+        return ApiResponse.ok(
+                "IOT_DROP_CONFIRM_RESULT", "Drop-off confirmation processed", iotService.confirmDropWithCode(request));
+    }
+
+    // Kiosk sau khi mở ô bằng mã: người thuê lấy hết đồ và kết thúc thuê.
+    @PostMapping("/api/iot/end-rental-with-code")
+    public ApiResponse<Map<String, Object>> endRentalWithCode(
+            @Valid @RequestBody UnlockWithCodeRequest request) {
+        return ApiResponse.ok(
+                "IOT_END_RENTAL_RESULT", "End rental processed", iotService.endRentalWithCode(request));
+    }
+
     @PostMapping("/api/iot/pickup")
     public ApiResponse<PickupResponse> pickup(@Valid @RequestBody PickupRequest request, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("PICKUP_CONFIRMED", "Pickup confirmed", iotService.pickup(request, userId));

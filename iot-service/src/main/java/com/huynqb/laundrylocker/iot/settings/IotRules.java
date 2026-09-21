@@ -29,4 +29,8 @@ public class IotRules {
     public int doorOpenTimeoutSeconds() {
         return settings.getInt(DOOR_OPEN_TIMEOUT_SECONDS);
     }
+
+    public int kioskConfirmWindowMinutes() {
+        return settings.getInt(KIOSK_CONFIRM_WINDOW_MINUTES);
+    }
 }
