@@ -3,18 +3,23 @@ package com.huynqb.laundrylocker.locker;
 import com.huynqb.laundrylocker.locker.model.LockerBox;
 import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
+import com.huynqb.laundrylocker.locker.model.MaintenanceSchedule;
+import com.huynqb.laundrylocker.locker.model.ReportCategory;
 import com.huynqb.laundrylocker.locker.repository.LockerBoxRepository;
 import com.huynqb.laundrylocker.locker.repository.LockerReportRepository;
 import com.huynqb.laundrylocker.locker.repository.LockerUnitRepository;
+import com.huynqb.laundrylocker.locker.repository.MaintenanceScheduleRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -45,6 +50,8 @@ class LockerServicePostgresContainerTest {
     private LockerBoxRepository lockerBoxRepository;
     @Autowired
     private LockerReportRepository lockerReportRepository;
+    @Autowired
+    private MaintenanceScheduleRepository scheduleRepository;
 
     @Test
     void flywayMigratesSchemaAndSeedsDemoCabinet() {
@@ -91,6 +98,45 @@ class LockerServicePostgresContainerTest {
         assertNotNull(saved.getId());
         assertEquals(firstCell.getId(), saved.getBoxId());
         assertEquals(2001L, saved.getAssignedToUserId());
+    }
+
+    // V18: cột định tuyến phiếu + nhắc hạn lịch; đánh dấu đã nhắc chỉ thành công một lần mỗi kỳ.
+    @Test
+    @Transactional
+    void routingColumnsAreMappedAndDueReminderIsMarkedOnce() {
+        LockerUnit demoCabinet =
+                lockerUnitRepository.findAll().stream()
+                        .filter(locker -> "CAB-DEMO-01".equals(locker.getCode()))
+                        .findFirst()
+                        .orElseThrow();
+        demoCabinet.setAssignedTechnicianId(2001L);
+        lockerUnitRepository.saveAndFlush(demoCabinet);
+        assertEquals(List.of(demoCabinet.getId()),
+                lockerUnitRepository.findByAssignedTechnicianId(2001L).stream().map(LockerUnit::getId).toList());
+
+        LockerReport report = new LockerReport();
+        report.setLockerId(demoCabinet.getId());
+        report.setUserId(1001L);
+        report.setTitle("Mất điện");
+        report.setDescription("Cả tủ tắt");
+        report.setCategory(ReportCategory.LOCKER);
+        report.setBlocksLocker(true);
+        report.setRoutedToUserId(2001L);
+        LockerReport saved = lockerReportRepository.saveAndFlush(report);
+        assertEquals(1, lockerReportRepository.findByRoutedToUserIdAndStatusOrderByCreatedAtDesc(2001L, "OPEN").size());
+        assertFalse(lockerReportRepository.existsByLockerIdAndBlocksLockerTrueAndStatusInAndIdNot(
+                demoCabinet.getId(), List.of("OPEN", "IN_PROGRESS"), saved.getId()));
+
+        MaintenanceSchedule schedule = new MaintenanceSchedule();
+        schedule.setLockerId(demoCabinet.getId());
+        schedule.setTitle("Kiểm tra tháng");
+        schedule.setIntervalDays(30);
+        schedule.setNextDueAt(LocalDateTime.now().minusHours(1));
+        MaintenanceSchedule due = scheduleRepository.saveAndFlush(schedule);
+        assertEquals(1, scheduleRepository.findByActiveTrueAndLastDueNotifiedAtIsNullAndNextDueAtBefore(
+                LocalDateTime.now()).stream().filter(s -> s.getId().equals(due.getId())).count());
+        assertEquals(1, scheduleRepository.markDueNotified(due.getId(), LocalDateTime.now()));
+        assertEquals(0, scheduleRepository.markDueNotified(due.getId(), LocalDateTime.now()));
     }
 
     private long countByCellType(List<LockerBox> cells, String cellType) {

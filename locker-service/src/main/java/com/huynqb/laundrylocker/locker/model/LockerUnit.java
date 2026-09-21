@@ -45,6 +45,15 @@ public class LockerUnit {
     @Column(length = 2000)
     private String description;
 
+    /// KTV tủ phụ trách — phiếu sự cố của tủ được báo cho người này. NULL = báo mọi KTV tủ.
+    @Column(name = "assigned_technician_id")
+    private Long assignedTechnicianId;
+
+    /// Ai đưa tủ vào MAINTENANCE: ADMIN (bật tay) hoặc TICKET (phiếu chặn tủ).
+    /// Đóng phiếu chỉ tự trả tủ về ACTIVE khi nguồn là TICKET.
+    @Column(name = "maintenance_source", length = 20)
+    private String maintenanceSource;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

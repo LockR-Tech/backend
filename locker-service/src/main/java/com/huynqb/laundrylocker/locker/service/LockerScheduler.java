@@ -26,4 +26,17 @@ public class LockerScheduler {
             log.warn("Reserved-TTL backstop sweep failed: {}", ex.getMessage());
         }
     }
+
+    // Giờ VN (JVM chạy UTC). Mỗi kỳ hạn chỉ nhắc một lần nên chạy lại cũng không nhắc trùng.
+    @Scheduled(cron = "${app.maintenance.schedule-reminder-cron:0 0 7 * * *}", zone = "Asia/Ho_Chi_Minh")
+    public void remindDueSchedules() {
+        try {
+            int reminded = lockerService.remindDueSchedules();
+            if (reminded > 0) {
+                log.info("Reminded technicians about {} due maintenance schedule(s)", reminded);
+            }
+        } catch (Exception ex) {
+            log.warn("Maintenance schedule reminder failed: {}", ex.getMessage());
+        }
+    }
 }

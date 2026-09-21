@@ -82,7 +82,7 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
                     !org.springframework.http.HttpMethod.GET.equals(exchange.getRequest().getMethod())
                             && (path.startsWith("/api/lockers") || path.startsWith("/api/boxes"))
                             && !isCustomerLockerAction(path);
-            if (!hasRequiredRole(path, roles)
+            if (!hasRequiredRole(path, exchange.getRequest().getMethod(), roles)
                     || (mutatingLockerStructure && !hasAny(roles, "ADMIN"))) {
                 exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
                 return exchange.getResponse().setComplete();
@@ -151,21 +151,32 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
     //   /api/locker-technician/** faults, reports, box actions, landing pad, IoT
     //   /api/maintenance/**       lịch bảo trì + inspection log, dùng chung vì cả
     //                             hai KTV đều xem lịch của mảng mình
-    private boolean hasRequiredRole(String path, List<String> roles) {
-        if (path.startsWith("/api/admin/lockers/reports")) {
-            return hasAny(roles, "ADMIN", "LOCKER_TECHNICIAN");
+    private boolean hasRequiredRole(
+            String path, org.springframework.http.HttpMethod method, List<String> roles) {
+        if (hasAny(roles, "ADMIN")) {
+            return true;
+        }
+        // KTV tủ chỉ được ĐỌC danh sách phiếu bản admin (app dùng làm dự phòng); giao,
+        // đóng, gia hạn SLA bản admin là việc của ADMIN — KTV có endpoint riêng của mình.
+        if (path.equals("/api/admin/lockers/reports")) {
+            return org.springframework.http.HttpMethod.GET.equals(method) && hasAny(roles, "LOCKER_TECHNICIAN");
         }
         if (path.startsWith("/api/admin")) {
-            return hasAny(roles, "ADMIN");
+            return false;
         }
         if (path.startsWith("/api/drone-technician")) {
-            return hasAny(roles, "DRONE_TECHNICIAN", "ADMIN");
+            return hasAny(roles, "DRONE_TECHNICIAN");
         }
         if (path.startsWith("/api/locker-technician")) {
-            return hasAny(roles, "LOCKER_TECHNICIAN", "ADMIN");
+            return hasAny(roles, "LOCKER_TECHNICIAN");
+        }
+        // Sửa lịch và đổi KTV phụ trách lịch là việc của ADMIN; KTV chỉ xem và hoàn tất kiểm tra.
+        if (path.startsWith("/api/maintenance/schedules/")
+                && org.springframework.http.HttpMethod.PUT.equals(method)) {
+            return false;
         }
         if (path.startsWith("/api/maintenance")) {
-            return hasAny(roles, "DRONE_TECHNICIAN", "LOCKER_TECHNICIAN", "ADMIN");
+            return hasAny(roles, "DRONE_TECHNICIAN", "LOCKER_TECHNICIAN");
         }
         return true;
     }

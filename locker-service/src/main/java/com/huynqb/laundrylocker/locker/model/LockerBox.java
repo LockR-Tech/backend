@@ -54,6 +54,11 @@ public class LockerBox {
     @Column(name = "reserved_until")
     private LocalDateTime reservedUntil;
 
+    /// Trạng thái ô ngay trước khi bị báo hỏng (OCCUPIED/RESERVED/...) để trả lại đúng khi
+    /// sửa xong — ô đang chứa hàng không được về AVAILABLE. NULL = về AVAILABLE.
+    @Column(name = "pre_fault_status", length = 30)
+    private String preFaultStatus;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

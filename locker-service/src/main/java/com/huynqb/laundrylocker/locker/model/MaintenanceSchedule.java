@@ -58,6 +58,18 @@ public class MaintenanceSchedule {
     @Column(nullable = false)
     private Boolean active = true;
 
+    /// Phiếu sinh từ lần kiểm tra KHÔNG ĐẠT; hạn kế tiếp chỉ dời khi phiếu này đóng.
+    @Column(name = "pending_report_id")
+    private Long pendingReportId;
+
+    /// PASSED / FAILED của lần kiểm tra gần nhất.
+    @Column(name = "last_result", length = 20)
+    private String lastResult;
+
+    /// Đã nhắc KTV cho kỳ hạn hiện tại — mỗi kỳ chỉ nhắc một lần.
+    @Column(name = "last_due_notified_at")
+    private LocalDateTime lastDueNotifiedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

@@ -53,6 +53,21 @@ public class RabbitConfig {
     }
 
     @Bean
+    Binding reportRoutedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOCKER_REPORT_ROUTED);
+    }
+
+    @Bean
+    Binding reportAssignedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOCKER_REPORT_ASSIGNED);
+    }
+
+    @Bean
+    Binding scheduleDueBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOCKER_SCHEDULE_DUE);
+    }
+
+    @Bean
     Binding deliveryStatusChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
         return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.DELIVERY_STATUS_CHANGED);
     }

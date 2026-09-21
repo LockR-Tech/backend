@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.locker.dto.ReportAttachmentRequest;
 import com.huynqb.laundrylocker.locker.dto.ResolveReportRequest;
 import com.huynqb.laundrylocker.locker.model.AttachmentStage;
 import com.huynqb.laundrylocker.locker.model.LockerReport;
+import com.huynqb.laundrylocker.locker.model.LockerUnit;
 import com.huynqb.laundrylocker.locker.model.RepairLog;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.LockerRules;
@@ -72,6 +73,10 @@ class LockerServiceReportPhotoTest {
             log.setId(9L);
             return log;
         });
+        LockerUnit locker = new LockerUnit();
+        locker.setId(10L);
+        locker.setName("Tủ A");
+        when(lockerRepository.findById(10L)).thenReturn(Optional.of(locker));
     }
 
     @Test
