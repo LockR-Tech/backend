@@ -92,6 +92,35 @@ class JwtGatewayFilterTest {
         assertFalse(chainCalled.get());
     }
 
+    // Trợ lý: mọi vai trò hỏi được nhưng phải có JWT (vai trò lọc tài liệu); kho tri thức chỉ ADMIN.
+    @Test
+    void assistantNeedsJwtAndKnowledgeAdminNeedsAdmin() {
+        MockServerWebExchange anonymous =
+                MockServerWebExchange.from(MockServerHttpRequest.post("/api/assistant/ask").build());
+        AtomicBoolean anonymousForwarded = new AtomicBoolean(false);
+        filter.filter(anonymous, chainThatMarks(anonymousForwarded)).block();
+        assertEquals(HttpStatus.UNAUTHORIZED, anonymous.getResponse().getStatusCode());
+        assertFalse(anonymousForwarded.get());
+
+        AtomicReference<ServerWebExchange> forwarded = new AtomicReference<>();
+        filter.filter(
+                exchangeWithBearer(MockServerHttpRequest.post("/api/assistant/ask"), token("access", "CUSTOMER")),
+                captureExchange(forwarded)).block();
+        assertEquals("CUSTOMER", forwarded.get().getRequest().getHeaders().getFirst("X-User-Roles"));
+
+        MockServerWebExchange knowledge = exchangeWithBearer(
+                MockServerHttpRequest.get("/api/admin/knowledge/documents"), token("access", "LOCKER_TECHNICIAN"));
+        AtomicBoolean knowledgeForwarded = new AtomicBoolean(false);
+        filter.filter(knowledge, chainThatMarks(knowledgeForwarded)).block();
+        assertEquals(HttpStatus.FORBIDDEN, knowledge.getResponse().getStatusCode());
+        assertFalse(knowledgeForwarded.get());
+
+        MockServerWebExchange bypass = exchangeWithBearer(
+                MockServerHttpRequest.get("/assistant-service/api/admin/knowledge/documents"), token("access", "CUSTOMER"));
+        filter.filter(bypass, chainThatMarks(new AtomicBoolean(false))).block();
+        assertEquals(HttpStatus.NOT_FOUND, bypass.getResponse().getStatusCode());
+    }
+
     @Test
     void rejectsRefreshTokenForBusinessApi() {
         MockServerWebExchange exchange =

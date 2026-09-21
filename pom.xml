@@ -31,6 +31,7 @@
         <module>iot-service</module>
         <module>store-service</module>
         <module>loyalty-service</module>
+        <module>assistant-service</module>
     </modules>
 
     <properties>

@@ -75,6 +75,11 @@ spring:
               uri: lb://loyalty-service
               predicates:
                 - Path=/api/loyalty/**,/api/admin/loyalty,/api/admin/loyalty/**,/internal/loyalty/**
+            # Trợ lý RAG: /api/assistant/** cần JWT (mọi vai trò), kho tri thức /api/admin/knowledge/** chỉ ADMIN.
+            - id: assistant-service
+              uri: lb://assistant-service
+              predicates:
+                - Path=/api/assistant/**,/api/admin/knowledge,/api/admin/knowledge/**
             # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005): mỗi service sở hữu quy tắc của nó.
             # /api/admin/settings/** chỉ ADMIN; GET /api/settings/{scope}/public không cần JWT.
             - id: settings-order
@@ -105,6 +110,10 @@ spring:
               uri: lb://store-service
               predicates:
                 - Path=/api/admin/settings/store,/api/admin/settings/store/**,/api/settings/store/**
+            - id: settings-assistant
+              uri: lb://assistant-service
+              predicates:
+                - Path=/api/admin/settings/assistant,/api/admin/settings/assistant/**,/api/settings/assistant/**
             - id: docs-auth-service
               uri: lb://auth-service
               predicates:
@@ -159,6 +168,12 @@ spring:
                 - Path=/v3/api-docs/loyalty-service
               filters:
                 - RewritePath=/v3/api-docs/loyalty-service, /v3/api-docs
+            - id: docs-assistant-service
+              uri: lb://assistant-service
+              predicates:
+                - Path=/v3/api-docs/assistant-service
+              filters:
+                - RewritePath=/v3/api-docs/assistant-service, /v3/api-docs
             - id: promotions
               uri: lb://order-service
               predicates:
@@ -232,6 +247,8 @@ springdoc:
         url: /v3/api-docs/store-service
       - name: loyalty-service
         url: /v3/api-docs/loyalty-service
+      - name: assistant-service
+        url: /v3/api-docs/assistant-service
 
 logging:
   pattern:

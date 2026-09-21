@@ -114,6 +114,14 @@ MOMO_IPN_URL=https://${API_DOMAIN}/api/payments/momo/callback
 CLOUDINARY_URL=
 MEDIA_FOLDER_ROOT=lockr-prod
 APP_MAINTENANCE_REQUIRE_RESOLUTION_PHOTO=false
+
+# Trợ lý hỏi đáp (assistant-service). Trống ⇒ service vẫn chạy, API hỏi đáp báo "chưa cấu hình".
+# ANTHROPIC_API_KEY: console.anthropic.com. EMBEDDING_API_KEY: Voyage AI (dashboard.voyageai.com).
+ANTHROPIC_API_KEY=
+ASSISTANT_CHAT_MODEL=claude-opus-5
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=voyage-4
+ASSISTANT_DB_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr -d '=+/' | cut -c1-32)
 EOF
   chown "$DEPLOY_USER":"$DEPLOY_USER" "$APP_DIR/.env"
   chmod 600 "$APP_DIR/.env"

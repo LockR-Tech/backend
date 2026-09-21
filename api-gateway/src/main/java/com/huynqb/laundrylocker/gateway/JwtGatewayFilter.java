@@ -202,6 +202,7 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
     private static final List<String> SERVICE_ID_PREFIXES =
             List.of(
                     "api-gateway",
+                    "assistant-service",
                     "auth-service",
                     "discovery-server",
                     "iot-service",

@@ -112,6 +112,7 @@ jobs:
           - iot-service
           - store-service
           - loyalty-service
+          - assistant-service
 
     steps:
       - name: Checkout
