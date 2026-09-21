@@ -377,6 +377,29 @@ class LockerServiceTicketRoutingTest {
                         .getCode());
     }
 
+    // Bỏ người phụ trách: phiếu đang chờ được báo lại cho mọi KTV tủ.
+    @Test
+    void unassigningTheLockerTechnicianRenotifiesEveryLockerTechnician() {
+        locker.setAssignedTechnicianId(TECH);
+        LockerReport waiting = report(55L, "OPEN", null);
+        waiting.setRoutedToUserId(TECH);
+        when(reportRepository.findByLockerIdAndStatusAndAssignedToUserIdIsNull(LOCKER_ID, "OPEN"))
+                .thenReturn(List.of(waiting));
+        when(lockerRepository.save(any(LockerUnit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userClient.listByRole("LOCKER_TECHNICIAN"))
+                .thenReturn(ApiResponse.ok(List.of(user(TECH, "LOCKER_TECHNICIAN"), user(OTHER_TECH, "LOCKER_TECHNICIAN"))));
+
+        service.assignLockerTechnician(LOCKER_ID, null);
+
+        assertNull(locker.getAssignedTechnicianId());
+        assertNull(waiting.getRoutedToUserId());
+        assertEquals(
+                Set.of(TECH, OTHER_TECH),
+                Set.copyOf(published(DomainEventNames.LOCKER_REPORT_ROUTED).stream()
+                        .map(event -> event.payload().get("userId")).toList()));
+        assertTrue(published(DomainEventNames.LOCKER_REPORT_ASSIGNED).isEmpty());
+    }
+
     @Test
     void landingPadTicketOpensOnceAndClosingItRestoresThePad() {
         locker.setLandingPad(true);

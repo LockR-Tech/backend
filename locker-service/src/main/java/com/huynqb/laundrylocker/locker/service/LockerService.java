@@ -141,6 +141,9 @@ public class LockerService {
                     + (waiting.isEmpty() ? "." : " — có " + waiting.size() + " phiếu sự cố đang chờ nhận.");
             publishStaffNotification(
                     DomainEventNames.LOCKER_REPORT_ASSIGNED, technicianId, lockerId, "LOCKER", message);
+        } else {
+            // Bỏ người phụ trách ⇒ phiếu đang chờ chuyển sang "mọi KTV tủ", báo lại để không ai bỏ sót.
+            waiting.forEach(report -> notifyRouted(report, saved));
         }
         return toStaffResponse(saved, new HashMap<>());
     }
@@ -435,12 +438,12 @@ public class LockerService {
     public LockerLayoutResponse updateLandingPadStatus(
             Long lockerId, String status, String reason, Long actorUserId, String rolesHeader) {
         if (!LANDING_PAD_STATUSES.contains(status)) {
-            throw new BusinessException("LANDING_PAD_STATUS_INVALID", "Unknown landing pad status: " + status);
+            throw new BusinessException("LANDING_PAD_STATUS_INVALID", "Trạng thái bãi đáp không hợp lệ: " + status);
         }
         LockerUnit locker =
                 lockerRepository.findById(lockerId).orElseThrow(() -> new NotFoundException("Locker", lockerId));
         if (!Boolean.TRUE.equals(locker.getLandingPad())) {
-            throw new BusinessException("LANDING_PAD_ABSENT", "This locker has no drone landing pad");
+            throw new BusinessException("LANDING_PAD_ABSENT", "Tủ này không có bãi đáp drone");
         }
         List<String> roles = actorRoles(actorUserId, rolesHeader);
         Optional<LockerReport> open = reportRepository.findFirstByLockerIdAndCategoryAndStatusInOrderByCreatedAtDesc(
@@ -457,7 +460,7 @@ public class LockerService {
             report.setCategory(ReportCategory.LANDING_PAD);
             report.setUserId(actorUserId == null ? 0L : actorUserId);
             report.setTitle("Bãi đáp drone — " + locker.getCode());
-            report.setDescription(StringUtils.hasText(reason) ? reason : "Landing pad needs attention: " + status);
+            report.setDescription(StringUtils.hasText(reason) ? reason : "Bãi đáp cần xử lý: " + status);
             applyRouting(report, locker, roles.contains(LOCKER_TECHNICIAN) ? actorUserId : null);
             notifyRouted(reportRepository.save(report), locker);
         }
@@ -696,7 +699,7 @@ public class LockerService {
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         if (!"OPEN".equals(report.getStatus())) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
-                    "REPORT_NOT_CLAIMABLE", "Report is not open for claiming");
+                    "REPORT_NOT_CLAIMABLE", "Phiếu không còn ở trạng thái chờ tiếp nhận");
         }
         // Kiểm tra chế tài vi phạm SLA: KTV đang giữ từ N phiếu trễ hạn trở lên (admin cấu hình) thì chặn nhận việc mới
         int slaHours = rules.slaHours();
@@ -898,7 +901,7 @@ public class LockerService {
         attachResolutionEvidence(report, userId, admin, request);
         if (rules.requireResolutionPhoto() && !admin && !attachmentService.hasStage(report.getId(), AttachmentStage.RESOLUTION)) {
             throw new BusinessException(
-                    "RESOLUTION_PHOTO_REQUIRED", "Take at least one acceptance photo before resolving the report");
+                    "RESOLUTION_PHOTO_REQUIRED", "Cần ít nhất một ảnh nghiệm thu trước khi hoàn tất phiếu");
         }
         report.setStatus("RESOLVED");
         report.setResolvedByUserId(userId);
@@ -1159,11 +1162,13 @@ public class LockerService {
         inspectionLog.setLockerId(schedule.getLockerId());
         inspectionLog.setDroneUnitId(schedule.getDroneUnitId());
 
-        // Admin ghi biên bản hộ KTV được; KTV thì luôn là chính mình.
-        Long techId = admin && req != null && req.technicianId() != null ? req.technicianId() : actorUserId;
-        if (techId == null) {
-            techId = schedule.getAssignedTechnicianId();
-        }
+        // KTV ghi biên bản cho chính mình. Admin ghi hộ: người kiểm tra là KTV được chọn, không chọn
+        // thì là KTV phụ trách lịch. Phiếu KHÔNG ĐẠT giao cho người kiểm tra đó chứ không giao cho tài
+        // khoản admin; không xác định được thì định tuyến như phiếu thường.
+        Long inspectorId = admin
+                ? (req != null && req.technicianId() != null ? req.technicianId() : schedule.getAssignedTechnicianId())
+                : actorUserId;
+        Long techId = inspectorId != null ? inspectorId : actorUserId;
         inspectionLog.setTechnicianId(techId);
 
         String techName = admin && req != null ? req.technicianName() : null;
@@ -1179,7 +1184,7 @@ public class LockerService {
         inspectionLog.setChecklistResults(outcome.checklistResults());
 
         if (opensReport) {
-            LockerReport report = openInspectionReport(schedule, req, outcome, techId);
+            LockerReport report = openInspectionReport(schedule, req, outcome, techId, inspectorId);
             schedule.setPendingReportId(report.getId());
             inspectionLog.setCreatedReportId(report.getId());
         }
@@ -1260,9 +1265,10 @@ public class LockerService {
     }
 
     /// Phiếu cho lần kiểm tra KHÔNG ĐẠT: có ô hỏng ⇒ đi qua luồng báo ô hỏng (ô FAULT, gộp phiếu mở
-    /// sẵn); không thì phiếu cấp tủ. Giao cho KTV vừa kiểm tra.
+    /// sẵn); không thì phiếu cấp tủ. Giao cho `assigneeId` (KTV vừa kiểm tra); null ⇒ định tuyến.
     private LockerReport openInspectionReport(
-            MaintenanceSchedule schedule, CompleteScheduleRequest req, InspectionOutcome outcome, Long techId) {
+            MaintenanceSchedule schedule, CompleteScheduleRequest req, InspectionOutcome outcome,
+            Long reporterId, Long assigneeId) {
         String description = req != null && StringUtils.hasText(req.faultReason())
                 ? req.faultReason().trim()
                 : !outcome.failedItems().isEmpty()
@@ -1277,16 +1283,16 @@ public class LockerService {
             if (!schedule.getLockerId().equals(box.getLockerId())) {
                 throw new BusinessException("FAULT_BOX_NOT_IN_LOCKER", "Ô báo hỏng không thuộc tủ của lịch kiểm tra");
             }
-            report = reportBoxFault(box, description, techId, List.of(), techId, title);
+            report = reportBoxFault(box, description, reporterId, List.of(), assigneeId, title);
         } else {
             LockerUnit locker = lockerRepository.findById(schedule.getLockerId()).orElse(null);
             LockerReport created = new LockerReport();
             created.setLockerId(schedule.getLockerId());
             created.setCategory(ReportCategory.LOCKER);
-            created.setUserId(techId == null ? 0L : techId);
+            created.setUserId(reporterId == null ? 0L : reporterId);
             created.setTitle(title);
             created.setDescription(description);
-            applyRouting(created, locker, techId);
+            applyRouting(created, locker, assigneeId);
             report = reportRepository.save(created);
             notifyRouted(report, locker);
         }

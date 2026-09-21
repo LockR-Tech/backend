@@ -197,6 +197,26 @@ class LockerServiceInspectionTest {
         assertEquals("PASSED", schedule.getLastResult());
     }
 
+    // Admin ghi hộ trên web: phiếu giao cho KTV phụ trách lịch, không giao cho tài khoản admin.
+    @Test
+    void adminRecordedFailureGoesToTheSchedulesTechnicianNotTheAdmin() {
+        service.completeSchedule(SCHEDULE_ID, items("FAIL", "PASS", "PASS"), 1L, true);
+
+        ArgumentCaptor<LockerReport> report = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository, atLeastOnce()).save(report.capture());
+        assertEquals(TECH, report.getValue().getAssignedToUserId());
+        assertEquals(TECH, savedLog().getTechnicianId());
+
+        schedule.setPendingReportId(null);
+        schedule.setAssignedTechnicianId(null);
+        clearInvocations(reportRepository);
+        service.completeSchedule(SCHEDULE_ID, items("FAIL", "PASS", "PASS"), 1L, true);
+
+        verify(reportRepository, atLeastOnce()).save(report.capture());
+        assertNull(report.getValue().getAssignedToUserId());
+        assertEquals("OPEN", report.getValue().getStatus());
+    }
+
     @Test
     void aScheduleWaitingOnItsTicketCannotBeReinspected() {
         schedule.setPendingReportId(200L);
