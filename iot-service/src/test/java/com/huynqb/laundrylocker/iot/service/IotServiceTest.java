@@ -185,4 +185,50 @@ class IotServiceTest {
         assertTrue(Boolean.TRUE.equals(result.get("accepted")));
         verify(lockerClient).openBox(9002L);
     }
+
+    // Thuê ô dùng PIN nhiều lần tới hạn: mở lại ô không được kết thúc lượt thuê.
+
+    @Test
+    void unlockWithCodeDoesNotCompleteRentalOnReopen() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, 9002L, null, "STORING", "PIN-123", null, "RENTAL")));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        verify(lockerClient).openBox(9002L);
+        verify(orderClient, never()).complete(anyLong(), anyLong());
+    }
+
+    @Test
+    void unlockDoesNotCompleteRentalOnReopen() {
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, 9002L, null, "STORING", "PIN-123", null, "RENTAL")));
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlock(new UnlockRequest(7L, 9002L, "PIN-123"), 44L);
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        verify(lockerClient).openBox(9002L);
+        verify(orderClient, never()).complete(anyLong(), anyLong());
+    }
+
+    @Test
+    void unlockWithCodeStillCompletesSendPickup() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, null, 9002L, "STORING", "PIN-123", null, "SEND")));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode()));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertTrue(Boolean.TRUE.equals(result.get("accepted")));
+        verify(orderClient).complete(51L, 44L);
+    }
 }
