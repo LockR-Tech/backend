@@ -68,6 +68,13 @@ public class OrderController {
         return ApiResponse.ok("ORDER_RENTAL_EXTENDED", "Rental extended", orderService.extendRental(orderId, userId, hours));
     }
 
+    @PostMapping("/api/orders/{orderId}/assess-overtime")
+    public ApiResponse<OrderResponse> assessOvertime(
+            @PathVariable Long orderId,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok("ORDER_OVERTIME_ASSESSED", "Overtime fee assessed", orderService.assessOvertime(orderId, userId));
+    }
+
     @GetMapping("/api/orders/access/{code}")
     public ApiResponse<OrderResponse> getByAccess(@PathVariable String code) {
         return ApiResponse.ok(orderService.getByAccess(code));
