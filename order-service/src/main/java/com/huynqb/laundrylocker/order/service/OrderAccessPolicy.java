@@ -19,6 +19,10 @@ public final class OrderAccessPolicy {
     }
 
     public static String blockReason(LockerOrder order, OrderRules rules, LocalDateTime now) {
+        return blockReason(order, rules, now, null);
+    }
+
+    public static String blockReason(LockerOrder order, OrderRules rules, LocalDateTime now, BigDecimal overtimeFee) {
         String status = order.getStatus();
         boolean rental = "RENTAL".equalsIgnoreCase(order.getType());
         if ("INITIALIZED".equalsIgnoreCase(status)
@@ -29,7 +33,17 @@ public final class OrderAccessPolicy {
         }
         if (rental && "STORING".equalsIgnoreCase(status)) {
             if (order.getPickupDeadline() != null && now.isAfter(order.getPickupDeadline())) {
-                return RENTAL_EXPIRED;
+                boolean feeCoveredAndPaid = "PAID".equalsIgnoreCase(order.getPaymentStatus())
+                        && order.getExtraFee() != null
+                        && overtimeFee != null
+                        && order.getExtraFee().compareTo(overtimeFee) >= 0;
+                if (!feeCoveredAndPaid && (overtimeFee == null || overtimeFee.compareTo(BigDecimal.ZERO) > 0 || owesPayment(order))) {
+                    return RENTAL_EXPIRED;
+                }
+                if (rules.blockUnpaidRentalAccess() && owesPayment(order)) {
+                    return RENTAL_UNPAID;
+                }
+                return null;
             }
             if (rules.blockUnpaidRentalAccess() && owesPayment(order)) {
                 return RENTAL_UNPAID;

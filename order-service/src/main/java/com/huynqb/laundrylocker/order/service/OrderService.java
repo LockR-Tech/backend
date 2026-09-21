@@ -313,6 +313,30 @@ public class OrderService {
         return toResponse(saved);
     }
 
+    @Transactional
+    public OrderResponse assessOvertime(Long id, Long userId) {
+        LockerOrder order = find(id);
+        assertOwner(order, userId);
+        BigDecimal overtime = calculatePickupOvertimeFee(order);
+        if (overtime.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+            if (currentExtra.compareTo(overtime) < 0) {
+                BigDecimal diff = overtime.subtract(currentExtra);
+                order.setExtraFee(overtime);
+                order.setTotalPrice(order.getTotalPrice().add(diff));
+                if (order.getOriginalPrice() != null) {
+                    order.setOriginalPrice(order.getOriginalPrice().add(diff));
+                }
+                order.setPaymentStatus("UNPAID");
+                order.setPaidAt(null);
+                orderRepository.save(order);
+                addHistory(order.getId(), order.getStatus(), order.getStatus(), userId,
+                        "Assessed pickup overtime fee: " + overtime + " (added " + diff + ")");
+            }
+        }
+        return toResponse(order);
+    }
+
     private String cellTypeOfRental(LockerOrder order) {
         if (order.getSendBoxId() == null) {
             return "STANDARD";
@@ -1770,6 +1794,7 @@ public class OrderService {
                 detailRepository.findByOrderId(order.getId()).stream()
                         .map(d -> new OrderDetailResponse(d.getServiceId(), d.getQuantity(), d.getPrice(), d.getDescription()))
                         .toList();
+        BigDecimal overtimeFee = calculatePickupOvertimeFee(order);
         return new OrderResponse(
                 order.getId(),
                 order.getOrderCode(),
@@ -1810,7 +1835,8 @@ public class OrderService {
                 order.getCustomerNote(),
                 order.getDeliveryAddress(),
                 order.getRentalDurationHours(),
-                OrderAccessPolicy.blockReason(order, rules, LocalDateTime.now()));
+                OrderAccessPolicy.blockReason(order, rules, LocalDateTime.now(), overtimeFee),
+                overtimeFee);
     }
 
     private DroneDeliveryOrderResponse toDroneDeliveryResponse(LockerOrder order) {

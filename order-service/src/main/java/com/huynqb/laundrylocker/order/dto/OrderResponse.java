@@ -49,5 +49,6 @@ public record OrderResponse(
         String deliveryAddress,
         Integer rentalDurationHours,
         // Mã đúng nhưng tạm chưa mở được ô (null = mở được) — xem OrderAccessPolicy.
-        String accessBlockReason) {
+        String accessBlockReason,
+        BigDecimal pickupOvertimeFee) {
 }

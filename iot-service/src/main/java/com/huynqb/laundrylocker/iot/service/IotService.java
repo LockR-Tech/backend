@@ -354,7 +354,7 @@ public class IotService {
     static String blockMessage(String reasonCode) {
         return switch (reasonCode) {
             case "ORDER_UNPAID" -> "Đơn chưa thanh toán. Vui lòng thanh toán trên ứng dụng trước khi mở ô.";
-            case "RENTAL_EXPIRED" -> "Đã hết thời gian thuê. Vui lòng gia hạn trên ứng dụng để mở ô.";
+            case "RENTAL_EXPIRED", "OVERTIME_FEE_UNPAID" -> "Đã hết thời gian thuê. Vui lòng thanh toán phí quá giờ trên ứng dụng để mở ô.";
             case "RENTAL_UNPAID" -> "Còn phí gia hạn chưa thanh toán. Vui lòng thanh toán trên ứng dụng để mở ô.";
             default -> "Mã này tạm thời chưa mở được ô.";
         };
