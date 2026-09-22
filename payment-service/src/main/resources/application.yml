@@ -89,9 +89,9 @@ momo:
 sepay:
   merchant-id: ${SEPAY_MERCHANT_ID:SP-LIVE-TN435687}
   secret-key: ${SEPAY_SECRET_KEY:spsk_live_7kK59VKXMKMKjZPzcXB9bVjsBPeufXuc}
-  api-key: ${SEPAY_API_KEY:demo-api-key}
+  api-key: ${SEPAY_API_KEY:ac2a55074013f070cdd56ca4916315b03b77e250d3830f5b6e6f37f1f867e32f}
   checkout-url: ${SEPAY_CHECKOUT_URL:https://pay.sepay.vn/v1/checkout/init}
-  return-url: ${SEPAY_RETURN_URL:http://localhost:8080/payments/sepay/callback}
-  cancel-url: ${SEPAY_CANCEL_URL:http://localhost:8080/payments/sepay/callback?status=cancel}
-  pay-base-url: ${SEPAY_PAY_BASE_URL:http://localhost:8080/api/payments/sepay/pay}
+  return-url: ${SEPAY_RETURN_URL:https://api.locker-drone.tech/payments/sepay/callback}
+  cancel-url: ${SEPAY_CANCEL_URL:https://api.locker-drone.tech/payments/sepay/callback?status=cancel}
+  pay-base-url: ${SEPAY_PAY_BASE_URL:https://api.locker-drone.tech/api/payments/sepay/pay}
 
