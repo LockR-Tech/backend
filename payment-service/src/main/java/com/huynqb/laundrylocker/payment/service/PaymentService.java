@@ -51,6 +51,7 @@ public class PaymentService {
     private final WalletService walletService;
     private final OrderClient orderClient;
     private final MomoService momoService;
+    private final SepayService sepayService;
     /// Hạn mức nạp ví, phương thức đang bật, tự hoàn tất tiền mặt… admin cấu hình (ADR-0005).
     private final PaymentRules rules;
 
@@ -94,6 +95,8 @@ public class PaymentService {
             payment.setUrl(buildVnPayUrl(payment, request.bankCode(), request.language()));
         } else if ("MOMO".equals(payment.getMethod())) {
             momoService.createPayment(payment, null);
+        } else if ("SEPAY".equals(payment.getMethod())) {
+            sepayService.createPayment(payment, null);
         } else if ("CASH".equals(payment.getMethod()) && rules.cashAutoComplete()) {
             payment.setStatus("COMPLETED");
         }
@@ -164,6 +167,7 @@ public class PaymentService {
             case "VNPAY" ->
                     payment.setUrl(buildVnPayUrl(payment, request.bankCode(), request.language(), request.returnUrl()));
             case "MOMO" -> momoService.createPayment(payment, request.returnUrl());
+            case "SEPAY" -> sepayService.createPayment(payment, request.returnUrl());
             default ->
                     throw new BusinessException("PAYMENT_METHOD_INVALID", "Phương thức thanh toán không hợp lệ: " + method);
         }
@@ -226,9 +230,112 @@ public class PaymentService {
     }
 
     @Transactional
+    public PaymentResponse handleSepayWebhook(Map<String, Object> body, String authHeader) {
+        if (!sepayService.verifyWebhook(body, authHeader)) {
+            throw new BusinessException("SEPAY_INVALID_SIGNATURE", "Chữ ký hoặc API Key SePay không hợp lệ");
+        }
+        String refId = sepayService.extractReferenceId(body);
+        if (!StringUtils.hasText(refId)) {
+            throw new BusinessException("SEPAY_MISSING_REF", "Không tìm thấy mã tham chiếu trong Webhook");
+        }
+        PaymentRecord payment = repository.findByReferenceId(refId)
+                .orElseThrow(() -> new NotFoundException("Payment with ref: " + refId, -1L));
+
+        if ("COMPLETED".equals(payment.getStatus())) {
+            return toResponse(payment);
+        }
+
+        BigDecimal transferAmount = sepayService.extractAmount(body);
+        if (transferAmount.compareTo(BigDecimal.ZERO) > 0 && transferAmount.compareTo(payment.getAmount()) < 0) {
+            log.warn("SePay payment amount mismatch for ref {}: received {} < required {}",
+                    refId, transferAmount, payment.getAmount());
+            payment.setStatus("FAILED");
+        } else {
+            payment.setStatus("COMPLETED");
+        }
+
+        PaymentRecord saved = repository.save(payment);
+        if ("COMPLETED".equals(saved.getStatus())) {
+            if ("SEPAY_TOPUP".equals(saved.getMethod())
+                    || (saved.getOrderId() != null && saved.getOrderId() <= 0)) {
+                walletService.credit(
+                        saved.getUserId(),
+                        saved.getAmount(),
+                        WalletService.SOURCE_TOPUP,
+                        saved.getReferenceId(),
+                        "Nạp ví qua SePay");
+            }
+            publish(DomainEventNames.PAYMENT_COMPLETED, saved);
+        } else {
+            publish(DomainEventNames.PAYMENT_FAILED, saved);
+        }
+        return toResponse(saved);
+    }
+
+    @Transactional
+    public PaymentResponse handleSepayReturn(Map<String, String> params) {
+        String rawRef = params.get("referenceId");
+        if (!StringUtils.hasText(rawRef)) {
+            rawRef = params.get("order_invoice_number");
+        }
+        if (!StringUtils.hasText(rawRef)) {
+            throw new BusinessException("SEPAY_RETURN_INVALID", "Thiếu referenceId trong callback SePay");
+        }
+        final String refId = rawRef;
+        PaymentRecord payment = repository.findByReferenceId(refId)
+                .orElseThrow(() -> new NotFoundException("Payment with ref: " + refId, -1L));
+
+        String status = params.get("status");
+        if (!"COMPLETED".equals(payment.getStatus())) {
+            if ("cancel".equalsIgnoreCase(status) || "failed".equalsIgnoreCase(status)) {
+                payment.setStatus("FAILED");
+                payment = repository.save(payment);
+                publish(DomainEventNames.PAYMENT_FAILED, payment);
+            } else {
+                payment.setStatus("COMPLETED");
+                PaymentRecord saved = repository.save(payment);
+                if ("SEPAY_TOPUP".equals(saved.getMethod())
+                        || (saved.getOrderId() != null && saved.getOrderId() <= 0)) {
+                    walletService.credit(
+                            saved.getUserId(),
+                            saved.getAmount(),
+                            WalletService.SOURCE_TOPUP,
+                            saved.getReferenceId(),
+                            "Nạp ví qua SePay");
+                }
+                publish(DomainEventNames.PAYMENT_COMPLETED, saved);
+                return toResponse(saved);
+            }
+        }
+        return toResponse(payment);
+    }
+
+    public String getSepayPayHtml(String referenceId) {
+        PaymentRecord payment = repository.findByReferenceId(referenceId)
+                .orElseThrow(() -> new NotFoundException("Payment with ref: " + referenceId, -1L));
+        return sepayService.generateAutoSubmitHtml(payment, null);
+    }
+
+    @Transactional
     public TopupResponse createTopupUrl(Long userId, CreateTopupRequest request) {
         assertTopupAmount(request.amount());
+        String method = StringUtils.hasText(request.method()) ? request.method().toUpperCase() : "VNPAY";
         String txnRef = "TOPUP_" + userId + "_" + System.currentTimeMillis();
+
+        if ("SEPAY".equals(method)) {
+            String effectiveReturnUrl = StringUtils.hasText(request.returnUrl()) ? request.returnUrl() : null;
+            PaymentRecord payment = new PaymentRecord();
+            payment.setOrderId(0L);
+            payment.setUserId(userId);
+            payment.setAmount(request.amount());
+            payment.setMethod("SEPAY_TOPUP");
+            payment.setReferenceId(txnRef);
+            payment.setDescription("Nạp tiền ví qua SePay");
+            String paymentUrl = sepayService.createPayment(payment, effectiveReturnUrl);
+            repository.save(payment);
+            return new TopupResponse(paymentUrl, txnRef);
+        }
+
         String effectiveReturnUrl = StringUtils.hasText(request.returnUrl()) ? request.returnUrl() : vnpayReturnUrl;
 
         Map<String, String> params = new TreeMap<>();

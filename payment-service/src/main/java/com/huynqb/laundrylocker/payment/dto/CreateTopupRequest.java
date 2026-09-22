@@ -9,5 +9,10 @@ public record CreateTopupRequest(
         @NotNull BigDecimal amount,
         String returnUrl,
         String bankCode,
-        String locale) {
+        String locale,
+        String method) {
+
+    public CreateTopupRequest(BigDecimal amount, String returnUrl, String bankCode, String locale) {
+        this(amount, returnUrl, bankCode, locale, null);
+    }
 }

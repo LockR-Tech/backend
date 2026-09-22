@@ -21,7 +21,7 @@ import static com.huynqb.laundrylocker.payment.settings.PaymentSettingsCatalog.*
 public class PaymentRules {
 
     /// Các phương thức thanh toán đơn mà hệ thống hỗ trợ.
-    public static final Set<String> SUPPORTED_METHODS = Set.of("CASH", "WALLET", "VNPAY", "MOMO");
+    public static final Set<String> SUPPORTED_METHODS = Set.of("CASH", "WALLET", "VNPAY", "MOMO", "SEPAY");
 
     private final BusinessSettings settings;
 

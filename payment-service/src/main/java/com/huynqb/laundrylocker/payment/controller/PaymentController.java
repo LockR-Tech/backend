@@ -92,6 +92,25 @@ public class PaymentController {
                 "MOMO_RETURN_PROCESSED", "MoMo return processed", paymentService.handleMomoCallback(params));
     }
 
+    @GetMapping(value = "/api/payments/sepay/pay", produces = org.springframework.http.MediaType.TEXT_HTML_VALUE)
+    public String sepayPayHtml(@RequestParam String referenceId) {
+        return paymentService.getSepayPayHtml(referenceId);
+    }
+
+    @PostMapping("/api/payments/sepay/webhook")
+    public Map<String, Object> sepayWebhook(
+            @RequestBody Map<String, Object> body,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        paymentService.handleSepayWebhook(body, authHeader);
+        return Map.of("success", true, "message", "SePay webhook processed");
+    }
+
+    @GetMapping({"/api/payments/sepay/return", "/payments/sepay/callback"})
+    public ApiResponse<PaymentResponse> sepayCallback(@RequestParam Map<String, String> params) {
+        return ApiResponse.ok(
+                "SEPAY_CALLBACK_PROCESSED", "SePay callback processed", paymentService.handleSepayReturn(params));
+    }
+
     @PostMapping("/api/payments/{paymentId}/refund")
     public ApiResponse<RefundResponse> refund(
             @PathVariable Long paymentId,

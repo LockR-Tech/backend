@@ -46,6 +46,7 @@ class PaymentServiceCheckoutTest {
     @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
     @Mock private MomoService momoService;
+    @Mock private SepayService sepayService;
 
     private PaymentService paymentService;
 
@@ -59,6 +60,7 @@ class PaymentServiceCheckoutTest {
                 walletService,
                 orderClient,
                 momoService,
+                sepayService,
                 TestPaymentRules.defaults());
     }
 
@@ -174,6 +176,6 @@ class PaymentServiceCheckoutTest {
     private PaymentService serviceWith(Map<String, ?> overrides) {
         return new PaymentService(
                 repository, refundRepository, rabbitTemplate, environment, walletService, orderClient, momoService,
-                TestPaymentRules.of(overrides));
+                sepayService, TestPaymentRules.of(overrides));
     }
 }
