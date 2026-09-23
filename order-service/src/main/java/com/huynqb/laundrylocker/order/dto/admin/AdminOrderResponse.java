@@ -90,10 +90,10 @@ public record AdminOrderResponse(
     public record Person(Long id, String fullName, String phoneNumber, String email, String status) {
     }
 
-    /// name/phone: người nhận ghi trên đơn (SEND/ủy quyền). account*: tài khoản người nhận nếu có.
+    /// name/phone/email: người nhận ghi trên đơn (SEND/ủy quyền). account*: tài khoản người nhận nếu có.
     public record Receiver(
-            Long userId, String name, String phone, String accountFullName, String accountPhoneNumber,
-            String accountEmail) {
+            Long userId, String name, String phone, String email, String accountFullName,
+            String accountPhoneNumber, String accountEmail) {
     }
 
     public record LockerRef(Long id, String code, String name, String address, Long storeId, String status) {

@@ -45,10 +45,18 @@ public record OrderResponse(
         // tủ (RENTAL) không thấy lại số giờ đã đặt; ghi chú lúc tạo đơn cũng mất tăm.
         String receiverName,
         String receiverPhone,
+        String receiverEmail,
         String customerNote,
         String deliveryAddress,
         Integer rentalDurationHours,
         // Mã đúng nhưng tạm chưa mở được ô (null = mở được) — xem OrderAccessPolicy.
         String accessBlockReason,
-        BigDecimal pickupOvertimeFee) {
+        BigDecimal pickupOvertimeFee,
+        /// Đã trả bao nhiêu và còn phải trả bao nhiêu.
+        ///
+        /// Gia hạn thuê tủ và phí quá hạn cộng thêm vào `totalPrice` rồi đặt lại
+        /// `paymentStatus = UNPAID`. Client phải thu `amountDue`, không phải
+        /// `totalPrice`, nếu không khách trả lại cả phần đã thanh toán trước đó.
+        BigDecimal paidAmount,
+        BigDecimal amountDue) {
 }

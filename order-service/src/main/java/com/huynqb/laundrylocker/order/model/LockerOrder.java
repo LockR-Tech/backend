@@ -112,6 +112,12 @@ public class LockerOrder {
     @Column(name = "original_price", precision = 12, scale = 2)
     private BigDecimal originalPrice = BigDecimal.ZERO;
 
+    /// Số tiền khách đã thực trả. Gia hạn thuê tủ và phí quá hạn cộng thêm vào
+    /// `totalPrice` rồi đặt lại `paymentStatus = UNPAID`; không có cột này thì
+    /// luồng thanh toán thu lại cả phần khách đã trả trước đó.
+    @Column(name = "paid_amount", precision = 19, scale = 2, nullable = false)
+    private BigDecimal paidAmount = BigDecimal.ZERO;
+
     @Column(name = "promotion_code")
     private String promotionCode;
 
