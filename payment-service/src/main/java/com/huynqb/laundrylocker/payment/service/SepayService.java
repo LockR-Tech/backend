@@ -65,6 +65,17 @@ public class SepayService {
     @Value("${sepay.pay-base-url:http://localhost:8080/api/payments/sepay/pay}")
     private String payBaseUrl;
 
+    // Cấu hình tài khoản ngân hàng để sinh VietQR inline (không bắt buộc).
+    // Lấy từ SePay Dashboard → Ngân hàng → Tài khoản liên kết.
+    @Value("${sepay.bank-bin:}")
+    private String bankBin;   // VD: 970432 (VPBank), 970422 (MB Bank)
+
+    @Value("${sepay.bank-account-no:}")
+    private String bankAccountNo;
+
+    @Value("${sepay.account-name:LaundryLocker}")
+    private String accountName;
+
     public boolean isConfigured() {
         return StringUtils.hasText(merchantId) && !"DEMO".equalsIgnoreCase(merchantId);
     }
@@ -73,9 +84,28 @@ public class SepayService {
      * Khởi tạo URL chuyển tiếp thanh toán SePay cho payment record.
      */
     public String createPayment(PaymentRecord payment, String overrideReturnUrl) {
-        String effectiveReturn = StringUtils.hasText(overrideReturnUrl) ? overrideReturnUrl : returnUrl;
         payment.setUrl(payBaseUrl + "?referenceId=" + payment.getReferenceId());
+        // Sinh VietQR inline nếu đã cấu hình tài khoản ngân hàng.
+        if (StringUtils.hasText(bankBin) && StringUtils.hasText(bankAccountNo)) {
+            payment.setQrCodeUrl(generateVietQrUrl(payment));
+        }
         return payment.getUrl();
+    }
+
+    /**
+     * Sinh URL ảnh VietQR (img.vietqr.io) để mobile hiển thị inline.
+     * Nội dung chuyển khoản (addInfo) chứa referenceId để SePay webhook nhận diện.
+     */
+    public String generateVietQrUrl(PaymentRecord payment) {
+        String amount = payment.getAmount() != null
+                ? payment.getAmount().setScale(0, java.math.RoundingMode.HALF_UP).toPlainString()
+                : "0";
+        String info = payment.getReferenceId() != null ? payment.getReferenceId() : "";
+        String name = java.net.URLEncoder.encode(accountName, java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        return String.format(
+                "https://img.vietqr.io/image/%s-%s-compact2.jpg?amount=%s&addInfo=%s&accountName=%s",
+                bankBin, bankAccountNo, amount, info, name);
     }
 
     /**

@@ -94,4 +94,9 @@ sepay:
   return-url: ${SEPAY_RETURN_URL:https://api.locker-drone.tech/payments/sepay/callback}
   cancel-url: ${SEPAY_CANCEL_URL:https://api.locker-drone.tech/payments/sepay/callback?status=cancel}
   pay-base-url: ${SEPAY_PAY_BASE_URL:https://api.locker-drone.tech/api/payments/sepay/pay}
+  # Tài khoản ngân hàng để sinh VietQR inline trong app mobile.
+  # Lấy từ SePay Dashboard → Ngân hàng → Tài khoản liên kết.
+  bank-bin: ${SEPAY_BANK_BIN:}
+  bank-account-no: ${SEPAY_BANK_ACCOUNT_NO:}
+  account-name: ${SEPAY_ACCOUNT_NAME:LaundryLocker}
 

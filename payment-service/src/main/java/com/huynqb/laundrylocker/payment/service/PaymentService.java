@@ -274,10 +274,11 @@ public class PaymentService {
 
     @Transactional
     public PaymentResponse handleSepayReturn(Map<String, String> params) {
+        // SePay PG có thể gửi order_invoice_number, order_id, orderId hoặc referenceId
         String rawRef = params.get("referenceId");
-        if (!StringUtils.hasText(rawRef)) {
-            rawRef = params.get("order_invoice_number");
-        }
+        if (!StringUtils.hasText(rawRef)) rawRef = params.get("order_invoice_number");
+        if (!StringUtils.hasText(rawRef)) rawRef = params.get("order_id");
+        if (!StringUtils.hasText(rawRef)) rawRef = params.get("orderId");
         if (!StringUtils.hasText(rawRef)) {
             throw new BusinessException("SEPAY_RETURN_INVALID", "Thiếu referenceId trong callback SePay");
         }
