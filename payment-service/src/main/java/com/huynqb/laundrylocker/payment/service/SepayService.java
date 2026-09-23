@@ -225,9 +225,14 @@ public class SepayService {
         return false;
     }
 
+    private static final java.util.regex.Pattern TOPUP_PATTERN =
+            java.util.regex.Pattern.compile("(TOPUP_[0-9]+_[0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern PAY_PATTERN =
+            java.util.regex.Pattern.compile("PAY[-_\\s]?([0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+
     /**
      * Trích xuất referenceId từ body Webhook.
-     * Hỗ trợ các trường: order_invoice_number, orderInvoiceNumber, orderId, hoặc quét trong content.
+     * Hỗ trợ các trường: order_invoice_number, orderInvoiceNumber, orderId, content, description, code.
      */
     public String extractReferenceId(Map<String, Object> body) {
         if (body.get("order_invoice_number") != null) {
@@ -239,10 +244,18 @@ public class SepayService {
         if (body.get("orderId") != null) {
             return body.get("orderId").toString();
         }
-        // Trường hợp webhook ngân hàng chuyển khoản: content chứa TOPUP_... hoặc mã đơn
+        // Trường hợp webhook ngân hàng chuyển khoản: content, description, code chứa TOPUP_... hoặc PAY-...
         if (body.get("content") != null) {
-            String content = body.get("content").toString();
-            return parseReferenceIdFromContent(content);
+            String ref = parseReferenceIdFromContent(body.get("content").toString());
+            if (StringUtils.hasText(ref)) return ref;
+        }
+        if (body.get("description") != null) {
+            String ref = parseReferenceIdFromContent(body.get("description").toString());
+            if (StringUtils.hasText(ref)) return ref;
+        }
+        if (body.get("code") != null) {
+            String ref = parseReferenceIdFromContent(body.get("code").toString());
+            if (StringUtils.hasText(ref)) return ref;
         }
         return null;
     }
@@ -263,19 +276,17 @@ public class SepayService {
         return BigDecimal.ZERO;
     }
 
-    private String parseReferenceIdFromContent(String content) {
+    public String parseReferenceIdFromContent(String content) {
         if (!StringUtils.hasText(content)) return null;
-        // Quét tìm chuỗi TOPUP_...
-        int topupIdx = content.indexOf("TOPUP_");
-        if (topupIdx >= 0) {
-            int end = content.indexOf(" ", topupIdx);
-            return end > 0 ? content.substring(topupIdx, end) : content.substring(topupIdx);
+        // 1. Quét tìm chuỗi TOPUP_...
+        java.util.regex.Matcher topupMatcher = TOPUP_PATTERN.matcher(content);
+        if (topupMatcher.find()) {
+            return topupMatcher.group(1).toUpperCase();
         }
-        // Quét tìm chuỗi PAY-...
-        int payIdx = content.indexOf("PAY-");
-        if (payIdx >= 0) {
-            int end = content.indexOf(" ", payIdx);
-            return end > 0 ? content.substring(payIdx, end) : content.substring(payIdx);
+        // 2. Quét tìm chuỗi PAY-... (hỗ trợ PAY-12, PAY 12, PAY12, PAY_12, trong chuỗi MBVCB.PAY-12.CT...)
+        java.util.regex.Matcher payMatcher = PAY_PATTERN.matcher(content);
+        if (payMatcher.find()) {
+            return "PAY-" + payMatcher.group(1);
         }
         return content.trim();
     }

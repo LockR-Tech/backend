@@ -70,6 +70,22 @@ class SepayServiceTest {
         );
         String ref = sepayService.extractReferenceId(body);
         assertEquals("TOPUP_42_1728392102123", ref);
+
+        // PAY-38 với dấu chấm ngân hàng
+        Map<String, Object> bankBody1 = Map.of("content", "MBVCB.12345.PAY-38.CT tu 0912345678");
+        assertEquals("PAY-38", sepayService.extractReferenceId(bankBody1));
+
+        // PAY 38 dấu cách
+        Map<String, Object> bankBody2 = Map.of("content", "Thanh toan PAY 38 qua SePay");
+        assertEquals("PAY-38", sepayService.extractReferenceId(bankBody2));
+
+        // PAY38 dính liền
+        Map<String, Object> bankBody3 = Map.of("content", "Chuyen tien PAY38");
+        assertEquals("PAY-38", sepayService.extractReferenceId(bankBody3));
+
+        // description thay vì content
+        Map<String, Object> bankBody4 = Map.of("description", "MBVCB.PAY-99.CT");
+        assertEquals("PAY-99", sepayService.extractReferenceId(bankBody4));
     }
 
     @Test

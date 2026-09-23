@@ -249,12 +249,43 @@ public class PaymentService {
                             .filter(p -> "PENDING".equalsIgnoreCase(p.getStatus()))
                             .reduce((first, second) -> second)
                             .orElse(null);
+                    // Nếu chưa có payment record trong DB (ví dụ: khách quét VietQR trực tiếp từ màn hình đơn),
+                    // tự động tra cứu order và tạo PaymentRecord để hoàn tất thanh toán!
+                    if (payment == null) {
+                        try {
+                            OrderSummary order = orderClient.getOrder(orderId).data();
+                            if (order != null) {
+                                BigDecimal transferAmt = sepayService.extractAmount(body);
+                                BigDecimal orderPrice = order.totalPrice() != null ? order.totalPrice() : BigDecimal.ZERO;
+                                BigDecimal amount = transferAmt.compareTo(BigDecimal.ZERO) > 0 ? transferAmt : orderPrice;
+
+                                PaymentRecord autoPayment = new PaymentRecord();
+                                autoPayment.setOrderId(orderId);
+                                autoPayment.setUserId(order.userId());
+                                autoPayment.setAmount(amount);
+                                autoPayment.setMethod("SEPAY");
+                                autoPayment.setReferenceId(refId);
+                                autoPayment.setContent("Thanh toan don " + orderId);
+                                autoPayment.setDescription("Thanh toán đơn #" + orderId + " qua SePay");
+                                autoPayment.setStatus("PENDING");
+                                payment = repository.save(autoPayment);
+                                log.info("Auto-created PaymentRecord for order {} from SePay webhook", orderId);
+                            }
+                        } catch (Exception ex) {
+                            log.error("Could not fetch order {} to auto-create payment: {}", orderId, ex.getMessage());
+                        }
+                    }
                 } catch (NumberFormatException ignored) {
                 }
             }
         }
         if (payment == null) {
             throw new NotFoundException("Payment with ref: " + refId, -1L);
+        }
+
+        Object refCode = body.get("referenceCode");
+        if (refCode != null && StringUtils.hasText(refCode.toString())) {
+            payment.setReferenceTransactionId(refCode.toString());
         }
 
         if ("COMPLETED".equals(payment.getStatus())) {
