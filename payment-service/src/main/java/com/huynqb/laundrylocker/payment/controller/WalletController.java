@@ -51,4 +51,56 @@ public class WalletController {
                 "Wallet adjusted",
                 walletService.adjust(userId, request.amount(), request.reason()));
     }
+
+    @GetMapping("/api/wallet/withdrawable-balance")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.WithdrawableBalanceResponse> withdrawableBalance(
+            @RequestHeader("X-User-Id") Long userId) {
+        WalletResponse wallet = walletService.getBalance(userId);
+        java.math.BigDecimal withdrawable = walletService.getWithdrawableBalance(userId);
+        return ApiResponse.ok(new com.huynqb.laundrylocker.payment.dto.WithdrawableBalanceResponse(
+                userId, wallet.balance(), withdrawable, wallet.currency()));
+    }
+
+    @PostMapping("/api/wallet/withdraw")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.WithdrawResponse> withdraw(
+            @RequestHeader("X-User-Id") Long userId,
+            @Valid @RequestBody com.huynqb.laundrylocker.payment.dto.WithdrawRequest request) {
+        return ApiResponse.ok(
+                "WITHDRAW_REQUESTED",
+                "Yêu cầu rút tiền đã được tạo thành công và đang chờ xử lý",
+                walletService.withdraw(userId, request));
+    }
+
+    @GetMapping("/api/wallet/withdrawals")
+    public ApiResponse<List<com.huynqb.laundrylocker.payment.dto.WithdrawResponse>> myWithdrawals(
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(walletService.listUserWithdrawals(userId));
+    }
+
+    @GetMapping("/api/admin/withdrawals")
+    public ApiResponse<List<com.huynqb.laundrylocker.payment.dto.WithdrawResponse>> adminWithdrawals(
+            @RequestParam(required = false) String status) {
+        return ApiResponse.ok(walletService.listAdminWithdrawals(status));
+    }
+
+    @PostMapping("/api/admin/withdrawals/{id}/process")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.WithdrawResponse> processWithdrawal(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", defaultValue = "0") Long adminUserId,
+            @Valid @RequestBody com.huynqb.laundrylocker.payment.dto.AdminWithdrawProcessRequest request) {
+        if ("APPROVE".equalsIgnoreCase(request.action())) {
+            return ApiResponse.ok(
+                    "WITHDRAW_APPROVED",
+                    "Đã phê duyệt yêu cầu rút tiền thành công",
+                    walletService.adminApproveWithdrawal(id, adminUserId));
+        } else if ("REJECT".equalsIgnoreCase(request.action())) {
+            return ApiResponse.ok(
+                    "WITHDRAW_REJECTED",
+                    "Đã từ chối yêu cầu rút tiền và hoàn tiền vào ví",
+                    walletService.adminRejectWithdrawal(id, adminUserId, request.reason()));
+        } else {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "INVALID_ACTION", "Hành động không hợp lệ: " + request.action() + ". Chỉ chấp nhận APPROVE hoặc REJECT.");
+        }
+    }
 }

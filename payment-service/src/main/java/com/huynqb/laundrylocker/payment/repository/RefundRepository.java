@@ -14,4 +14,7 @@ public interface RefundRepository extends JpaRepository<RefundRecord, Long>, Jpa
     List<RefundRecord> findByOrderIdIn(Collection<Long> orderIds);
 
     List<RefundRecord> findByPaymentIdIn(Collection<Long> paymentIds);
+
+    @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(r.amount), 0) FROM RefundRecord r, PaymentRecord p WHERE r.paymentId = p.id AND p.userId = :userId AND r.status = 'COMPLETED' AND (p.method LIKE 'SEPAY%' OR p.method LIKE 'VNPAY%')")
+    java.math.BigDecimal sumRealRefundsByUserId(@org.springframework.data.repository.query.Param("userId") Long userId);
 }
