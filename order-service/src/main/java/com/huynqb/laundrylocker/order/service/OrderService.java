@@ -301,6 +301,9 @@ public class OrderService {
         order.setTotalPrice(order.getTotalPrice().add(extra));
         order.setOriginalPrice(order.getOriginalPrice().add(extra));
         if (extra.compareTo(BigDecimal.ZERO) > 0) {
+            // `totalPrice` là tổng luỹ kế của cả hợp đồng thuê, còn `paidAmount`
+            // giữ nguyên phần khách đã trả — client thu `amountDue`, tức chỉ
+            // phần giờ vừa gia hạn.
             order.setPaymentStatus("UNPAID");
             order.setPaidAt(null);
         }
@@ -1832,11 +1835,25 @@ public class OrderService {
                 details,
                 order.getReceiverName(),
                 order.getReceiverPhone(),
+                order.getReceiverEmail(),
                 order.getCustomerNote(),
                 order.getDeliveryAddress(),
                 order.getRentalDurationHours(),
                 OrderAccessPolicy.blockReason(order, rules, LocalDateTime.now(), overtimeFee),
-                overtimeFee);
+                overtimeFee,
+                paidAmountOf(order),
+                amountDueOf(order));
+    }
+
+    private static BigDecimal paidAmountOf(LockerOrder order) {
+        return order.getPaidAmount() == null ? BigDecimal.ZERO : order.getPaidAmount();
+    }
+
+    /// Phần còn phải trả = tổng hiện tại trừ phần đã trả, không âm.
+    private static BigDecimal amountDueOf(LockerOrder order) {
+        BigDecimal total = order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice();
+        BigDecimal due = total.subtract(paidAmountOf(order));
+        return due.compareTo(BigDecimal.ZERO) > 0 ? due : BigDecimal.ZERO;
     }
 
     private DroneDeliveryOrderResponse toDroneDeliveryResponse(LockerOrder order) {

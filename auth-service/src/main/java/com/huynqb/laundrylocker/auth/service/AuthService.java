@@ -95,6 +95,24 @@ public class AuthService {
             }
         }
 
+        // Kiểm tra trùng trước khi lưu. Trước đây cứ save thẳng rồi để ràng buộc
+        // UNIQUE của DB nổ, nên lỗi trả về chỉ là một chuỗi constraint violation
+        // — admin không biết trùng email hay trùng số điện thoại.
+        if (StringUtils.hasText(request.email())
+                && authAccountRepository.findByEmail(request.email()).isPresent()) {
+            throw new BusinessException(
+                    "AUTH_EMAIL_TAKEN",
+                    "Email đã có tài khoản đăng nhập: " + request.email(),
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+        if (StringUtils.hasText(request.phoneNumber())
+                && authAccountRepository.findByPhoneNumber(request.phoneNumber()).isPresent()) {
+            throw new BusinessException(
+                    "AUTH_PHONE_TAKEN",
+                    "Số điện thoại đã có tài khoản đăng nhập: " + request.phoneNumber(),
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+
         AuthAccount account = new AuthAccount();
         account.setUserId(request.userId());
         account.setEmail(request.email());

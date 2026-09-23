@@ -165,10 +165,32 @@ public class UserController {
 
     @PostMapping("/api/admin/users")
     public ApiResponse<UserSummary> adminCreate(@RequestBody AdminCreateUserRequest request) {
+        String email = trimmed(request.email());
+        String phoneNumber = trimmed(request.phoneNumber());
+        String firstName = trimmed(request.firstName());
+
+        // Trước đây request rỗng vẫn được ghi thẳng vào DB rồi mới nổ ở ràng buộc
+        // UNIQUE (chuỗi rỗng đụng nhau), khiến admin nhận thông báo "đã tồn tại"
+        // cho một email chưa từng dùng.
+        java.util.List<String> missing = new java.util.ArrayList<>();
+        if (email.isEmpty()) missing.add("email");
+        if (firstName.isEmpty()) missing.add("họ tên");
+        if (phoneNumber.isEmpty()) missing.add("số điện thoại");
+        if (!missing.isEmpty()) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "VALIDATION_ERROR", "Thiếu trường bắt buộc: " + String.join(", ", missing));
+        }
+        if (!EMAIL_PATTERN.matcher(email).matches()) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "VALIDATION_ERROR", "Email không hợp lệ: " + email);
+        }
+
+        userProfileService.assertUnique(email, phoneNumber);
+
         UserProfileRequest profileRequest = new UserProfileRequest(
-                request.email(),
-                request.phoneNumber(),
-                request.firstName(),
+                email,
+                phoneNumber,
+                firstName,
                 request.lastName(),
                 request.birthday(),
                 request.imageUrl(),
@@ -185,10 +207,21 @@ public class UserController {
             payload.put("roles", request.roles());
             authClient.createAccount(payload);
         } catch (Exception ex) {
+            // Gỡ profile vừa tạo để không để lại bản ghi nửa vời; auth-service đã
+            // tự kiểm tra trùng nên thông báo của nó nói rõ trùng email hay sđt.
             userProfileService.delete(user.id());
-            throw new com.huynqb.laundrylocker.common.exception.BusinessException("ACCOUNT_CREATION_FAILED", "Failed to create auth account: " + ex.getMessage());
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "ACCOUNT_CREATION_FAILED",
+                    "Không tạo được tài khoản đăng nhập: " + ex.getMessage());
         }
         return ApiResponse.ok("USER_CREATED", "User created", user);
+    }
+
+    private static final java.util.regex.Pattern EMAIL_PATTERN =
+            java.util.regex.Pattern.compile("^[^@\\s]+@[^@\\s.]+(\\.[^@\\s.]+)+$");
+
+    private static String trimmed(String value) {
+        return value == null ? "" : value.trim();
     }
 
     @GetMapping("/api/admin/users/{id}")

@@ -33,6 +33,27 @@ public class UserProfileService {
         return toSummary(userProfileRepository.save(user));
     }
 
+    /// Chặn trùng trước khi ghi. Không có bước này thì ràng buộc UNIQUE của DB
+    /// mới là thứ báo lỗi, và thông báo trả về chỉ là chuỗi constraint violation
+    /// nên admin không biết trùng email hay trùng số điện thoại.
+    @Transactional(readOnly = true)
+    public void assertUnique(String email, String phoneNumber) {
+        if (org.springframework.util.StringUtils.hasText(email)
+                && userProfileRepository.findFirstByEmailIgnoreCase(email).isPresent()) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "USER_EMAIL_TAKEN",
+                    "Email đã được dùng cho người dùng khác: " + email,
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+        if (org.springframework.util.StringUtils.hasText(phoneNumber)
+                && userProfileRepository.findFirstByPhoneNumber(phoneNumber).isPresent()) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "USER_PHONE_TAKEN",
+                    "Số điện thoại đã được dùng cho người dùng khác: " + phoneNumber,
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+    }
+
     @Transactional
     public UserSummary update(Long id, UserProfileRequest request) {
         UserProfile user = find(id);

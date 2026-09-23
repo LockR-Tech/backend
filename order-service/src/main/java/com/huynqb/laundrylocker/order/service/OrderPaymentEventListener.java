@@ -48,6 +48,12 @@ public class OrderPaymentEventListener {
                             if (!"PAID".equals(order.getPaymentStatus())) {
                                 order.setPaymentStatus("PAID");
                                 order.setPaidAt(LocalDateTime.now());
+                                // Ghi nhận khách đã trả tới mức tổng hiện tại; lần gia hạn
+                                // hoặc tính phí quá hạn sau đó chỉ thu phần chênh lệch.
+                                order.setPaidAmount(
+                                        order.getTotalPrice() == null
+                                                ? java.math.BigDecimal.ZERO
+                                                : order.getTotalPrice());
                                 orderRepository.save(order);
                                 log.info("Order {} marked PAID via payment event", orderId);
                             }

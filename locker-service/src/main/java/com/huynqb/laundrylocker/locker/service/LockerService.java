@@ -321,8 +321,11 @@ public class LockerService {
             created.setBoxId(boxId);
             created.setCategory(ReportCategory.BOX);
             created.setUserId(userId == null ? 0L : userId);
-            created.setTitle(title != null ? title : "Box " + box.getBoxNumber() + " fault");
-            created.setDescription(StringUtils.hasText(reason) ? reason : "Reported faulty");
+            // Tiêu đề/mô tả này hiện nguyên văn trên cả app khách, app KTV và web
+            // admin — vốn là tiếng Anh nên lẫn giữa giao diện tiếng Việt. Các phiếu
+            // khác trong service đã đặt tên tiếng Việt ("Bãi đáp drone — ...").
+            created.setTitle(title != null ? title : "Ô #" + box.getBoxNumber() + " báo hỏng");
+            created.setDescription(StringUtils.hasText(reason) ? reason : "Khách báo ô hỏng");
             applyRouting(created, locker, assigneeId);
             report = reportRepository.save(created);
             attachmentService.attach(

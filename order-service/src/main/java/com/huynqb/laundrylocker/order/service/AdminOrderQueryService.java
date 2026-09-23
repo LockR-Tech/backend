@@ -366,13 +366,17 @@ public class AdminOrderQueryService {
 
     private static Receiver receiver(LockerOrder o, UserSummary account) {
         Long accountId = receiverAccountId(o);
-        if (accountId == null && o.getReceiverName() == null && o.getReceiverPhone() == null) {
+        if (accountId == null
+                && o.getReceiverName() == null
+                && o.getReceiverPhone() == null
+                && o.getReceiverEmail() == null) {
             return null;
         }
         return new Receiver(
                 accountId,
                 o.getReceiverName(),
                 o.getReceiverPhone(),
+                o.getReceiverEmail(),
                 account == null ? null : account.fullName(),
                 account == null ? null : account.phoneNumber(),
                 account == null ? null : account.email());
