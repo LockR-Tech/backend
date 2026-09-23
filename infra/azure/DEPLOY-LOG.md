@@ -5,6 +5,7 @@ Bản ghi mới nhất nằm trên cùng.
 
 | Thời điểm (UTC) | Kết quả | Commit | Người đẩy | Nghiệm thu |
 |---|---|---|---|---|
+| 2026-09-23 06:36 | failure | [`b1eee08`](https://github.com/LockR-Tech/backend/commit/b1eee0803a7ad0e1fac61c7ae88b8d8c0abade87) | @TruongNguyenThaiBinh77 | **THẤT BẠI** — [run 35827410745](https://github.com/LockR-Tech/backend/actions/runs/35827410745); đã rollback |
 | 2026-09-23 06:29 | failure | [`9388271`](https://github.com/LockR-Tech/backend/commit/938827193bfc823699c42feffa5b00bf68878c9c) | @TruongNguyenThaiBinh77 | **THẤT BẠI** — [run 35826911414](https://github.com/LockR-Tech/backend/actions/runs/35826911414); đã rollback |
 | 2026-09-23 06:25 | failure | [`f4cbf94`](https://github.com/LockR-Tech/backend/commit/f4cbf949de0b7950dc31a2d1afc0447fbae0df65) | @TruongNguyenThaiBinh77 | **THẤT BẠI** — [run 35826580939](https://github.com/LockR-Tech/backend/actions/runs/35826580939); đã rollback |
 | 2026-09-22 18:07 | success | [`dfd2a31`](https://github.com/LockR-Tech/backend/commit/dfd2a317db6c42d9cc1e338351e04c08ff4c87be) | @TruongNguyenThaiBinh77 | health 200 · public 200 · admin 401 · bypass 404 |
