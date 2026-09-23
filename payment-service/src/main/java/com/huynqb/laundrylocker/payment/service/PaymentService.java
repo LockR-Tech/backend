@@ -239,7 +239,23 @@ public class PaymentService {
             throw new BusinessException("SEPAY_MISSING_REF", "Không tìm thấy mã tham chiếu trong Webhook");
         }
         PaymentRecord payment = repository.findByReferenceId(refId)
-                .orElseThrow(() -> new NotFoundException("Payment with ref: " + refId, -1L));
+                .orElse(null);
+        if (payment == null && refId.startsWith("PAY-")) {
+            String[] parts = refId.split("-");
+            if (parts.length >= 2) {
+                try {
+                    Long orderId = Long.parseLong(parts[1]);
+                    payment = repository.findByOrderId(orderId).stream()
+                            .filter(p -> "PENDING".equalsIgnoreCase(p.getStatus()))
+                            .reduce((first, second) -> second)
+                            .orElse(null);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        if (payment == null) {
+            throw new NotFoundException("Payment with ref: " + refId, -1L);
+        }
 
         if ("COMPLETED".equals(payment.getStatus())) {
             return toResponse(payment);

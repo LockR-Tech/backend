@@ -271,6 +271,12 @@ public class SepayService {
             int end = content.indexOf(" ", topupIdx);
             return end > 0 ? content.substring(topupIdx, end) : content.substring(topupIdx);
         }
+        // Quét tìm chuỗi PAY-...
+        int payIdx = content.indexOf("PAY-");
+        if (payIdx >= 0) {
+            int end = content.indexOf(" ", payIdx);
+            return end > 0 ? content.substring(payIdx, end) : content.substring(payIdx);
+        }
         return content.trim();
     }
 
