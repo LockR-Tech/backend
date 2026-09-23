@@ -87,7 +87,7 @@ public class SepayService {
         payment.setUrl(payBaseUrl + "?referenceId=" + payment.getReferenceId());
         // Sinh VietQR inline nếu đã cấu hình tài khoản ngân hàng.
         if (StringUtils.hasText(bankBin) && StringUtils.hasText(bankAccountNo)) {
-            payment.setQrCodeUrl(generateVietQrUrl(payment));
+            payment.setQr(generateVietQrUrl(payment));
         }
         return payment.getUrl();
     }
