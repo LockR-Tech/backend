@@ -77,13 +77,13 @@ public class WalletController {
         return ApiResponse.ok(walletService.listUserWithdrawals(userId));
     }
 
-    @GetMapping("/api/admin/withdrawals")
+    @GetMapping({"/api/admin/withdrawals", "/api/admin/wallet/withdrawals"})
     public ApiResponse<List<com.huynqb.laundrylocker.payment.dto.WithdrawResponse>> adminWithdrawals(
             @RequestParam(required = false) String status) {
         return ApiResponse.ok(walletService.listAdminWithdrawals(status));
     }
 
-    @PostMapping("/api/admin/withdrawals/{id}/process")
+    @PostMapping({"/api/admin/withdrawals/{id}/process", "/api/admin/wallet/withdrawals/{id}/process"})
     public ApiResponse<com.huynqb.laundrylocker.payment.dto.WithdrawResponse> processWithdrawal(
             @PathVariable Long id,
             @RequestHeader(value = "X-User-Id", defaultValue = "0") Long adminUserId,
