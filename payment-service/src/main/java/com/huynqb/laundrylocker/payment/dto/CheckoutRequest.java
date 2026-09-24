@@ -11,5 +11,8 @@ public record CheckoutRequest(
         @NotBlank String method,
         String bankCode,
         String returnUrl,
-        String language) {
+        String language,
+        /// Lý do trả tiền lần này, hiện lên chi tiết đơn của khách để phân biệt nhiều
+        /// lần trả trên cùng một đơn ("Phí quá hạn"…). Trống thì server tự suy.
+        String description) {
 }

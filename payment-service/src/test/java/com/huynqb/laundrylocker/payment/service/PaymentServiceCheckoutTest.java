@@ -75,7 +75,7 @@ class PaymentServiceCheckoutTest {
         when(repository.findByOrderId(55L)).thenReturn(List.of(completed));
         when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        PaymentResponse response = paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null));
+        PaymentResponse response = paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null));
 
         assertEquals(BigDecimal.valueOf(5000), response.amount());
 
@@ -83,6 +83,46 @@ class PaymentServiceCheckoutTest {
         verify(repository).save(captor.capture());
         assertEquals(BigDecimal.valueOf(5000), captor.getValue().getAmount());
         verify(rabbitTemplate).convertAndSend(any(String.class), any(String.class), any(Object.class));
+    }
+
+    /// Thuê rồi gia hạn sinh hai PaymentRecord trên cùng một đơn. Trước đây cả hai mang
+    /// mô tả y hệt "Thanh toán đơn #55" nên chi tiết đơn hiện hai khối tiền giống nhau,
+    /// khách không biết khoản nào là tiền thuê, khoản nào là tiền gia hạn.
+    @Test
+    void topUpAfterExtensionIsLabelledAsAnAdditionalPayment() {
+        when(orderClient.getOrder(55L)).thenReturn(ApiResponse.ok(new OrderSummary(55L, 44L, "STORING", BigDecimal.valueOf(15000))));
+
+        PaymentRecord completed = new PaymentRecord();
+        completed.setOrderId(55L);
+        completed.setAmount(BigDecimal.valueOf(10000));
+        completed.setStatus("COMPLETED");
+        when(repository.findByOrderId(55L)).thenReturn(List.of(completed));
+        when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null));
+
+        ArgumentCaptor<PaymentRecord> captor = ArgumentCaptor.forClass(PaymentRecord.class);
+        verify(repository).save(captor.capture());
+        assertEquals("Thanh toán bổ sung đơn #55", captor.getValue().getDescription());
+    }
+
+    @Test
+    void firstPaymentKeepsThePlainOrderLabel() {
+        assertEquals("Thanh toán đơn #55", PaymentService.paymentPurpose(null, 55L, BigDecimal.ZERO));
+    }
+
+    /// App gửi được lý do cụ thể thì ưu tiên; chuỗi rỗng coi như không gửi.
+    @Test
+    void clientReasonWinsOverTheDerivedOne() {
+        assertEquals("Phí quá hạn",
+                PaymentService.paymentPurpose("  Phí quá hạn  ", 55L, BigDecimal.valueOf(10000)));
+        assertEquals("Thanh toán đơn #55", PaymentService.paymentPurpose("   ", 55L, BigDecimal.ZERO));
+    }
+
+    /// Chuỗi do client gửi hiện thẳng lên màn hình khách nên phải có trần.
+    @Test
+    void clientReasonIsCappedBecauseItIsShownToTheCustomer() {
+        assertEquals(120, PaymentService.paymentPurpose("x".repeat(200), 55L, BigDecimal.ZERO).length());
     }
 
     @Test
@@ -117,7 +157,7 @@ class PaymentServiceCheckoutTest {
 
         BusinessException error = assertThrows(
                 BusinessException.class,
-                () -> paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null)));
+                () -> paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null)));
 
         assertEquals("ORDER_ALREADY_PAID", error.getCode());
     }
@@ -128,7 +168,7 @@ class PaymentServiceCheckoutTest {
 
         BusinessException error = assertThrows(
                 BusinessException.class,
-                () -> service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null)));
+                () -> service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null)));
 
         assertEquals("PAYMENT_METHOD_DISABLED", error.getCode());
         verify(orderClient, never()).getOrder(any());
@@ -141,7 +181,7 @@ class PaymentServiceCheckoutTest {
         when(repository.findByOrderId(55L)).thenReturn(List.of());
         when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        PaymentResponse response = service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null));
+        PaymentResponse response = service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null));
 
         assertEquals("PENDING", response.status());
         verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(Object.class));
