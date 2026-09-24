@@ -23,9 +23,10 @@ import org.springframework.util.StringUtils;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /// Claude qua Anthropic Java SDK. Mỗi đoạn truy xuất là một document block bật Citations để câu
-/// trả lời trỏ về đúng đoạn nguồn. Model đổi bằng `ASSISTANT_CHAT_MODEL` (mặc định claude-opus-5).
+/// trả lời trỏ về đúng đoạn nguồn. Model đổi bằng `ASSISTANT_CHAT_MODEL` (mặc định claude-haiku-4-5).
 @Component
 public class ClaudeAnswerGenerator implements AnswerGenerator {
 
@@ -100,9 +101,11 @@ public class ClaudeAnswerGenerator implements AnswerGenerator {
         MessageCreateParams.Builder params = MessageCreateParams.builder()
                 .model(properties.chatModel())
                 .maxTokens(properties.maxOutputTokens())
-                .system(SYSTEM_PROMPT)
-                // Hỏi đáp dựa trên tài liệu có sẵn: effort thấp cho độ trễ và chi phí vừa phải.
-                .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build());
+                .system(SYSTEM_PROMPT);
+        // Hỏi đáp dựa trên tài liệu có sẵn: effort thấp cho độ trễ và chi phí vừa phải.
+        if (supportsEffort(properties.chatModel())) {
+            params.outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build());
+        }
         for (ChatTurn turn : history) {
             if (turn.fromUser()) {
                 params.addUserMessage(turn.content());
@@ -128,6 +131,16 @@ public class ClaudeAnswerGenerator implements AnswerGenerator {
         blocks.add(ContentBlockParam.ofText(TextBlockParam.builder().text(question).build()));
         params.addUserMessageOfBlockParams(blocks);
         return params.build();
+    }
+
+    /// Tiền tố model nhận `output_config.effort` (Opus 4.5+, Sonnet 4.6+, Fable). Haiku 4.5 và
+    /// Sonnet 4.5 trả 400 nếu gửi kèm; không nằm trong danh sách thì bỏ qua — thiếu effort vẫn là
+    /// request hợp lệ (chạy mức mặc định), còn gửi nhầm là hỏng cả câu hỏi.
+    static boolean supportsEffort(String model) {
+        String name = model == null ? "" : model.toLowerCase(Locale.ROOT);
+        return List.of("claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
+                        "claude-opus-5", "claude-sonnet-4-6", "claude-sonnet-5", "claude-fable-5")
+                .stream().anyMatch(name::startsWith);
     }
 
     private AnthropicClient client() {

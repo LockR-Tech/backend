@@ -121,6 +121,43 @@ class ClaudeAnswerGeneratorTest {
         assertTrue(answer.citations().isEmpty());
     }
 
+    /// Haiku 4.5 (và các model cũ hơn) trả 400 nếu request có `output_config.effort` — đổi
+    /// `ASSISTANT_CHAT_MODEL` sang model rẻ hơn không được làm hỏng cả luồng hỏi đáp.
+    @Test
+    void omitsEffortForModelsThatRejectIt() throws IOException {
+        responseBody = """
+                {"id":"msg_3","type":"message","role":"assistant","model":"claude-haiku-4-5",
+                 "content":[{"type":"text","text":"Phí gửi 15.000đ."}],
+                 "stop_reason":"end_turn","stop_sequence":null,
+                 "usage":{"input_tokens":120,"output_tokens":9}}
+                """;
+        ClaudeAnswerGenerator haiku = new ClaudeAnswerGenerator(
+                new AssistantProperties("test-key", "claude-haiku-4-5", 2048, 30, "", "voyage-4",
+                        "http://unused", 1024, 5000),
+                AnthropicOkHttpClient.builder()
+                        .apiKey("test-key")
+                        .baseUrl("http://127.0.0.1:" + server.getAddress().getPort())
+                        .maxRetries(0)
+                        .build());
+
+        haiku.generate("Phí gửi bao nhiêu?",
+                List.of(new RetrievedChunk(1, 1, "Điều khoản", 0, null, "Phí gửi 15.000đ.", 0.9)), List.of());
+
+        JsonNode request = new ObjectMapper().readTree(requestBody.get());
+        assertEquals("claude-haiku-4-5", request.path("model").asText());
+        assertTrue(request.path("output_config").isMissingNode(), "Haiku 4.5 không nhận output_config");
+        assertTrue(request.path("messages").get(0).path("content").get(0)
+                .path("citations").path("enabled").asBoolean(), "vẫn phải bật citations");
+    }
+
+    @Test
+    void knowsWhichModelsAcceptEffort() {
+        assertTrue(ClaudeAnswerGenerator.supportsEffort("claude-opus-5"));
+        assertTrue(ClaudeAnswerGenerator.supportsEffort("claude-sonnet-5"));
+        assertFalse(ClaudeAnswerGenerator.supportsEffort("claude-haiku-4-5"));
+        assertFalse(ClaudeAnswerGenerator.supportsEffort("claude-sonnet-4-5"));
+    }
+
     @Test
     void missingKeyIsReportedAsProviderError() {
         ClaudeAnswerGenerator unconfigured = new ClaudeAnswerGenerator(new AssistantProperties(
