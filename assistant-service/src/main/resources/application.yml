@@ -22,7 +22,7 @@ app:
   assistant:
     # Thiếu khoá ⇒ service vẫn chạy, /api/assistant/ask trả 503 "chưa cấu hình".
     anthropic-api-key: ${ANTHROPIC_API_KEY:}
-    chat-model: ${ASSISTANT_CHAT_MODEL:claude-opus-5}
+    chat-model: ${ASSISTANT_CHAT_MODEL:claude-haiku-4-5}
     max-output-tokens: ${ASSISTANT_MAX_OUTPUT_TOKENS:2048}
     # 55 s × tối đa 2 lần (1 lần thử lại) < 120 s app chờ; Nginx cho tới 300 s.
     chat-timeout-seconds: ${ASSISTANT_CHAT_TIMEOUT_SECONDS:55}

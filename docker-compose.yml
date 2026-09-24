@@ -426,7 +426,7 @@ services:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
       # Thiếu khoá ⇒ service vẫn chạy, API hỏi đáp trả 503 "chưa cấu hình".
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ASSISTANT_CHAT_MODEL: ${ASSISTANT_CHAT_MODEL:-claude-opus-5}
+      ASSISTANT_CHAT_MODEL: ${ASSISTANT_CHAT_MODEL:-claude-haiku-4-5}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-voyage-4}
       JAVA_OPTS: "-Xms64m -Xmx320m -XX:+UseContainerSupport"
