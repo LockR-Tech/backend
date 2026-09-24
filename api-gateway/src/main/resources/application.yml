@@ -54,7 +54,7 @@ spring:
             - id: payment-service
               uri: lb://payment-service
               predicates:
-                - Path=/api/payments/**,/api/admin/payments,/api/admin/payments/**,/internal/payments/**,/payments/vnpay/callback,/payments/sepay/callback,/api/wallet,/api/wallet/**,/api/admin/wallet/**
+                - Path=/api/payments/**,/api/admin/payments,/api/admin/payments/**,/internal/payments/**,/payments/vnpay/callback,/payments/sepay/callback,/api/wallet,/api/wallet/**,/api/admin/wallet/**,/api/admin/withdrawals,/api/admin/withdrawals/**
             - id: notification-service
               uri: lb://notification-service
               predicates:
