@@ -282,9 +282,14 @@ services:
       FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
       # Gửi mã mở tủ cho người nhận CHƯA có tài khoản.
       # Email: dùng chung SMTP với auth-service (xem khối auth-service ở trên).
-      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-localhost}
+      # HOST và USERNAME mặc định TRỐNG, không phải localhost:1025 như khối auth-service:
+      # compose không chạy mail catcher nào, nên default cũ chỉ khiến GuestEmailSender.isReal()
+      # báo "kênh email đã bật" trong khi chưa bật bao giờ — đúng thứ mà emailChannelAvailable
+      # sinh ra để phân biệt. Trống ⇒ kênh email tắt hẳn và báo đúng là chưa cấu hình.
+      # auth-service giữ default cũ vì nó cần bean JavaMailSender mới khởi động được.
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-}
       SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-1025}
-      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-noreply@laundry.test}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-}
       SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:-}
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SPRING_MAIL_SMTP_AUTH:-false}
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_SMTP_STARTTLS:-false}
