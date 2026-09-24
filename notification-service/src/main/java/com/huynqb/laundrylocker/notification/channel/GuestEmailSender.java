@@ -20,30 +20,40 @@ public class GuestEmailSender {
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
     private final String configuredFrom;
     private final String mailUsername;
+    private final String mailHost;
 
     public GuestEmailSender(
             ObjectProvider<JavaMailSender> mailSenderProvider,
             @Value("${app.mail.from:}") String configuredFrom,
-            @Value("${spring.mail.username:}") String mailUsername) {
+            @Value("${spring.mail.username:}") String mailUsername,
+            @Value("${spring.mail.host:}") String mailHost) {
         this.mailSenderProvider = mailSenderProvider;
         this.configuredFrom = configuredFrom;
         this.mailUsername = mailUsername;
+        this.mailHost = mailHost;
     }
 
     /// `true` khi SMTP đã sẵn sàng; `false` thì nơi gọi phải coi như người nhận không
     /// nhận được email.
+    ///
+    /// Phải kiểm cả `spring.mail.host`: compose luôn khai báo biến này nên Spring vẫn dựng
+    /// bean `JavaMailSender` kể cả khi máy chủ chưa cấu hình SMTP. Chỉ nhìn bean thì
+    /// `emailChannelAvailable` báo "đã bật" trong khi chưa bật bao giờ — đúng cái mà trường
+    /// này sinh ra để phân biệt.
     public boolean isReal() {
-        return mailSenderProvider.getIfAvailable() != null && StringUtils.hasText(fromEmail());
+        return mailSenderProvider.getIfAvailable() != null
+                && StringUtils.hasText(mailHost)
+                && StringUtils.hasText(fromEmail());
     }
 
     public boolean send(String to, String subject, String body) {
         if (!StringUtils.hasText(to)) return false;
 
-        JavaMailSender sender = mailSenderProvider.getIfAvailable();
-        if (sender == null || !StringUtils.hasText(fromEmail())) {
+        if (!isReal()) {
             log.info("Email channel not configured — would have emailed {}", maskedEmail(to));
             return false;
         }
+        JavaMailSender sender = mailSenderProvider.getIfAvailable();
 
         try {
             SimpleMailMessage message = new SimpleMailMessage();
