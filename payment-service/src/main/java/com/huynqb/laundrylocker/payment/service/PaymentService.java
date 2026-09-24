@@ -115,6 +115,23 @@ public class PaymentService {
      * taken from the order (authoritative), not the client. Methods not in
      * {@code app.payment.enabled-methods} are rejected with PAYMENT_METHOD_DISABLED.
      */
+    /// Mô tả để khách phân biệt nhiều lần trả trên cùng một đơn: thuê rồi gia hạn, hoặc
+    /// bị tính thêm phí quá hạn. Trước đây mọi lần đều ghi "Thanh toán đơn #N" nên chi
+    /// tiết đơn hiện hai khối tiền giống hệt nhau, khách không biết khoản nào là gì.
+    ///
+    /// Client gửi lý do cụ thể thì dùng; không gửi thì suy từ việc đơn đã có lần trả nào
+    /// chưa — bản app cũ vẫn phân biệt được mà không phải sửa gì. Cắt ngắn vì chuỗi này
+    /// hiện thẳng lên màn hình khách.
+    static String paymentPurpose(String requested, Long orderId, BigDecimal alreadyPaid) {
+        if (StringUtils.hasText(requested)) {
+            String clean = requested.strip();
+            return clean.length() <= 120 ? clean : clean.substring(0, 120);
+        }
+        return alreadyPaid.signum() > 0
+                ? "Thanh toán bổ sung đơn #" + orderId
+                : "Thanh toán đơn #" + orderId;
+    }
+
     @Transactional
     public PaymentResponse checkout(Long userId, CheckoutRequest request) {
         String method = request.method() == null ? "" : request.method().toUpperCase();
@@ -147,7 +164,7 @@ public class PaymentService {
         payment.setMethod(method);
         payment.setReferenceId(generateReference(request.orderId()));
         payment.setContent("Thanh toan don " + request.orderId());
-        payment.setDescription("Thanh toán đơn #" + request.orderId());
+        payment.setDescription(paymentPurpose(request.description(), request.orderId(), completedAmount));
 
         switch (method) {
             case "WALLET" -> {
