@@ -40,8 +40,35 @@ public class DroneMission {
     @Column(name = "last_accept_idempotency_key", length = 120)
     private String lastAcceptIdempotencyKey;
 
+    @Column(name = "last_loading_idempotency_key", length = 120)
+    private String lastLoadingIdempotencyKey;
+
     @Column(name = "last_launch_idempotency_key", length = 120)
     private String lastLaunchIdempotencyKey;
+
+    @Column(name = "payload_weight_grams")
+    private Integer payloadWeightGrams;
+
+    @Column(name = "seal_code", length = 80)
+    private String sealCode;
+
+    @Column(name = "parcel_matched", nullable = false)
+    private boolean parcelMatched;
+
+    @Column(name = "payload_secured", nullable = false)
+    private boolean payloadSecured;
+
+    @Column(name = "compartment_locked", nullable = false)
+    private boolean compartmentLocked;
+
+    @Column(name = "loading_note", length = 500)
+    private String loadingNote;
+
+    @Column(name = "loaded_by_user_id")
+    private Long loadedByUserId;
+
+    @Column(name = "loaded_at")
+    private LocalDateTime loadedAt;
 
     @Column(name = "ready_to_launch_at")
     private LocalDateTime readyToLaunchAt;

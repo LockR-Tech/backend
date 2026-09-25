@@ -201,6 +201,17 @@ public class OrderController {
                                 droneOrderMaintenanceService.accept(orderId, userId, idempotencyKey, request)));
     }
 
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/loading-confirmation")
+    public ApiResponse<DroneMissionResponse> confirmDroneLoading(
+            @PathVariable Long orderId,
+            @Valid @RequestBody ConfirmDroneLoadingRequest request,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return ApiResponse.ok(
+                "DRONE_LOADING_CONFIRMED",
+                "Drone loading checklist confirmed",
+                droneOrderMaintenanceService.confirmLoading(orderId, userId, idempotencyKey, request));
+    }
     @PostMapping("/api/drone-technician/drone-orders/{orderId}/launch")
     public ResponseEntity<ApiResponse<DroneMissionResponse>> launchDroneOrder(
             @PathVariable Long orderId,

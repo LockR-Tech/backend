@@ -120,4 +120,8 @@ public class OrderRules {
     public int droneMinPreflightBatteryPercent() {
         return settings.getInt(DRONE_MIN_PREFLIGHT_BATTERY);
     }
+
+    public int droneMaxPayloadWeightGrams() {
+        return settings.getInt(DRONE_MAX_PAYLOAD_WEIGHT);
+    }
 }

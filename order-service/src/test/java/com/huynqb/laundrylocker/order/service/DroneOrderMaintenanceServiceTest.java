@@ -41,7 +41,7 @@ class DroneOrderMaintenanceServiceTest {
     private NotificationClient notificationClient;
 
     @Test
-    void acceptCreatesReadyToLaunchMissionWhenPreflightPasses() {
+    void acceptCreatesAwaitingLoadingMissionWhenPreflightPasses() {
         DroneOrderMaintenanceService service =
                 new DroneOrderMaintenanceService(
                         orderRepository,
@@ -75,9 +75,11 @@ class DroneOrderMaintenanceServiceTest {
 
         assertEquals(21L, response.orderId());
         assertEquals(301L, response.missionId());
-        assertEquals("READY_TO_LAUNCH", response.missionStatus());
+        assertEquals("AWAITING_LOADING", response.missionStatus());
         assertEquals("ACCEPTED", response.deliveryStage());
         assertEquals("DRONE-09", response.droneCode());
+        assertEquals(99L, response.assignedByUserId());
+        assertEquals(1200, response.expectedWeightGrams());
         verify(missionRepository).save(any(DroneMission.class));
         verify(orderRepository).save(order);
     }
@@ -100,7 +102,7 @@ class DroneOrderMaintenanceServiceTest {
         mission.setDroneUnitId(9L);
         mission.setSourceLockerId(3L);
         mission.setDestinationLockerId(5L);
-        mission.setStatus("READY_TO_LAUNCH");
+        mission.setStatus("AWAITING_LOADING");
         mission.setLastAcceptIdempotencyKey("accept-1");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
@@ -111,9 +113,120 @@ class DroneOrderMaintenanceServiceTest {
                 service.accept(21L, 99L, "accept-1", new AcceptDroneOrderRequest(9L));
 
         assertEquals(301L, response.missionId());
-        assertEquals("READY_TO_LAUNCH", response.missionStatus());
+        assertEquals("AWAITING_LOADING", response.missionStatus());
         verify(missionRepository, never()).save(any(DroneMission.class));
         verify(orderRepository, never()).save(any(LockerOrder.class));
+    }
+
+    @Test
+    void confirmLoadingRecordsAuditAndMakesMissionReadyToLaunch() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = new DroneMission();
+        mission.setId(301L);
+        mission.setOrderId(21L);
+        mission.setDroneUnitId(9L);
+        mission.setStatus("AWAITING_LOADING");
+        mission.setAssignedByUserId(99L);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)));
+        when(missionRepository.save(any(DroneMission.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        DroneMissionResponse response = service.confirmLoading(
+                21L,
+                99L,
+                "load-1",
+                new ConfirmDroneLoadingRequest(1200, " SEAL-21 ", true, true, true, "  intact  "));
+
+        assertEquals("READY_TO_LAUNCH", response.missionStatus());
+        assertEquals(1200, response.payloadWeightGrams());
+        assertEquals("SEAL-21", response.sealCode());
+        assertEquals(99L, response.loadedByUserId());
+        assertNotNull(response.loadedAt());
+        assertEquals("intact", mission.getLoadingNote());
+        assertEquals("load-1", mission.getLastLoadingIdempotencyKey());
+        assertTrue(mission.isParcelMatched());
+        assertTrue(mission.isPayloadSecured());
+        assertTrue(mission.isCompartmentLocked());
+        verify(missionRepository).save(mission);
+        verify(orderRepository).save(order);
+    }
+
+    @Test
+    void confirmLoadingRejectsPayloadAboveConfiguredLimit() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = new DroneMission();
+        mission.setOrderId(21L);
+        mission.setDroneUnitId(9L);
+        mission.setStatus("AWAITING_LOADING");
+        mission.setAssignedByUserId(99L);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> service.confirmLoading(
+                        21L,
+                        99L,
+                        "load-1",
+                        new ConfirmDroneLoadingRequest(5001, "SEAL-21", true, true, true, null)));
+
+        assertEquals("DRONE_PAYLOAD_TOO_HEAVY", error.getCode());
+        verify(lockerDroneClient, never()).getDroneUnit(any());
+        verify(missionRepository, never()).save(any());
+    }
+
+    @Test
+    void confirmLoadingRejectsAnotherDroneTechnician() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = new DroneMission();
+        mission.setOrderId(21L);
+        mission.setDroneUnitId(9L);
+        mission.setStatus("AWAITING_LOADING");
+        mission.setAssignedByUserId(88L);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> service.confirmLoading(
+                        21L,
+                        99L,
+                        "load-1",
+                        new ConfirmDroneLoadingRequest(1200, "SEAL-21", true, true, true, null)));
+
+        assertEquals("DRONE_MISSION_NOT_ASSIGNED_TO_USER", error.getCode());
+        verify(lockerDroneClient, never()).getDroneUnit(any());
+        verify(missionRepository, never()).save(any());
     }
 
     @Test
@@ -135,6 +248,8 @@ class DroneOrderMaintenanceServiceTest {
         mission.setSourceLockerId(3L);
         mission.setDestinationLockerId(5L);
         mission.setStatus("READY_TO_LAUNCH");
+        mission.setAssignedByUserId(99L);
+        markLoadingConfirmed(mission);
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
         when(missionRepository.save(any(DroneMission.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -158,6 +273,34 @@ class DroneOrderMaintenanceServiceTest {
     }
 
     @Test
+    void launchRejectsReadyMissionWithoutLoadingAudit() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = new DroneMission();
+        mission.setOrderId(21L);
+        mission.setDroneUnitId(9L);
+        mission.setStatus("READY_TO_LAUNCH");
+        mission.setAssignedByUserId(99L);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException error =
+                assertThrows(BusinessException.class, () -> service.launch(21L, 99L, "launch-1"));
+
+        assertEquals("DRONE_LOADING_NOT_CONFIRMED", error.getCode());
+        verify(lockerDroneClient, never()).getDroneUnit(any());
+        verify(missionRepository, never()).save(any());
+    }
+
+    @Test
     void cancelStoresReasonAndNoteThenReleasesReservedBox() {
         DroneOrderMaintenanceService service =
                 new DroneOrderMaintenanceService(
@@ -177,6 +320,7 @@ class DroneOrderMaintenanceServiceTest {
         mission.setSourceLockerId(3L);
         mission.setDestinationLockerId(5L);
         mission.setStatus("READY_TO_LAUNCH");
+        mission.setAssignedByUserId(99L);
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
         when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -219,6 +363,7 @@ class DroneOrderMaintenanceServiceTest {
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
         mission.setStatus("READY_TO_LAUNCH");
+        mission.setAssignedByUserId(99L);
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
 
@@ -248,6 +393,8 @@ class DroneOrderMaintenanceServiceTest {
         mission.setOrderId(21L);
         mission.setDroneUnitId(9L);
         mission.setStatus("READY_TO_LAUNCH");
+        mission.setAssignedByUserId(99L);
+        markLoadingConfirmed(mission);
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
         when(lockerDroneClient.getDroneUnit(9L))
@@ -272,6 +419,17 @@ class DroneOrderMaintenanceServiceTest {
         order.setDeliveryStage(deliveryStage);
         order.setDestinationLockerId(5L);
         order.setReservedBoxId(9001L);
+        order.setParcelWeightGrams(1200);
         return order;
+    }
+
+    private void markLoadingConfirmed(DroneMission mission) {
+        mission.setPayloadWeightGrams(1200);
+        mission.setSealCode("SEAL-21");
+        mission.setParcelMatched(true);
+        mission.setPayloadSecured(true);
+        mission.setCompartmentLocked(true);
+        mission.setLoadedByUserId(99L);
+        mission.setLoadedAt(java.time.LocalDateTime.now());
     }
 }
