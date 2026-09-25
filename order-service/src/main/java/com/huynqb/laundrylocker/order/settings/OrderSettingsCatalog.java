@@ -43,6 +43,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DEMO_STAGE_DELAY_MS = "app.drone.demo.stage-delay-ms";
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
     public static final String DRONE_DEFAULT_PARCEL_WEIGHT = "app.order.drone-default-parcel-weight-grams";
+    public static final String DRONE_MAX_PAYLOAD_WEIGHT = "app.order.drone-max-payload-weight-grams";
     public static final String RECEIVER_NOTIFY_SMS = "app.order.receiver-notify-sms";
     public static final String RECEIVER_NOTIFY_EMAIL = "app.order.receiver-notify-email";
 
@@ -117,6 +118,9 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_MIN_PREFLIGHT_BATTERY, DRONE, "Pin tối thiểu để nhận đơn drone",
                         "Drone có pin ≤ ngưỡng này không được nhận đơn.", 20, 0, 100, "%"),
                 integer(DRONE_DEFAULT_PARCEL_WEIGHT, DRONE, "Khối lượng kiện mặc định trên app",
-                        "", 1200, 1, 100_000, "gram").asPublic());
+                        "", 1200, 1, 100_000, "gram").asPublic(),
+                integer(DRONE_MAX_PAYLOAD_WEIGHT, DRONE, "Khối lượng tải tối đa của drone",
+                        "Chặn xác nhận nạp hàng nếu kiện vượt tải vận hành cho phép.",
+                        5000, 1, 100_000, "gram"));
     }
 }
