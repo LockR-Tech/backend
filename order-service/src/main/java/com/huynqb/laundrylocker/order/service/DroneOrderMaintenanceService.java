@@ -22,6 +22,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -82,9 +83,8 @@ public class DroneOrderMaintenanceService {
             mission.setSourceLockerId(reservedDrone.lockerId());
             mission.setDestinationLockerId(requireDestinationLockerId(order));
             mission.setAssignedByUserId(userId);
-            mission.setStatus("READY_TO_LAUNCH");
+            mission.setStatus("AWAITING_LOADING");
             mission.setLastAcceptIdempotencyKey(idempotencyKey);
-            mission.setReadyToLaunchAt(LocalDateTime.now());
             mission = missionRepository.save(mission);
 
             order.setDeliveryStage("ACCEPTED");
@@ -98,10 +98,54 @@ public class DroneOrderMaintenanceService {
     }
 
     @Transactional
+    public DroneMissionResponse confirmLoading(
+            Long orderId, Long userId, String idempotencyKey, ConfirmDroneLoadingRequest request) {
+        LockerOrder order = findDroneOrder(orderId);
+        DroneMission mission =
+                missionRepository.findByOrderId(orderId).orElseThrow(() -> new NotFoundException("DroneMission", orderId));
+        validateAssignedOperator(mission, userId);
+        if (idempotencyKey != null
+                && idempotencyKey.equals(mission.getLastLoadingIdempotencyKey())
+                && "READY_TO_LAUNCH".equals(mission.getStatus())) {
+            return toResponse(order, mission, fetchDrone(mission.getDroneUnitId()));
+        }
+        if (!"ACCEPTED".equals(order.getDeliveryStage()) || !"AWAITING_LOADING".equals(mission.getStatus())) {
+            throw new BusinessException(
+                    "DRONE_MISSION_STATUS_INVALID", "Drone mission is not awaiting loading confirmation");
+        }
+        if (request.payloadWeightGrams() > rules.droneMaxPayloadWeightGrams()) {
+            throw new BusinessException(
+                    "DRONE_PAYLOAD_TOO_HEAVY",
+                    "Payload exceeds the configured drone limit of "
+                            + rules.droneMaxPayloadWeightGrams() + " grams");
+        }
+
+        DroneUnitDto drone = fetchDrone(mission.getDroneUnitId());
+        validateDroneReservation(drone);
+        mission.setPayloadWeightGrams(request.payloadWeightGrams());
+        mission.setSealCode(request.sealCode().trim());
+        mission.setParcelMatched(request.parcelMatched());
+        mission.setPayloadSecured(request.payloadSecured());
+        mission.setCompartmentLocked(request.compartmentLocked());
+        mission.setLoadingNote(StringUtils.hasText(request.note()) ? request.note().trim() : null);
+        mission.setLoadedByUserId(userId);
+        mission.setLoadedAt(LocalDateTime.now());
+        mission.setReadyToLaunchAt(mission.getLoadedAt());
+        mission.setLastLoadingIdempotencyKey(idempotencyKey);
+        mission.setStatus("READY_TO_LAUNCH");
+        missionRepository.save(mission);
+
+        order.setStaffId(userId);
+        orderRepository.save(order);
+        return toResponse(order, mission, drone);
+    }
+
+    @Transactional
     public DroneMissionResponse launch(Long orderId, Long userId, String idempotencyKey) {
         LockerOrder order = findDroneOrder(orderId);
         DroneMission mission =
                 missionRepository.findByOrderId(orderId).orElseThrow(() -> new NotFoundException("DroneMission", orderId));
+        validateAssignedOperator(mission, userId);
         if (idempotencyKey != null
                 && idempotencyKey.equals(mission.getLastLaunchIdempotencyKey())
                 && "LAUNCHING".equals(mission.getStatus())) {
@@ -109,6 +153,10 @@ public class DroneOrderMaintenanceService {
         }
         if (!"READY_TO_LAUNCH".equals(mission.getStatus())) {
             throw new BusinessException("DRONE_MISSION_STATUS_INVALID", "Drone mission is not ready to launch");
+        }
+        if (!isLoadingConfirmed(mission)) {
+            throw new BusinessException(
+                    "DRONE_LOADING_NOT_CONFIRMED", "Loading checklist must be completed before launch");
         }
 
         DroneUnitDto drone = fetchDrone(mission.getDroneUnitId());
@@ -140,9 +188,10 @@ public class DroneOrderMaintenanceService {
                 missionRepository
                         .findByOrderId(orderId)
                         .orElseThrow(() -> new NotFoundException("DroneMission", orderId));
-        if (!"READY_TO_LAUNCH".equals(mission.getStatus())) {
+        validateAssignedOperator(mission, userId);
+        if (!("AWAITING_LOADING".equals(mission.getStatus()) || "READY_TO_LAUNCH".equals(mission.getStatus()))) {
             throw new BusinessException(
-                    "DRONE_MISSION_STATUS_INVALID", "Drone mission is not ready to launch");
+                    "DRONE_MISSION_STATUS_INVALID", "Drone mission can only be canceled before launch");
         }
 
         String note = StringUtils.hasText(request.note()) ? request.note().trim() : null;
@@ -198,7 +247,14 @@ public class DroneOrderMaintenanceService {
                 mission.getSourceLockerId(),
                 mission.getDestinationLockerId(),
                 order.getReservedBoxId(),
-                order.getDescription());
+                order.getDescription(),
+                mission.getAssignedByUserId(),
+                order.getParcelWeightGrams(),
+                mission.getPayloadWeightGrams(),
+                mission.getSealCode(),
+                mission.getLoadedByUserId(),
+                mission.getLoadedAt(),
+                mission.getReadyToLaunchAt());
     }
 
     private LockerOrder findDroneOrder(Long orderId) {
@@ -243,6 +299,13 @@ public class DroneOrderMaintenanceService {
     }
 
     private void validateReservedDroneForLaunch(DroneUnitDto drone) {
+        validateDroneReservation(drone);
+        if (drone.batteryPercent() != null && drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
+            throw new BusinessException("DRONE_BATTERY_TOO_LOW", "Drone battery is too low for launch");
+        }
+    }
+
+    private void validateDroneReservation(DroneUnitDto drone) {
         if (!Boolean.TRUE.equals(drone.active())) {
             throw new BusinessException("DRONE_INACTIVE", "Drone is inactive");
         }
@@ -250,8 +313,24 @@ public class DroneOrderMaintenanceService {
             throw new BusinessException(
                     "DRONE_RESERVATION_LOST", "Drone is no longer reserved for this mission");
         }
-        if (drone.batteryPercent() != null && drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
-            throw new BusinessException("DRONE_BATTERY_TOO_LOW", "Drone battery is too low for launch");
+    }
+
+    private boolean isLoadingConfirmed(DroneMission mission) {
+        return mission.getLoadedAt() != null
+                && mission.getLoadedByUserId() != null
+                && mission.getPayloadWeightGrams() != null
+                && mission.getPayloadWeightGrams() > 0
+                && StringUtils.hasText(mission.getSealCode())
+                && mission.isParcelMatched()
+                && mission.isPayloadSecured()
+                && mission.isCompartmentLocked();
+    }
+
+    private void validateAssignedOperator(DroneMission mission, Long userId) {
+        if (!Objects.equals(mission.getAssignedByUserId(), userId)) {
+            throw new BusinessException(
+                    "DRONE_MISSION_NOT_ASSIGNED_TO_USER",
+                    "Only the drone technician who accepted this mission may operate it");
         }
     }
 
@@ -311,7 +390,14 @@ public class DroneOrderMaintenanceService {
                 mission == null ? null : mission.getSourceLockerId(),
                 mission == null ? requireDestinationLockerId(order) : mission.getDestinationLockerId(),
                 order.getReservedBoxId(),
-                order.getDescription());
+                order.getDescription(),
+                mission == null ? null : mission.getAssignedByUserId(),
+                order.getParcelWeightGrams(),
+                mission == null ? null : mission.getPayloadWeightGrams(),
+                mission == null ? null : mission.getSealCode(),
+                mission == null ? null : mission.getLoadedByUserId(),
+                mission == null ? null : mission.getLoadedAt(),
+                mission == null ? null : mission.getReadyToLaunchAt());
     }
 
     private String cancelReasonLabel(Integer reasonCode) {
