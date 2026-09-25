@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.order.dto;
 
+import java.time.LocalDateTime;
+
 public record DroneMissionResponse(
         Long orderId,
         Long missionId,
@@ -10,5 +12,12 @@ public record DroneMissionResponse(
         Long sourceLockerId,
         Long destinationLockerId,
         Long reservedBoxId,
-        String description) {
+        String description,
+        Long assignedByUserId,
+        Integer expectedWeightGrams,
+        Integer payloadWeightGrams,
+        String sealCode,
+        Long loadedByUserId,
+        LocalDateTime loadedAt,
+        LocalDateTime readyToLaunchAt) {
 }
