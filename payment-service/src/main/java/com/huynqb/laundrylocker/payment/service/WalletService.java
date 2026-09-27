@@ -64,13 +64,138 @@ public class WalletService {
 
     @Transactional(readOnly = true)
     public List<WalletTransactionResponse> history(Long userId) {
+        BigDecimal balance = getBalance(userId).balance();
         List<WalletTransaction> transactions = transactionRepository.findByUserIdOrderByCreatedAtDesc(userId);
-        // Tra cứu theo lô (một lời gọi Feign cho cả trang) thay vì mỗi giao dịch một lần —
-        // cùng cơ chế PaymentReferenceResolver mà trang admin đang dùng, nên "mã đơn hàng"
-        // app khách thấy luôn khớp với admin cho cùng một biến động.
-        Map<Long, OrderBrief> orders = resolver.orders(
-                transactions.stream().map(WalletTransactionRefs::relatedOrderId).toList());
-        return transactions.stream().map(tx -> toResponse(tx, orders)).toList();
+
+        // Lấy các giao dịch thanh toán trực tiếp (SePay, VNPay, MoMo...) của đơn hàng mà không trừ vào số dư ví
+        List<com.huynqb.laundrylocker.payment.model.PaymentRecord> directPayments = paymentRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
+                .filter(p -> "COMPLETED".equalsIgnoreCase(p.getStatus()))
+                .filter(p -> p.getMethod() != null && !"WALLET".equalsIgnoreCase(p.getMethod()))
+                .filter(p -> p.getOrderId() != null && p.getOrderId() > 0)
+                .toList();
+
+        List<Long> allOrderIds = new java.util.ArrayList<>();
+        allOrderIds.addAll(transactions.stream().map(WalletTransactionRefs::relatedOrderId).filter(java.util.Objects::nonNull).toList());
+        allOrderIds.addAll(directPayments.stream().map(com.huynqb.laundrylocker.payment.model.PaymentRecord::getOrderId).filter(java.util.Objects::nonNull).toList());
+
+        Map<Long, OrderBrief> orders = resolver.orders(allOrderIds);
+
+        List<WalletTransactionResponse> result = new java.util.ArrayList<>();
+        for (WalletTransaction tx : transactions) {
+            result.add(toResponse(tx, orders));
+        }
+
+        for (com.huynqb.laundrylocker.payment.model.PaymentRecord p : directPayments) {
+            OrderBrief order = p.getOrderId() == null ? null : orders.get(p.getOrderId());
+            String orderCode = order != null ? order.orderCode() : null;
+            String desc = p.getDescription();
+            if (!StringUtils.hasText(desc)) {
+                desc = "Thanh toán đơn " + (orderCode != null ? orderCode : ("#" + p.getOrderId())) + " qua " + p.getMethod();
+            }
+            String refId = StringUtils.hasText(p.getReferenceTransactionId()) ? p.getReferenceTransactionId() : p.getReferenceId();
+            result.add(new WalletTransactionResponse(
+                    -p.getId(),
+                    "DEBIT",
+                    p.getAmount(),
+                    balance,
+                    p.getMethod(),
+                    refId,
+                    desc,
+                    p.getCreatedAt(),
+                    p.getOrderId(),
+                    orderCode
+            ));
+        }
+
+        result.sort((a, b) -> {
+            if (a.createdAt() == null || b.createdAt() == null) return 0;
+            return b.createdAt().compareTo(a.createdAt());
+        });
+
+        return result;
+    }
+
+    @Transactional(readOnly = true)
+    public com.huynqb.laundrylocker.payment.dto.UserSpendingStatsResponse spendingStats(Long userId, String periodStr) {
+        List<WalletTransactionResponse> allTx = history(userId);
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime filterStart = switch (periodStr != null ? periodStr.toUpperCase() : "ALL") {
+            case "DAY" -> now.toLocalDate().atStartOfDay();
+            case "MONTH" -> now.toLocalDate().withDayOfMonth(1).atStartOfDay();
+            case "YEAR" -> now.toLocalDate().withDayOfYear(1).atStartOfDay();
+            default -> null;
+        };
+
+        List<WalletTransactionResponse> filtered = filterStart == null ? allTx
+                : allTx.stream().filter(t -> t.createdAt() != null && !t.createdAt().isBefore(filterStart)).toList();
+
+        BigDecimal totalExpense = BigDecimal.ZERO;
+        BigDecimal totalIncome = BigDecimal.ZERO;
+        Map<String, BigDecimal> byService = new java.util.LinkedHashMap<>();
+        Map<String, BigDecimal> byMethod = new java.util.LinkedHashMap<>();
+
+        byService.put("RENTAL", BigDecimal.ZERO);
+        byService.put("SEND", BigDecimal.ZERO);
+        byService.put("TOPUP", BigDecimal.ZERO);
+        byService.put("WITHDRAW", BigDecimal.ZERO);
+        byService.put("OTHER", BigDecimal.ZERO);
+
+        for (WalletTransactionResponse tx : filtered) {
+            BigDecimal amt = tx.amount() != null ? tx.amount() : BigDecimal.ZERO;
+            boolean isCredit = "CREDIT".equalsIgnoreCase(tx.type()) || "TOP_UP".equalsIgnoreCase(tx.type());
+            if (isCredit) {
+                totalIncome = totalIncome.add(amt);
+            } else {
+                totalExpense = totalExpense.add(amt);
+            }
+
+            // Method
+            String method = "WALLET";
+            String src = tx.source() != null ? tx.source().toUpperCase() : "";
+            String ref = tx.referenceId() != null ? tx.referenceId().toUpperCase() : "";
+            String desc = tx.description() != null ? tx.description().toUpperCase() : "";
+            if (src.contains("SEPAY") || ref.contains("SEPAY") || desc.contains("SEPAY") || ref.startsWith("FT")) {
+                method = "SEPAY";
+            } else if (src.contains("VNPAY") || ref.contains("VNPAY") || desc.contains("VNPAY")) {
+                method = "VNPAY";
+            } else if (src.contains("MOMO") || ref.contains("MOMO") || desc.contains("MOMO")) {
+                method = "MOMO";
+            } else if (SOURCE_WITHDRAW.equalsIgnoreCase(src) || desc.contains("RÚT TIỀN") || desc.contains("RUT TIEN")) {
+                method = "WITHDRAW";
+            }
+            byMethod.merge(method, amt, BigDecimal::add);
+
+            // Service
+            String srv = "OTHER";
+            if (SOURCE_WITHDRAW.equalsIgnoreCase(src)) {
+                srv = "WITHDRAW";
+            } else if (SOURCE_TOPUP.equalsIgnoreCase(src) || isCredit) {
+                srv = "TOPUP";
+            } else {
+                String oc = tx.orderCode() != null ? tx.orderCode().toUpperCase() : "";
+                if (oc.contains("SND") || oc.contains("DRN") || desc.contains("GỬI") || desc.contains("SEND") || desc.contains("HÀNG")) {
+                    srv = "SEND";
+                } else if (oc.contains("LND") || desc.contains("GIẶT")) {
+                    srv = "LAUNDRY";
+                } else if (oc.contains("STG") || desc.contains("THUÊ") || desc.contains("RENTAL") || desc.contains("LƯU TRỮ")) {
+                    srv = "RENTAL";
+                } else {
+                    srv = "RENTAL";
+                }
+            }
+            byService.merge(srv, amt, BigDecimal::add);
+        }
+
+        BigDecimal netChange = totalIncome.subtract(totalExpense);
+        return new com.huynqb.laundrylocker.payment.dto.UserSpendingStatsResponse(
+                periodStr != null ? periodStr.toUpperCase() : "ALL",
+                totalExpense,
+                totalIncome,
+                netChange,
+                filtered.size(),
+                byService,
+                byMethod
+        );
     }
 
     /**
