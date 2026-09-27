@@ -4,6 +4,7 @@ import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
+import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.DroneMaintenanceLogResponse;
 import com.huynqb.laundrylocker.locker.dto.DroneUpdateRequest;
@@ -60,6 +61,8 @@ class LockerServiceDroneFleetTest {
     @Mock
     private UserClient userClient;
     @Mock
+    private OrderClient orderClient;
+    @Mock
     private ReportAttachmentService attachmentService;
     @Mock
     private RabbitTemplate rabbitTemplate;
@@ -84,6 +87,7 @@ class LockerServiceDroneFleetTest {
                         droneMaintenanceLogRepository,
                         iotClient,
                         userClient,
+                        orderClient,
                         attachmentService,
                         rabbitTemplate,
                         new LockerRules(settings));

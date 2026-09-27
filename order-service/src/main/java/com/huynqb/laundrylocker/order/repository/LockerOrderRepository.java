@@ -30,4 +30,7 @@ public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long>,
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from LockerOrder o where o.id = :id")
     Optional<LockerOrder> findByIdForUpdate(@Param("id") Long id);
+
+    @Query("select o from LockerOrder o where (o.sendBoxId = :boxId or o.receiveBoxId = :boxId or o.reservedBoxId = :boxId) and o.status not in ('COMPLETED', 'CANCELED', 'EXPIRED') order by o.createdAt desc")
+    List<LockerOrder> findActiveByBoxId(@Param("boxId") Long boxId);
 }

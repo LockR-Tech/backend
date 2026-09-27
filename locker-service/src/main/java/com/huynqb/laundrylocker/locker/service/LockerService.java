@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.locker.client.IotClient;
+import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.*;
 import com.huynqb.laundrylocker.locker.model.*;
@@ -60,6 +61,7 @@ public class LockerService {
     private final DroneMaintenanceLogRepository droneMaintenanceLogRepository;
     private final IotClient iotClient;
     private final UserClient userClient;
+    private final OrderClient orderClient;
     private final ReportAttachmentService attachmentService;
     private final RabbitTemplate rabbitTemplate;
     /// SLA, ngưỡng chế tài KTV, giới hạn ảnh, TTL ô RESERVED, pin drone… admin cấu hình trên web
@@ -2305,5 +2307,178 @@ public class LockerService {
         } catch (AmqpException ex) {
             log.warn("Could not publish {} for report {}: {}", eventType, report.getId(), ex.getMessage());
         }
+    }
+
+    public void publishLockerLayoutUpdated(Long lockerId, Long boxId, Integer boxNumber, String status, String message) {
+        try {
+            rabbitTemplate.convertAndSend(
+                    DomainEventNames.EXCHANGE,
+                    DomainEventNames.LOCKER_LAYOUT_UPDATED,
+                    DomainEvent.of(
+                            DomainEventNames.LOCKER_LAYOUT_UPDATED,
+                            "locker-service",
+                            Map.of(
+                                    "lockerId", lockerId != null ? lockerId : 0L,
+                                    "boxId", boxId != null ? boxId : 0L,
+                                    "boxNumber", boxNumber != null ? boxNumber : 0,
+                                    "status", status != null ? status : "FAULT",
+                                    "message", message != null ? message : "Sơ đồ trạm Kiosk đã được cập nhật")));
+        } catch (AmqpException ex) {
+            log.warn("Could not publish locker.layout.updated for locker {}: {}", lockerId, ex.getMessage());
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public ActiveBoxOrderDto getActiveOrderByBox(Long boxId) {
+        try {
+            var res = orderClient.getActiveOrderByBox(boxId);
+            return res != null ? res.data() : null;
+        } catch (Exception ex) {
+            log.warn("Could not query active order for box {}: {}", boxId, ex.getMessage());
+            return null;
+        }
+    }
+
+    @Transactional
+    public LockerReportResponse resolveBoxIncident(
+            Long reportId, BoxIncidentResolutionRequest request, Long userId, String rolesHeader) {
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        assertNotResolved(report);
+        LockerBox box = findBox(request.boxId());
+
+        report.setBoxId(box.getId());
+        report.setCategory(ReportCategory.BOX);
+
+        String action = request.action() == null ? "LOCK_ONLY" : request.action().toUpperCase();
+        ActiveBoxOrderDto activeOrder = getActiveOrderByBox(box.getId());
+
+        switch (action) {
+            case "QUICK_FIX" -> {
+                RepairLog logEntry = new RepairLog();
+                logEntry.setReportId(report.getId());
+                logEntry.setActorUserId(userId);
+                logEntry.setNote("[SỬA TẠI CHỖ THÀNH CÔNG] "
+                        + (StringUtils.hasText(request.reason()) ? request.reason() : "KTV đã khắc phục sự cố tại ô #" + box.getBoxNumber() + ", giữ nguyên đồ của khách."));
+                Long logId = repairLogRepository.save(logEntry).getId();
+                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+                reportRepository.save(report);
+                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), box.getStatus(), "Đã sửa chữa tại chỗ ô #" + box.getBoxNumber());
+            }
+            case "RELOCATE" -> {
+                if (request.targetBoxId() == null) {
+                    throw new BusinessException("TARGET_BOX_REQUIRED", "Cần chọn ô trống đích để điều chuyển hàng");
+                }
+                LockerBox targetBox = findBox(request.targetBoxId());
+                if (!"AVAILABLE".equalsIgnoreCase(targetBox.getStatus())) {
+                    throw new BusinessException("TARGET_BOX_NOT_AVAILABLE", "Ô đích không còn ở trạng thái trống");
+                }
+                if (activeOrder != null) {
+                    try {
+                        orderClient.relocateBox(activeOrder.orderId(), targetBox.getId(), targetBox.getBoxNumber());
+                    } catch (Exception ex) {
+                        log.error("Failed to relocate order {} to box {}: {}", activeOrder.orderId(), targetBox.getId(), ex.getMessage());
+                        throw new BusinessException("ORDER_RELOCATE_FAILED", "Không thể cập nhật đơn hàng sang ô mới: " + ex.getMessage());
+                    }
+                }
+                targetBox.setStatus("OCCUPIED");
+                targetBox.setReservedUntil(null);
+                boxRepository.save(targetBox);
+                syncBoxStateQuietly(targetBox, "OCCUPIED");
+
+                box.setStatus("FAULT");
+                box.setPreFaultStatus(null);
+                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi điều chuyển hàng");
+                boxRepository.save(box);
+                syncBoxStateQuietly(box, "FAULT");
+
+                RepairLog logEntry = new RepairLog();
+                logEntry.setReportId(report.getId());
+                logEntry.setActorUserId(userId);
+                String orderLabel = activeOrder != null ? ("đơn hàng " + activeOrder.orderCode()) : "đồ trong ô";
+                logEntry.setNote("[ĐIỀU CHUYỂN Ô] Đã chuyển " + orderLabel + " sang ô #" + targetBox.getBoxNumber() + ". Đã khóa bảo trì ô #" + box.getBoxNumber());
+                Long logId = repairLogRepository.save(logEntry).getId();
+                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+
+                reportRepository.save(report);
+                publishBoxFault(box, box.getFaultReason());
+                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã chuyển đồ sang ô #" + targetBox.getBoxNumber() + " và khóa ô #" + box.getBoxNumber());
+            }
+            case "HANDOVER" -> {
+                if (activeOrder != null) {
+                    try {
+                        orderClient.directHandover(activeOrder.orderId(), request.customerOtp());
+                    } catch (Exception ex) {
+                        log.error("Failed direct handover for order {}: {}", activeOrder.orderId(), ex.getMessage());
+                        throw new BusinessException("HANDOVER_FAILED", "Bàn giao thất bại: " + ex.getMessage());
+                    }
+                }
+                box.setStatus("FAULT");
+                box.setPreFaultStatus(null);
+                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi bàn giao trực tiếp cho khách");
+                boxRepository.save(box);
+                syncBoxStateQuietly(box, "FAULT");
+
+                RepairLog logEntry = new RepairLog();
+                logEntry.setReportId(report.getId());
+                logEntry.setActorUserId(userId);
+                String orderLabel = activeOrder != null ? ("đơn hàng " + activeOrder.orderCode()) : "đồ";
+                logEntry.setNote("[BÀN GIAO TRỰC TIẾP] KTV đã bàn giao " + orderLabel + " cho khách hàng tại Kiosk. Đã khóa bảo trì ô #" + box.getBoxNumber());
+                Long logId = repairLogRepository.save(logEntry).getId();
+                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+
+                reportRepository.save(report);
+                publishBoxFault(box, box.getFaultReason());
+                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã bàn giao đồ và khóa ô #" + box.getBoxNumber());
+            }
+            case "HUB_ESCROW" -> {
+                String seal = StringUtils.hasText(request.sealNumber()) ? request.sealNumber() : "SEAL-" + System.currentTimeMillis();
+                if (activeOrder != null) {
+                    try {
+                        orderClient.hubEscrow(activeOrder.orderId(), seal);
+                    } catch (Exception ex) {
+                        log.error("Failed hub escrow for order {}: {}", activeOrder.orderId(), ex.getMessage());
+                        throw new BusinessException("HUB_ESCROW_FAILED", "Niêm phong về Hub thất bại: " + ex.getMessage());
+                    }
+                }
+                box.setStatus("FAULT");
+                box.setPreFaultStatus(null);
+                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi niêm phong về Hub (Seal: " + seal + ")");
+                boxRepository.save(box);
+                syncBoxStateQuietly(box, "FAULT");
+
+                RepairLog logEntry = new RepairLog();
+                logEntry.setReportId(report.getId());
+                logEntry.setActorUserId(userId);
+                String orderLabel = activeOrder != null ? ("đơn hàng " + activeOrder.orderCode()) : "đồ";
+                logEntry.setNote("[NIÊM PHONG VỀ HUB] Đã niêm phong " + orderLabel + " (Mã Seal: " + seal + ") chuyển về Hub lưu trữ. Đã khóa bảo trì ô #" + box.getBoxNumber());
+                Long logId = repairLogRepository.save(logEntry).getId();
+                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+
+                reportRepository.save(report);
+                publishBoxFault(box, box.getFaultReason());
+                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã niêm phong về Hub và khóa ô #" + box.getBoxNumber());
+            }
+            default -> {
+                box.setStatus("FAULT");
+                box.setPreFaultStatus(null);
+                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "KTV xác nhận lỗi khớp mô tả khách hàng");
+                boxRepository.save(box);
+                syncBoxStateQuietly(box, "FAULT");
+
+                RepairLog logEntry = new RepairLog();
+                logEntry.setReportId(report.getId());
+                logEntry.setActorUserId(userId);
+                logEntry.setNote("[XÁC NHẬN & KHÓA Ô] KTV kiểm tra hiện trường, xác nhận lỗi và khóa bảo trì ô #" + box.getBoxNumber());
+                Long logId = repairLogRepository.save(logEntry).getId();
+                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+
+                reportRepository.save(report);
+                publishBoxFault(box, box.getFaultReason());
+                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã khóa bảo trì ô #" + box.getBoxNumber());
+            }
+        }
+
+        return toReport(report);
     }
 }

@@ -159,13 +159,24 @@ public class NotificationService {
     @Transactional
     public void consumeDomainEvent(DomainEvent event) {
         Map<String, Object> payload = event.payload();
+
+        if (DomainEventNames.LOCKER_LAYOUT_UPDATED.equals(event.type())
+                || DomainEventNames.LOCKER_BOX_FAULT.equals(event.type())) {
+            Map<String, Object> wsMsg = new HashMap<>(payload);
+            wsMsg.put("type", event.type());
+            wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
+            webSocketNotificationService.sendToDestination("/topic/notifications", wsMsg);
+            webSocketNotificationService.sendToDestination("/topic/lockers", wsMsg);
+        }
+
         Long userId = asLong(payload.get("userId"));
         if (userId == null) {
-            log.debug("Ignoring {} without userId", event.type());
+            log.debug("No userId in {} event, skipping direct user notification", event.type());
             return;
         }
         String title = switch (event.type()) {
             case DomainEventNames.ORDER_STATUS_CHANGED -> "Order status changed";
+            case DomainEventNames.ORDER_BOX_RELOCATED -> "Đơn hàng được chuyển sang ô mới";
             case DomainEventNames.PAYMENT_COMPLETED -> "Payment completed";
             case DomainEventNames.PAYMENT_FAILED -> "Payment failed";
             case DomainEventNames.LOCKER_REPORT_CLAIMED -> "Báo cáo đang được xử lý";
