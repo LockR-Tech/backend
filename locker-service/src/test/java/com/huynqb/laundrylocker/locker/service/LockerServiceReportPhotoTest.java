@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.locker.service;
 
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
+import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.LockerReportRequest;
 import com.huynqb.laundrylocker.locker.dto.ReportAttachmentRequest;
@@ -48,6 +49,7 @@ class LockerServiceReportPhotoTest {
     @Mock private DroneMaintenanceLogRepository droneMaintenanceLogRepository;
     @Mock private IotClient iotClient;
     @Mock private UserClient userClient;
+    @Mock private OrderClient orderClient;
     @Mock private ReportAttachmentService attachmentService;
     @Mock private RabbitTemplate rabbitTemplate;
 
@@ -60,7 +62,7 @@ class LockerServiceReportPhotoTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
-                iotClient, userClient, attachmentService, rabbitTemplate, new LockerRules(settings));
+                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, new LockerRules(settings));
         when(reportRepository.save(any(LockerReport.class))).thenAnswer(invocation -> {
             LockerReport report = invocation.getArgument(0);
             if (report.getId() == null) {

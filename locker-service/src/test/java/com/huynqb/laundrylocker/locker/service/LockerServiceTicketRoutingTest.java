@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
+import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.LockerReportRequest;
 import com.huynqb.laundrylocker.locker.dto.ReportAttachmentRequest;
@@ -60,6 +61,7 @@ class LockerServiceTicketRoutingTest {
     @Mock private DroneMaintenanceLogRepository droneMaintenanceLogRepository;
     @Mock private IotClient iotClient;
     @Mock private UserClient userClient;
+    @Mock private OrderClient orderClient;
     @Mock private ReportAttachmentService attachmentService;
     @Mock private RabbitTemplate rabbitTemplate;
 
@@ -73,7 +75,7 @@ class LockerServiceTicketRoutingTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
-                iotClient, userClient, attachmentService, rabbitTemplate, TestLockerRules.defaults());
+                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults());
         locker = new LockerUnit();
         locker.setId(LOCKER_ID);
         locker.setName("Tủ A");
@@ -247,7 +249,7 @@ class LockerServiceTicketRoutingTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
-                iotClient, userClient, attachmentService, rabbitTemplate,
+                iotClient, userClient, orderClient, attachmentService, rabbitTemplate,
                 TestLockerRules.of(Map.of("app.maintenance.require-resolution-photo", true)));
         box.setStatus("FAULT");
         LockerReport open = report(55L, "IN_PROGRESS", TECH);

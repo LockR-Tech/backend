@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
+import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.CompleteScheduleRequest;
 import com.huynqb.laundrylocker.locker.dto.InspectionItemResult;
@@ -53,6 +54,7 @@ class LockerServiceInspectionTest {
     @Mock private DroneMaintenanceLogRepository droneMaintenanceLogRepository;
     @Mock private IotClient iotClient;
     @Mock private UserClient userClient;
+    @Mock private OrderClient orderClient;
     @Mock private ReportAttachmentService attachmentService;
     @Mock private RabbitTemplate rabbitTemplate;
 
@@ -65,7 +67,7 @@ class LockerServiceInspectionTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
-                iotClient, userClient, attachmentService, rabbitTemplate, TestLockerRules.defaults());
+                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults());
         LockerUnit locker = new LockerUnit();
         locker.setId(LOCKER_ID);
         locker.setName("Tủ A");

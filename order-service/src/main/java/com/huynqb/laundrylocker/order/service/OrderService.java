@@ -1973,4 +1973,108 @@ public class OrderService {
     private Long firstNonNull(Long primary, Long fallback) {
         return primary != null ? primary : fallback;
     }
+
+    @Transactional(readOnly = true)
+    public ActiveBoxOrderResponse getActiveOrderByBox(Long boxId) {
+        List<LockerOrder> list = orderRepository.findActiveByBoxId(boxId);
+        if (list.isEmpty()) {
+            return null;
+        }
+        LockerOrder order = list.get(0);
+        return new ActiveBoxOrderResponse(
+                order.getId(),
+                order.getOrderCode(),
+                order.getUserId(),
+                order.getReceiverName(),
+                order.getReceiverPhone(),
+                order.getType(),
+                order.getStatus(),
+                order.getPinCode(),
+                boxId
+        );
+    }
+
+    @Transactional
+    public OrderResponse relocateBox(Long orderId, Long newBoxId, Integer newBoxNumber) {
+        LockerOrder order = find(orderId);
+        Long oldBoxId = activeBoxId(order);
+        if (oldBoxId != null && oldBoxId.equals(order.getSendBoxId())) {
+            order.setSendBoxId(newBoxId);
+        } else if (oldBoxId != null && oldBoxId.equals(order.getReceiveBoxId())) {
+            order.setReceiveBoxId(newBoxId);
+        } else {
+            order.setReservedBoxId(newBoxId);
+        }
+        String newPin = generatePinCode();
+        order.setPinCode(newPin);
+        order.setPinCodeIssuedAt(LocalDateTime.now());
+        String boxLabel = newBoxNumber != null ? ("#" + newBoxNumber) : ("#" + newBoxId);
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
+                "KTV điều chuyển hàng sang ô " + boxLabel + " do sự cố ô cũ");
+        LockerOrder saved = orderRepository.save(order);
+
+        String where = lockerLabel(saved.getLockerId());
+        String msg = "Đơn hàng " + saved.getOrderCode() + " tại " + where + " đã được KTV chuyển sang ô " + boxLabel + ". Mã mở tủ mới của bạn là: " + newPin;
+        try {
+            notificationClient.requestNotification(new NotificationRequest(
+                    saved.getUserId(),
+                    "Đơn hàng được chuyển sang ô mới",
+                    msg,
+                    "ORDER_RELOCATED",
+                    saved.getId(),
+                    "ORDER"
+            ));
+        } catch (Exception ex) {
+            log.warn("Could not notify customer about relocated order {}: {}", saved.getId(), ex.getMessage());
+        }
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderId", saved.getId());
+        payload.put("userId", saved.getUserId());
+        payload.put("oldBoxId", oldBoxId);
+        payload.put("newBoxId", newBoxId);
+        payload.put("newBoxNumber", newBoxNumber);
+        payload.put("pinCode", newPin);
+        publish(DomainEventNames.ORDER_BOX_RELOCATED, saved, payload);
+
+        return toResponse(saved);
+    }
+
+    @Transactional
+    public OrderResponse directHandover(Long orderId, String otp) {
+        LockerOrder order = find(orderId);
+        if (StringUtils.hasText(order.getPinCode()) && StringUtils.hasText(otp)) {
+            if (!order.getPinCode().trim().equalsIgnoreCase(otp.trim())) {
+                throw new BusinessException("INVALID_OTP", "Mã xác nhận bàn giao không chính xác");
+            }
+        }
+        order.setPinCode(null);
+        addHistory(order.getId(), order.getStatus(), "COMPLETED", null,
+                "KTV đã bàn giao hàng trực tiếp cho khách hàng tại Kiosk do sự cố");
+        return transition(order, "COMPLETED", null, order.getReceiveBoxId(), "KTV bàn giao hàng trực tiếp cho khách tại Kiosk");
+    }
+
+    @Transactional
+    public OrderResponse hubEscrow(Long orderId, String sealNumber) {
+        LockerOrder order = find(orderId);
+        order.setPinCode(null);
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
+                "Hàng đã được niêm phong (Mã Seal: " + sealNumber + ") chuyển về Hub lưu trữ do Kiosk hết ô trống");
+        LockerOrder saved = orderRepository.save(order);
+
+        String msg = "Đơn hàng " + saved.getOrderCode() + " đã được niêm phong an toàn (Seal: " + sealNumber + ") chuyển về Hub. CSKH sẽ liên hệ hỗ trợ giao hàng tận nơi.";
+        try {
+            notificationClient.requestNotification(new NotificationRequest(
+                    saved.getUserId(),
+                    "Đơn hàng được niêm phong về Hub",
+                    msg,
+                    "ORDER_ESCROWED",
+                    saved.getId(),
+                    "ORDER"
+            ));
+        } catch (Exception ex) {
+            log.warn("Could not notify customer about hub escrow order {}: {}", saved.getId(), ex.getMessage());
+        }
+        return toResponse(saved);
+    }
 }

@@ -92,6 +92,33 @@ public class OrderController {
         return ApiResponse.ok("ORDER_DROP_OPENED", "Drop-off opening recorded");
     }
 
+    @GetMapping("/internal/orders/active-by-box/{boxId}")
+    public ApiResponse<ActiveBoxOrderResponse> getActiveOrderByBox(@PathVariable Long boxId) {
+        return ApiResponse.ok(orderService.getActiveOrderByBox(boxId));
+    }
+
+    @PostMapping("/internal/orders/{id}/relocate-box")
+    public ApiResponse<OrderResponse> relocateBox(
+            @PathVariable Long id,
+            @RequestParam Long newBoxId,
+            @RequestParam(required = false) Integer newBoxNumber) {
+        return ApiResponse.ok("ORDER_RELOCATED", "Order relocated to new box", orderService.relocateBox(id, newBoxId, newBoxNumber));
+    }
+
+    @PostMapping("/internal/orders/{id}/direct-handover")
+    public ApiResponse<OrderResponse> directHandover(
+            @PathVariable Long id,
+            @RequestParam(required = false) String otp) {
+        return ApiResponse.ok("ORDER_HANDED_OVER", "Order handed over directly to customer", orderService.directHandover(id, otp));
+    }
+
+    @PostMapping("/internal/orders/{id}/hub-escrow")
+    public ApiResponse<OrderResponse> hubEscrow(
+            @PathVariable Long id,
+            @RequestParam String sealNumber) {
+        return ApiResponse.ok("ORDER_HUB_ESCROWED", "Order escrowed to hub", orderService.hubEscrow(id, sealNumber));
+    }
+
     @PatchMapping("/api/orders/{id}/status")
     public ApiResponse<OrderResponse> updateStatus(
             @PathVariable Long id, @Valid @RequestBody UpdateOrderStatusRequest request) {

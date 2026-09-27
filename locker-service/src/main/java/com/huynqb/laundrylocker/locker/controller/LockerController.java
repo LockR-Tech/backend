@@ -264,6 +264,22 @@ public class LockerController {
         return ApiResponse.ok("BOX_FORCE_OPEN_ACCEPTED", "Force open accepted", lockerService.forceOpen(id, userId));
     }
 
+    @GetMapping("/api/locker-technician/boxes/{id}/active-order")
+    public ApiResponse<ActiveBoxOrderDto> maintenanceActiveOrder(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.getActiveOrderByBox(id));
+    }
+
+    @PostMapping("/api/locker-technician/reports/{id}/resolve-box-incident")
+    public ApiResponse<LockerReportResponse> maintenanceResolveBoxIncident(
+            @PathVariable Long id,
+            @Valid @RequestBody BoxIncidentResolutionRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(
+                "BOX_INCIDENT_RESOLVED", "Đã xử lý sự cố ô tủ",
+                lockerService.resolveBoxIncident(id, body, userId, roles));
+    }
+
     @GetMapping("/api/locker-technician/my-rating-average")
     public ApiResponse<Map<String, Object>> maintenanceMyRatingAverage(@RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(lockerService.myRatingAverage(userId));

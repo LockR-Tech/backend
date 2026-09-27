@@ -19,6 +19,8 @@ public final class DomainEventNames {
     /// Lịch kiểm tra định kỳ sắp/đã tới hạn — nhắc KTV phụ trách lịch.
     public static final String LOCKER_SCHEDULE_DUE = "locker.schedule.due";
     public static final String IOT_DEVICE_STATUS_CHANGED = "iot.device.status.changed";
+    public static final String LOCKER_LAYOUT_UPDATED = "locker.layout.updated";
+    public static final String ORDER_BOX_RELOCATED = "order.box.relocated";
     /**
      * Trạng thái chuyến giao hàng (drone) thay đổi: dispatched/approaching/arrived/delivered/delayed/failed.
      */
