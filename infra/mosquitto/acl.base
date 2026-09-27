@@ -1,0 +1,9 @@
+# ACL chung — ADR-0008, docs/01-overview/mqtt-contract.md § 4.
+# Khối `user <thiết bị>` cho từng Pi nằm trong devices.acl do mqtt-device.sh sinh (ngoài git):
+# username là MAC viết liền (file mật khẩu Mosquitto cấm dấu `:`), còn topic giữ MAC có `:`,
+# nên không dùng được ACL mẫu `%u` — mỗi thiết bị có khối riêng.
+
+# Backend: gửi lệnh, nhận kết quả/trạng thái/cấp phát của mọi tủ.
+user iot-service
+topic readwrite cabinet/#
+topic readwrite iot/#

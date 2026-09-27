@@ -10,21 +10,31 @@
 #   sudo infra/mosquitto/mqtt-device.sh remove 2C:CF:67:DB:C5:C3
 #   sudo infra/mosquitto/mqtt-device.sh list
 #
-# Tủ '*' = được làm mọi tủ (chỉ dùng thử). Mật khẩu chỉ in ra MỘT lần — ghi ngay vào
-# ~/iot/.env của Pi (MQTT_USERNAME=<MAC>, MQTT_PASSWORD=<mật khẩu>).
+# Pi: tên đăng nhập là MAC viết liền (2CCF67DBC5C3 — file mật khẩu Mosquitto cấm dấu `:`),
+# được đọc/ghi namespace cấp phát iot/<MAC có dấu :>/… và tủ đã chỉ định. Tên khác MAC (giả lập)
+# chỉ có quyền tủ. Tủ '*' = mọi tủ (chỉ dùng thử).
+# Mật khẩu chỉ in ra MỘT lần — ghi ngay vào ~/iot/.env của Pi (MQTT_USERNAME, MQTT_PASSWORD).
 # Gán Pi sang tủ khác trên admin web thì phải `move` ở đây cho khớp.
 set -euo pipefail
 
 DIR="${MQTT_DEVICES_DIR:-/etc/lockr/mosquitto}"
 IMAGE="${MQTT_IMAGE:-eclipse-mosquitto:2}"
 CONTAINER="${MQTT_CONTAINER:-ll-ms-mosquitto}"
-LIST="$DIR/devices.list"
+LIST="$DIR/devices.list"   # mỗi dòng: <username> <lockerId|*> <MAC có dấu : hoặc ->
 
 die() { echo "Lỗi: $*" >&2; exit 1; }
 
-check_name() {
-  [[ "$1" =~ ^[A-Za-z0-9:_-]{3,64}$ ]] || die "tên thiết bị '$1' không hợp lệ (MAC dạng 2C:CF:67:DB:C5:C3)"
-  [ "$1" != "iot-service" ] || die "'iot-service' là tài khoản của backend"
+# In "<username> <mac>" cho một tên thiết bị: MAC (có hoặc không dấu :) ⇒ username viết liền.
+identity() {
+  local raw="${1^^}"
+  local hex="${raw//[:-]/}"
+  if [[ "$hex" =~ ^[0-9A-F]{12}$ ]]; then
+    echo "$hex ${hex:0:2}:${hex:2:2}:${hex:4:2}:${hex:6:2}:${hex:8:2}:${hex:10:2}"
+  elif [[ "$1" =~ ^[A-Za-z0-9_-]{3,64}$ ]] && [ "$1" != "iot-service" ]; then
+    echo "$1 -"
+  else
+    die "tên thiết bị '$1' không hợp lệ (MAC dạng 2C:CF:67:DB:C5:C3, hoặc tên chữ-số như sim-demo)"
+  fi
 }
 
 check_locker() {
@@ -47,7 +57,7 @@ render_acl() {
   {
     echo "# Sinh bởi mqtt-device.sh — đừng sửa tay. Nguồn: devices.list"
     if [ -f "$LIST" ]; then
-      while read -r name locker; do
+      while read -r name locker mac; do
         [ -n "${name:-}" ] || continue
         local target="$locker"
         [ "$locker" = "*" ] && target="+"
@@ -57,6 +67,12 @@ render_acl() {
         echo "topic write cabinet/$target/command/+/result"
         echo "topic write cabinet/$target/locker/+/status"
         echo "topic write cabinet/$target/heartbeat"
+        if [ -n "${mac:-}" ] && [ "$mac" != "-" ]; then
+          echo "topic read iot/$mac/command/#"
+          echo "topic read iot/$mac/discovery/start"
+          echo "topic write iot/$mac/discovery/result"
+          echo "topic write iot/$mac/setup/#"
+        fi
       done < "$LIST"
     fi
   } > "$tmp"
@@ -76,12 +92,11 @@ reload_broker() {
 set_password() {
   local name="$1" password
   password="$(new_password)"
-  touch "$DIR/passwd"
+  touch "$DIR/passwd"; chmod 600 "$DIR/passwd"
   passwd_tool -b /d/passwd "$name" "$password"
-  chmod 600 "$DIR/passwd"
-  echo "Tài khoản : $name"
-  echo "Mật khẩu  : $password"
-  echo "(chỉ hiện một lần — ghi vào ~/iot/.env của Pi: MQTT_USERNAME=$name, MQTT_PASSWORD=...)"
+  echo "MQTT_USERNAME=$name"
+  echo "MQTT_PASSWORD=$password"
+  echo "(mật khẩu chỉ hiện một lần — chép hai dòng trên vào ~/iot/.env của Pi)"
 }
 
 cmd="${1:-}"
@@ -90,45 +105,49 @@ install -d -m 700 "$DIR"
 
 case "$cmd" in
   add)
-    [ $# -eq 3 ] || die "cú pháp: add <MAC> <lockerId|*>"
-    check_name "$2"; check_locker "$3"
-    exists "$2" && die "$2 đã có — dùng move, reset hoặc remove"
-    set_password "$2"
-    echo "$2 $3" >> "$LIST"; chmod 600 "$LIST"
+    [ $# -eq 3 ] || die "cú pháp: add <MAC|tên> <lockerId|*>"
+    ident="$(identity "$2")"; read -r name mac <<< "$ident"
+    check_locker "$3"
+    exists "$name" && die "$name đã có — dùng move, reset hoặc remove"
+    set_password "$name"
+    echo "$name $3 $mac" >> "$LIST"; chmod 600 "$LIST"
     render_acl; reload_broker
     ;;
   move)
-    [ $# -eq 3 ] || die "cú pháp: move <MAC> <lockerId|*>"
-    check_name "$2"; check_locker "$3"
-    exists "$2" || die "$2 chưa có"
-    awk -v n="$2" -v l="$3" '$1 == n {$2 = l} {print}' "$LIST" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
+    [ $# -eq 3 ] || die "cú pháp: move <MAC|tên> <lockerId|*>"
+    ident="$(identity "$2")"; read -r name mac <<< "$ident"
+    check_locker "$3"
+    exists "$name" || die "$name chưa có"
+    awk -v n="$name" -v l="$3" '$1 == n {$2 = l} {print}' "$LIST" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
     chmod 600 "$LIST"
     render_acl; reload_broker
     ;;
   reset)
-    [ $# -eq 2 ] || die "cú pháp: reset <MAC>"
-    exists "$2" || die "$2 chưa có"
-    set_password "$2"
+    [ $# -eq 2 ] || die "cú pháp: reset <MAC|tên>"
+    ident="$(identity "$2")"; read -r name mac <<< "$ident"
+    exists "$name" || die "$name chưa có"
+    set_password "$name"
     reload_broker
     ;;
   remove)
-    [ $# -eq 2 ] || die "cú pháp: remove <MAC>"
-    exists "$2" || die "$2 chưa có"
-    passwd_tool -D /d/passwd "$2"
-    awk -v n="$2" '$1 != n' "$LIST" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
+    [ $# -eq 2 ] || die "cú pháp: remove <MAC|tên>"
+    ident="$(identity "$2")"; read -r name mac <<< "$ident"
+    exists "$name" || die "$name chưa có"
+    passwd_tool -D /d/passwd "$name"
+    awk -v n="$name" '$1 != n' "$LIST" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
     chmod 600 "$LIST"
     render_acl; reload_broker
     ;;
   list)
     if [ -s "$LIST" ]; then
-      printf '%-20s %s\n' "THIẾT BỊ" "TỦ"
-      awk '{printf "%-20s %s\n", $1, $2}' "$LIST"
+      printf '%-16s %-6s %s\n' "USERNAME" "TỦ" "MAC"
+      awk '{printf "%-16s %-6s %s\n", $1, $2, $3}' "$LIST"
     else
       echo "Chưa có thiết bị nào."
     fi
     ;;
   *)
-    sed -n '2,17p' "$0"
+    sed -n '2,20p' "$0"
     exit 1
     ;;
 esac
