@@ -115,6 +115,153 @@ public class WalletService {
         return result;
     }
 
+    public static String detectMethod(WalletTransactionResponse tx) {
+        String src = tx.source() != null ? tx.source().toUpperCase() : "";
+        String ref = tx.referenceId() != null ? tx.referenceId().toUpperCase() : "";
+        String desc = tx.description() != null ? tx.description().toUpperCase() : "";
+
+        if (src.contains("SEPAY") || ref.contains("SEPAY") || desc.contains("SEPAY") || ref.startsWith("FT")) {
+            return "SEPAY";
+        }
+        if (src.contains("VNPAY") || ref.contains("VNPAY") || desc.contains("VNPAY")) {
+            return "VNPAY";
+        }
+        if (src.contains("MOMO") || ref.contains("MOMO") || desc.contains("MOMO")) {
+            return "MOMO";
+        }
+        if (SOURCE_WITHDRAW.equalsIgnoreCase(src) || ref.contains("WDR") || desc.contains("RÚT TIỀN") || desc.contains("RUT TIEN")) {
+            return "WITHDRAW";
+        }
+        if (SOURCE_TOPUP.equalsIgnoreCase(src)) {
+            return "SEPAY";
+        }
+        if (src.contains("CASH") || desc.contains("TIỀN MẶT") || desc.contains("TIEN MAT")) {
+            return "CASH";
+        }
+        return "WALLET";
+    }
+
+    public static String getMethodLabel(String method) {
+        if (method == null) return "Khác";
+        return switch (method.toUpperCase()) {
+            case "WALLET" -> "Ví Lock.R";
+            case "SEPAY" -> "Cổng SePay";
+            case "VNPAY" -> "Cổng VNPay";
+            case "MOMO" -> "Ví MoMo";
+            case "WITHDRAW" -> "Rút tiền về STK";
+            case "CASH" -> "Tiền mặt";
+            default -> "Khác";
+        };
+    }
+
+    @Transactional(readOnly = true)
+    public com.huynqb.laundrylocker.payment.dto.TransactionMethodTotalResponse calculateTotalByMethod(
+            Long userId, String methodStr, String periodStr, String fromStr, String toStr) {
+        List<WalletTransactionResponse> allTx = history(userId);
+        LocalDateTime now = LocalDateTime.now();
+
+        LocalDateTime filterStart = null;
+        LocalDateTime filterEnd = null;
+
+        if (StringUtils.hasText(fromStr)) {
+            try {
+                filterStart = java.time.LocalDate.parse(fromStr.trim()).atStartOfDay();
+            } catch (Exception ignored) {}
+        }
+        if (StringUtils.hasText(toStr)) {
+            try {
+                filterEnd = java.time.LocalDate.parse(toStr.trim()).plusDays(1).atStartOfDay();
+            } catch (Exception ignored) {}
+        }
+
+        if (filterStart == null && filterEnd == null) {
+            filterStart = switch (periodStr != null ? periodStr.toUpperCase() : "ALL") {
+                case "DAY" -> now.toLocalDate().atStartOfDay();
+                case "MONTH" -> now.toLocalDate().withDayOfMonth(1).atStartOfDay();
+                case "YEAR" -> now.toLocalDate().withDayOfYear(1).atStartOfDay();
+                default -> null;
+            };
+        }
+
+        final LocalDateTime start = filterStart;
+        final LocalDateTime end = filterEnd;
+
+        List<WalletTransactionResponse> filtered = allTx.stream().filter(t -> {
+            if (t.createdAt() == null) return false;
+            if (start != null && t.createdAt().isBefore(start)) return false;
+            if (end != null && !t.createdAt().isBefore(end)) return false;
+            return true;
+        }).toList();
+
+        Map<String, BigDecimal> summary = new java.util.LinkedHashMap<>();
+        summary.put("WALLET", BigDecimal.ZERO);
+        summary.put("SEPAY", BigDecimal.ZERO);
+        summary.put("VNPAY", BigDecimal.ZERO);
+        summary.put("MOMO", BigDecimal.ZERO);
+        summary.put("WITHDRAW", BigDecimal.ZERO);
+
+        Map<String, BigDecimal> expenseByMethod = new java.util.LinkedHashMap<>();
+        Map<String, BigDecimal> incomeByMethod = new java.util.LinkedHashMap<>();
+        Map<String, Integer> countByMethod = new java.util.LinkedHashMap<>();
+        for (String m : summary.keySet()) {
+            expenseByMethod.put(m, BigDecimal.ZERO);
+            incomeByMethod.put(m, BigDecimal.ZERO);
+            countByMethod.put(m, 0);
+        }
+
+        BigDecimal allTotal = BigDecimal.ZERO;
+        BigDecimal allExpense = BigDecimal.ZERO;
+        BigDecimal allIncome = BigDecimal.ZERO;
+
+        for (WalletTransactionResponse tx : filtered) {
+            BigDecimal amt = tx.amount() != null ? tx.amount() : BigDecimal.ZERO;
+            boolean isCredit = "CREDIT".equalsIgnoreCase(tx.type()) || "TOP_UP".equalsIgnoreCase(tx.type());
+            String m = detectMethod(tx);
+
+            summary.merge(m, amt, BigDecimal::add);
+            countByMethod.merge(m, 1, Integer::sum);
+            if (isCredit) {
+                incomeByMethod.merge(m, amt, BigDecimal::add);
+                allIncome = allIncome.add(amt);
+            } else {
+                expenseByMethod.merge(m, amt, BigDecimal::add);
+                allExpense = allExpense.add(amt);
+            }
+            allTotal = allTotal.add(amt);
+        }
+
+        String target = StringUtils.hasText(methodStr) ? methodStr.trim().toUpperCase() : "ALL";
+        boolean isAll = "ALL".equals(target);
+
+        BigDecimal selectedTotal = isAll ? allTotal : summary.getOrDefault(target, BigDecimal.ZERO);
+        BigDecimal selectedExpense = isAll ? allExpense : expenseByMethod.getOrDefault(target, BigDecimal.ZERO);
+        BigDecimal selectedIncome = isAll ? allIncome : incomeByMethod.getOrDefault(target, BigDecimal.ZERO);
+        int selectedCount = isAll ? filtered.size() : countByMethod.getOrDefault(target, 0);
+
+        List<com.huynqb.laundrylocker.payment.dto.TransactionMethodTotalResponse.MethodTotalItem> methodItems =
+                summary.entrySet().stream()
+                        .map(e -> new com.huynqb.laundrylocker.payment.dto.TransactionMethodTotalResponse.MethodTotalItem(
+                                e.getKey(),
+                                getMethodLabel(e.getKey()),
+                                e.getValue(),
+                                expenseByMethod.getOrDefault(e.getKey(), BigDecimal.ZERO),
+                                incomeByMethod.getOrDefault(e.getKey(), BigDecimal.ZERO),
+                                countByMethod.getOrDefault(e.getKey(), 0)
+                        ))
+                        .toList();
+
+        return new com.huynqb.laundrylocker.payment.dto.TransactionMethodTotalResponse(
+                periodStr != null ? periodStr.toUpperCase() : "ALL",
+                target,
+                selectedTotal,
+                selectedExpense,
+                selectedIncome,
+                selectedCount,
+                summary,
+                methodItems
+        );
+    }
+
     @Transactional(readOnly = true)
     public com.huynqb.laundrylocker.payment.dto.UserSpendingStatsResponse spendingStats(Long userId, String periodStr) {
         List<WalletTransactionResponse> allTx = history(userId);
@@ -140,6 +287,12 @@ public class WalletService {
         byService.put("WITHDRAW", BigDecimal.ZERO);
         byService.put("OTHER", BigDecimal.ZERO);
 
+        byMethod.put("WALLET", BigDecimal.ZERO);
+        byMethod.put("SEPAY", BigDecimal.ZERO);
+        byMethod.put("VNPAY", BigDecimal.ZERO);
+        byMethod.put("MOMO", BigDecimal.ZERO);
+        byMethod.put("WITHDRAW", BigDecimal.ZERO);
+
         for (WalletTransactionResponse tx : filtered) {
             BigDecimal amt = tx.amount() != null ? tx.amount() : BigDecimal.ZERO;
             boolean isCredit = "CREDIT".equalsIgnoreCase(tx.type()) || "TOP_UP".equalsIgnoreCase(tx.type());
@@ -150,22 +303,12 @@ public class WalletService {
             }
 
             // Method
-            String method = "WALLET";
-            String src = tx.source() != null ? tx.source().toUpperCase() : "";
-            String ref = tx.referenceId() != null ? tx.referenceId().toUpperCase() : "";
-            String desc = tx.description() != null ? tx.description().toUpperCase() : "";
-            if (src.contains("SEPAY") || ref.contains("SEPAY") || desc.contains("SEPAY") || ref.startsWith("FT")) {
-                method = "SEPAY";
-            } else if (src.contains("VNPAY") || ref.contains("VNPAY") || desc.contains("VNPAY")) {
-                method = "VNPAY";
-            } else if (src.contains("MOMO") || ref.contains("MOMO") || desc.contains("MOMO")) {
-                method = "MOMO";
-            } else if (SOURCE_WITHDRAW.equalsIgnoreCase(src) || desc.contains("RÚT TIỀN") || desc.contains("RUT TIEN")) {
-                method = "WITHDRAW";
-            }
+            String method = detectMethod(tx);
             byMethod.merge(method, amt, BigDecimal::add);
 
             // Service
+            String src = tx.source() != null ? tx.source().toUpperCase() : "";
+            String desc = tx.description() != null ? tx.description().toUpperCase() : "";
             String srv = "OTHER";
             if (SOURCE_WITHDRAW.equalsIgnoreCase(src)) {
                 srv = "WITHDRAW";

@@ -35,6 +35,17 @@ public class WalletController {
         return ApiResponse.ok("SPENDING_STATS_OK", "Spending statistics", walletService.spendingStats(userId, period));
     }
 
+    @GetMapping({"/api/wallet/total-by-method", "/api/wallet/transactions/total-by-method"})
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.TransactionMethodTotalResponse> totalByMethod(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(required = false, defaultValue = "ALL") String method,
+            @RequestParam(required = false, defaultValue = "ALL") String period,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return ApiResponse.ok("TOTAL_BY_METHOD_OK", "Total amount by transaction method",
+                walletService.calculateTotalByMethod(userId, method, period, from, to));
+    }
+
     @GetMapping("/internal/wallet/{userId}")
     public ApiResponse<WalletResponse> internalBalance(@PathVariable Long userId) {
         return ApiResponse.ok(walletService.getBalance(userId));
@@ -48,6 +59,17 @@ public class WalletController {
     @GetMapping("/api/admin/wallet/{userId}/transactions")
     public ApiResponse<List<WalletTransactionResponse>> adminTransactions(@PathVariable Long userId) {
         return ApiResponse.ok(walletService.history(userId));
+    }
+
+    @GetMapping("/api/admin/wallet/{userId}/total-by-method")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.TransactionMethodTotalResponse> adminTotalByMethod(
+            @PathVariable Long userId,
+            @RequestParam(required = false, defaultValue = "ALL") String method,
+            @RequestParam(required = false, defaultValue = "ALL") String period,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return ApiResponse.ok("TOTAL_BY_METHOD_OK", "Total amount by transaction method",
+                walletService.calculateTotalByMethod(userId, method, period, from, to));
     }
 
     @PostMapping("/api/admin/wallet/{userId}/adjust")
