@@ -28,6 +28,13 @@ public class WalletController {
         return ApiResponse.ok(walletService.history(userId));
     }
 
+    @GetMapping("/api/wallet/spending-stats")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.UserSpendingStatsResponse> spendingStats(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(required = false, defaultValue = "ALL") String period) {
+        return ApiResponse.ok("SPENDING_STATS_OK", "Spending statistics", walletService.spendingStats(userId, period));
+    }
+
     @GetMapping("/internal/wallet/{userId}")
     public ApiResponse<WalletResponse> internalBalance(@PathVariable Long userId) {
         return ApiResponse.ok(walletService.getBalance(userId));
