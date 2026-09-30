@@ -555,6 +555,18 @@ public class LockerController {
         return ApiResponse.ok(lockerService.myReports(userId));
     }
 
+    @GetMapping("/api/lockers/reports/{id}")
+    public ApiResponse<LockerReportResponse> myReport(
+            @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(lockerService.getReportForUser(id, userId));
+    }
+
+    @GetMapping("/api/lockers/reports/{id}/logs")
+    public ApiResponse<List<RepairLogResponse>> myReportLogs(
+            @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(lockerService.repairLogsForUser(id, userId));
+    }
+
     // Người báo xem/bổ sung ảnh hiện trường của phiếu mình (gateway cho phép hậu tố /attachments).
     @GetMapping("/api/lockers/reports/{id}/attachments")
     public ApiResponse<List<ReportAttachmentResponse>> myReportAttachments(

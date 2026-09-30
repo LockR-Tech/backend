@@ -31,4 +31,9 @@ public interface OrderClient {
     ApiResponse<Map<String, Object>> hubEscrow(
             @PathVariable("id") Long id,
             @RequestParam("sealNumber") String sealNumber);
+
+    @PostMapping("/{id}/incident-note")
+    ApiResponse<Void> addIncidentNote(
+            @PathVariable("id") Long id,
+            @RequestParam("note") String note);
 }

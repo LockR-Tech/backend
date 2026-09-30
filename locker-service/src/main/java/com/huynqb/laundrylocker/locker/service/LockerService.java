@@ -26,6 +26,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -605,7 +606,8 @@ public class LockerService {
         }
         LockerReport report = new LockerReport();
         report.setLockerId(lockerId);
-        report.setCategory(ReportCategory.LOCKER);
+        report.setCategory(request.boxId() != null ? ReportCategory.BOX : ReportCategory.LOCKER);
+        report.setBoxId(request.boxId());
         report.setBlocksLocker(blocking);
         report.setUserId(userId);
         report.setTitle(request.title());
@@ -643,7 +645,7 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> allReports() {
-        return toReports(reportRepository.findAll());
+        return toReports(reportRepository.findAllByOrderByCreatedAtDesc());
     }
 
     @Transactional(readOnly = true)
@@ -695,7 +697,13 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> assignedReports(Long userId) {
-        return toReports(reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId));
+        return reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
+                .sorted(Comparator.comparing(
+                        (LockerReport r) -> r.getAssignedAt() != null ? r.getAssignedAt() : r.getCreatedAt(),
+                        Comparator.nullsLast(Comparator.reverseOrder())
+                ).thenComparing(LockerReport::getId, Comparator.reverseOrder()))
+                .map(this::toReport)
+                .toList();
     }
 
     /// Phiếu OPEN đang được định tuyến cho KTV (tủ người đó phụ trách), chờ nhận.
@@ -1038,6 +1046,20 @@ public class LockerService {
                 log.getId(), log.getReportId(), log.getActorUserId(), log.getNote(), log.getCreatedAt(), attachments);
     }
 
+    @Transactional(readOnly = true)
+    public LockerReportResponse getReportForUser(Long reportId, Long userId) {
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        return toReport(report);
+    }
+
+    @Transactional(readOnly = true)
+    public List<RepairLogResponse> repairLogsForUser(Long reportId, Long userId) {
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        return repairLogs(reportId);
+    }
+
     /// Ghi chú + ảnh nghiệm thu gửi kèm lúc hoàn tất. Không gửi gì ⇒ giữ hành vi cũ.
     private void attachResolutionEvidence(
             LockerReport report, Long actorUserId, boolean admin, ResolveReportRequest request) {
@@ -1053,7 +1075,11 @@ public class LockerService {
             RepairLog log = new RepairLog();
             log.setReportId(report.getId());
             log.setActorUserId(actorUserId);
-            log.setNote(request.note().trim());
+            String noteText = request.note().trim();
+            if (!noteText.startsWith("[")) {
+                noteText = "[NGHIỆM THU THÀNH CÔNG] " + noteText;
+            }
+            log.setNote(noteText);
             repairLogId = repairLogRepository.save(log).getId();
         }
         attachmentService.attach(
@@ -1510,7 +1536,9 @@ public class LockerService {
                 s.getScheduledTimeSlot(),
                 checklistItems(s.getChecklist()),
                 s.getLastResult(),
-                s.getPendingReportId());
+                s.getPendingReportId(),
+                s.getCreatedAt(),
+                s.getUpdatedAt());
     }
 
     // ---- Drone fleet (thiết bị bay vật lý, khác ô tủ cellType=DRONE) ----
@@ -2118,9 +2146,24 @@ public class LockerService {
     /// iot-service (which owns the MQTT/access-log infrastructure).
     public Map<String, Object> forceOpen(Long boxId, Long actorUserId) {
         LockerBox box = findBox(boxId);
-        var result = iotClient.forceUnlock(new IotClient.ForceUnlockRequest(box.getLockerId(), boxId, actorUserId));
-        return result.data();
+        publishBoxOpened(box);
+        try {
+            var result = iotClient.forceUnlock(new IotClient.ForceUnlockRequest(box.getLockerId(), boxId, actorUserId));
+            if (result != null && result.data() != null) {
+                return result.data();
+            }
+        } catch (Exception ex) {
+            log.warn("IoT service force unlock failed for box {}: {}", boxId, ex.getMessage());
+        }
+        return Map.of(
+                "accepted", true,
+                "lockerId", box.getLockerId(),
+                "boxId", boxId,
+                "boxNumber", box.getBoxNumber(),
+                "message", "Đã gửi lệnh mở ô khẩn cấp thành công"
+        );
     }
+
 
     /// Booking → IoT sync (GAP 1): best-effort mirror of a box's new lifecycle
     /// state (RESERVED/OCCUPIED/AVAILABLE/FAULT) down to the cabinet via
@@ -2352,18 +2395,58 @@ public class LockerService {
 
         String action = request.action() == null ? "LOCK_ONLY" : request.action().toUpperCase();
         ActiveBoxOrderDto activeOrder = getActiveOrderByBox(box.getId());
+        boolean isQuickFix = "QUICK_FIX".equalsIgnoreCase(action);
+        boolean shouldLock = request.lockBox() != null ? request.lockBox() : !isQuickFix;
 
         switch (action) {
             case "QUICK_FIX" -> {
                 RepairLog logEntry = new RepairLog();
                 logEntry.setReportId(report.getId());
                 logEntry.setActorUserId(userId);
-                logEntry.setNote("[SỬA TẠI CHỖ THÀNH CÔNG] "
-                        + (StringUtils.hasText(request.reason()) ? request.reason() : "KTV đã khắc phục sự cố tại ô #" + box.getBoxNumber() + ", giữ nguyên đồ của khách."));
+                String fixDetail = activeOrder != null
+                        ? "KTV đã khắc phục sự cố tại ô #" + box.getBoxNumber() + ", giữ nguyên đồ của khách."
+                        : "KTV đã kiểm tra tại Kiosk: Không có đồ trong ô hoặc đã xử lý sự cố tại chỗ.";
+                String note = (StringUtils.hasText(request.reason()) && request.reason().startsWith("["))
+                        ? request.reason()
+                        : ("[GHI CHÚ HIỆN TRƯỜNG] " + (StringUtils.hasText(request.reason()) ? request.reason() : fixDetail));
+                if (!shouldLock) {
+                    note += " (Không khóa ô, giữ ô hoạt động)";
+                }
+                logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
                 attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
                 reportRepository.save(report);
-                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), box.getStatus(), "Đã sửa chữa tại chỗ ô #" + box.getBoxNumber());
+
+                if (activeOrder != null) {
+                    try {
+                        orderClient.addIncidentNote(activeOrder.orderId(),
+                                "KTV đã kiểm tra & khắc phục sự cố tại ô #" + box.getBoxNumber() + ", đồ của khách được giữ an toàn");
+                    } catch (Exception ex) {
+                        log.warn("Could not record quick fix history on order {}: {}", activeOrder.orderId(), ex.getMessage());
+                    }
+                }
+
+                if (shouldLock) {
+                    box.setStatus("FAULT");
+                    box.setPreFaultStatus(null);
+                    box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi xử lý sự cố ô #" + box.getBoxNumber());
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "FAULT");
+                    publishBoxFault(box, box.getFaultReason());
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã khóa bảo trì ô #" + box.getBoxNumber());
+                } else {
+                    if (activeOrder == null) {
+                        box.setStatus("AVAILABLE");
+                        box.setFaultReason(null);
+                        box.setPreFaultStatus(null);
+                        box.setReservedUntil(null);
+                        boxRepository.save(box);
+                        syncBoxStateQuietly(box, "AVAILABLE");
+                        publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Đã xử lý xong ô #" + box.getBoxNumber() + ", ô hoạt động bình thường");
+                    } else {
+                        publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), box.getStatus(), "Đã sửa chữa tại chỗ ô #" + box.getBoxNumber());
+                    }
+                }
             }
             case "RELOCATE" -> {
                 if (request.targetBoxId() == null) {
@@ -2386,23 +2469,34 @@ public class LockerService {
                 boxRepository.save(targetBox);
                 syncBoxStateQuietly(targetBox, "OCCUPIED");
 
-                box.setStatus("FAULT");
-                box.setPreFaultStatus(null);
-                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi điều chuyển hàng");
-                boxRepository.save(box);
-                syncBoxStateQuietly(box, "FAULT");
-
                 RepairLog logEntry = new RepairLog();
                 logEntry.setReportId(report.getId());
                 logEntry.setActorUserId(userId);
                 String orderLabel = activeOrder != null ? ("đơn hàng " + activeOrder.orderCode()) : "đồ trong ô";
-                logEntry.setNote("[ĐIỀU CHUYỂN Ô] Đã chuyển " + orderLabel + " sang ô #" + targetBox.getBoxNumber() + ". Đã khóa bảo trì ô #" + box.getBoxNumber());
+                String note = "[ĐIỀU CHUYỂN Ô] Đã chuyển " + orderLabel + " sang ô #" + targetBox.getBoxNumber() + ".";
+                if (shouldLock) {
+                    box.setStatus("FAULT");
+                    box.setPreFaultStatus(null);
+                    box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi điều chuyển hàng");
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "FAULT");
+                    note += " Đã khóa bảo trì ô #" + box.getBoxNumber();
+                    publishBoxFault(box, box.getFaultReason());
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã chuyển đồ sang ô #" + targetBox.getBoxNumber() + " và khóa ô #" + box.getBoxNumber());
+                } else {
+                    box.setStatus("AVAILABLE");
+                    box.setFaultReason(null);
+                    box.setPreFaultStatus(null);
+                    box.setReservedUntil(null);
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "AVAILABLE");
+                    note += " Không khóa ô cũ, giữ ô #" + box.getBoxNumber() + " khả dụng";
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Đã chuyển đồ sang ô #" + targetBox.getBoxNumber() + ", ô #" + box.getBoxNumber() + " hoạt động bình thường");
+                }
+                logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
                 attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
-
                 reportRepository.save(report);
-                publishBoxFault(box, box.getFaultReason());
-                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã chuyển đồ sang ô #" + targetBox.getBoxNumber() + " và khóa ô #" + box.getBoxNumber());
             }
             case "HANDOVER" -> {
                 if (activeOrder != null) {
@@ -2413,23 +2507,35 @@ public class LockerService {
                         throw new BusinessException("HANDOVER_FAILED", "Bàn giao thất bại: " + ex.getMessage());
                     }
                 }
-                box.setStatus("FAULT");
-                box.setPreFaultStatus(null);
-                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi bàn giao trực tiếp cho khách");
-                boxRepository.save(box);
-                syncBoxStateQuietly(box, "FAULT");
 
                 RepairLog logEntry = new RepairLog();
                 logEntry.setReportId(report.getId());
                 logEntry.setActorUserId(userId);
                 String orderLabel = activeOrder != null ? ("đơn hàng " + activeOrder.orderCode()) : "đồ";
-                logEntry.setNote("[BÀN GIAO TRỰC TIẾP] KTV đã bàn giao " + orderLabel + " cho khách hàng tại Kiosk. Đã khóa bảo trì ô #" + box.getBoxNumber());
+                String note = "[BÀN GIAO TRỰC TIẾP] KTV đã bàn giao " + orderLabel + " cho khách hàng tại Kiosk.";
+                if (shouldLock) {
+                    box.setStatus("FAULT");
+                    box.setPreFaultStatus(null);
+                    box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi bàn giao trực tiếp cho khách");
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "FAULT");
+                    note += " Đã khóa bảo trì ô #" + box.getBoxNumber();
+                    publishBoxFault(box, box.getFaultReason());
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã bàn giao đồ và khóa ô #" + box.getBoxNumber());
+                } else {
+                    box.setStatus("AVAILABLE");
+                    box.setFaultReason(null);
+                    box.setPreFaultStatus(null);
+                    box.setReservedUntil(null);
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "AVAILABLE");
+                    note += " Không khóa ô, giữ ô #" + box.getBoxNumber() + " hoạt động bình thường";
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Đã bàn giao đồ, ô #" + box.getBoxNumber() + " sẵn sàng sử dụng");
+                }
+                logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
                 attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
-
                 reportRepository.save(report);
-                publishBoxFault(box, box.getFaultReason());
-                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã bàn giao đồ và khóa ô #" + box.getBoxNumber());
             }
             case "HUB_ESCROW" -> {
                 String seal = StringUtils.hasText(request.sealNumber()) ? request.sealNumber() : "SEAL-" + System.currentTimeMillis();
@@ -2441,41 +2547,64 @@ public class LockerService {
                         throw new BusinessException("HUB_ESCROW_FAILED", "Niêm phong về Hub thất bại: " + ex.getMessage());
                     }
                 }
-                box.setStatus("FAULT");
-                box.setPreFaultStatus(null);
-                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi niêm phong về Hub (Seal: " + seal + ")");
-                boxRepository.save(box);
-                syncBoxStateQuietly(box, "FAULT");
 
                 RepairLog logEntry = new RepairLog();
                 logEntry.setReportId(report.getId());
                 logEntry.setActorUserId(userId);
                 String orderLabel = activeOrder != null ? ("đơn hàng " + activeOrder.orderCode()) : "đồ";
-                logEntry.setNote("[NIÊM PHONG VỀ HUB] Đã niêm phong " + orderLabel + " (Mã Seal: " + seal + ") chuyển về Hub lưu trữ. Đã khóa bảo trì ô #" + box.getBoxNumber());
+                String note = "[NIÊM PHONG VỀ HUB] Đã niêm phong " + orderLabel + " (Mã Seal: " + seal + ") chuyển về Hub lưu trữ.";
+                if (shouldLock) {
+                    box.setStatus("FAULT");
+                    box.setPreFaultStatus(null);
+                    box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "Khóa bảo trì sau khi niêm phong về Hub (Seal: " + seal + ")");
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "FAULT");
+                    note += " Đã khóa bảo trì ô #" + box.getBoxNumber();
+                    publishBoxFault(box, box.getFaultReason());
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã niêm phong về Hub và khóa ô #" + box.getBoxNumber());
+                } else {
+                    box.setStatus("AVAILABLE");
+                    box.setFaultReason(null);
+                    box.setPreFaultStatus(null);
+                    box.setReservedUntil(null);
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "AVAILABLE");
+                    note += " Không khóa ô, giữ ô #" + box.getBoxNumber() + " hoạt động bình thường";
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Đã niêm phong về Hub, ô #" + box.getBoxNumber() + " sẵn sàng sử dụng");
+                }
+                logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
                 attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
-
                 reportRepository.save(report);
-                publishBoxFault(box, box.getFaultReason());
-                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã niêm phong về Hub và khóa ô #" + box.getBoxNumber());
             }
             default -> {
-                box.setStatus("FAULT");
-                box.setPreFaultStatus(null);
-                box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "KTV xác nhận lỗi khớp mô tả khách hàng");
-                boxRepository.save(box);
-                syncBoxStateQuietly(box, "FAULT");
-
                 RepairLog logEntry = new RepairLog();
                 logEntry.setReportId(report.getId());
                 logEntry.setActorUserId(userId);
-                logEntry.setNote("[XÁC NHẬN & KHÓA Ô] KTV kiểm tra hiện trường, xác nhận lỗi và khóa bảo trì ô #" + box.getBoxNumber());
+                String note;
+                if (shouldLock) {
+                    box.setStatus("FAULT");
+                    box.setPreFaultStatus(null);
+                    box.setFaultReason(StringUtils.hasText(request.reason()) ? request.reason() : "KTV xác nhận lỗi khớp mô tả khách hàng");
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "FAULT");
+                    note = "[XÁC NHẬN & KHÓA Ô] KTV kiểm tra hiện trường, xác nhận lỗi và khóa bảo trì ô #" + box.getBoxNumber();
+                    publishBoxFault(box, box.getFaultReason());
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã khóa bảo trì ô #" + box.getBoxNumber());
+                } else {
+                    box.setStatus("AVAILABLE");
+                    box.setFaultReason(null);
+                    box.setPreFaultStatus(null);
+                    box.setReservedUntil(null);
+                    boxRepository.save(box);
+                    syncBoxStateQuietly(box, "AVAILABLE");
+                    note = "[KIỂM TRA HIỆN TRƯỜNG] KTV kiểm tra hiện trường: Không phát hiện lỗi hoặc khách báo nhầm, không khóa ô #" + box.getBoxNumber();
+                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Ô #" + box.getBoxNumber() + " hoạt động bình thường");
+                }
+                logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
                 attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
-
                 reportRepository.save(report);
-                publishBoxFault(box, box.getFaultReason());
-                publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã khóa bảo trì ô #" + box.getBoxNumber());
             }
         }
 
