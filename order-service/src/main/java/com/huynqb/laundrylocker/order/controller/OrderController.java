@@ -119,6 +119,14 @@ public class OrderController {
         return ApiResponse.ok("ORDER_HUB_ESCROWED", "Order escrowed to hub", orderService.hubEscrow(id, sealNumber));
     }
 
+    @PostMapping("/internal/orders/{id}/incident-note")
+    public ApiResponse<Void> addIncidentNote(
+            @PathVariable Long id,
+            @RequestParam String note) {
+        orderService.addIncidentHistory(id, note);
+        return ApiResponse.ok(null);
+    }
+
     @PatchMapping("/api/orders/{id}/status")
     public ApiResponse<OrderResponse> updateStatus(
             @PathVariable Long id, @Valid @RequestBody UpdateOrderStatusRequest request) {

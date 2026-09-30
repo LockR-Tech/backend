@@ -2077,4 +2077,10 @@ public class OrderService {
         }
         return toResponse(saved);
     }
+
+    @Transactional
+    public void addIncidentHistory(Long orderId, String note) {
+        LockerOrder order = find(orderId);
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), null, note);
+    }
 }

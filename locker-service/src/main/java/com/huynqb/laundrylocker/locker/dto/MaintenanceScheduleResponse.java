@@ -30,7 +30,9 @@ public record MaintenanceScheduleResponse(
         // PASSED / FAILED của lần kiểm tra gần nhất
         String lastResult,
         // Phiếu sinh từ lần kiểm tra KHÔNG ĐẠT; hạn kế tiếp chỉ dời khi phiếu này đóng
-        Long pendingReportId) {
+        Long pendingReportId,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt) {
 
     public MaintenanceScheduleResponse(
             Long id,
@@ -47,7 +49,7 @@ public record MaintenanceScheduleResponse(
             Boolean due) {
         this(id, lockerId, lockerName, lockerCode, droneUnitId, droneCode, title, intervalDays,
                 lastDoneAt, nextDueAt, active, due, null, null, "NORMAL", null, null, null, null, null, null,
-                List.of(), null, null);
+                List.of(), null, null, null, null);
     }
 
     public MaintenanceScheduleResponse(
@@ -72,7 +74,7 @@ public record MaintenanceScheduleResponse(
             String address) {
         this(id, lockerId, lockerName, lockerCode, droneUnitId, droneCode, title, intervalDays,
                 lastDoneAt, nextDueAt, active, due, assignedTechnicianId, assignedTechnicianName,
-                priority, description, checklist, storeId, address, null, null, List.of(), null, null);
+                priority, description, checklist, storeId, address, null, null, List.of(), null, null, null, null);
     }
 }
 

@@ -11,5 +11,13 @@ public record BoxIncidentResolutionRequest(
         String reason,
         String customerOtp,
         String sealNumber,
-        List<ReportAttachmentRequest> attachments
-) {}
+        List<ReportAttachmentRequest> attachments,
+        Boolean lockBox
+) {
+    public BoxIncidentResolutionRequest(
+            Long boxId, String action, Long targetBoxId, String reason,
+            String customerOtp, String sealNumber, List<ReportAttachmentRequest> attachments) {
+        this(boxId, action, targetBoxId, reason, customerOtp, sealNumber, attachments, null);
+    }
+}
+

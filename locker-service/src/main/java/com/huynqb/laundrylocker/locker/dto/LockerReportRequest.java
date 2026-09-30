@@ -14,9 +14,15 @@ public record LockerReportRequest(
         @NotBlank String description,
         // Số ảnh tối đa theo cấu hình admin (app.maintenance.report-photos-per-request-reporter), kiểm trong service.
         List<@Valid ReportAttachmentRequest> attachments,
-        Boolean blocking) {
+        Boolean blocking,
+        Long boxId) {
 
     public LockerReportRequest(Long userId, String title, String description, List<ReportAttachmentRequest> attachments) {
-        this(userId, title, description, attachments, null);
+        this(userId, title, description, attachments, null, null);
+    }
+
+    public LockerReportRequest(Long userId, String title, String description, List<ReportAttachmentRequest> attachments, Boolean blocking) {
+        this(userId, title, description, attachments, blocking, null);
     }
 }
+

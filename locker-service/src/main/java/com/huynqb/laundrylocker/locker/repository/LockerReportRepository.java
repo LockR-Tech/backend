@@ -8,6 +8,8 @@ import java.util.Optional;
 
 public interface LockerReportRepository extends JpaRepository<LockerReport, Long> {
 
+    List<LockerReport> findAllByOrderByCreatedAtDesc();
+
     List<LockerReport> findByUserIdOrderByCreatedAtDesc(Long userId);
 
     List<LockerReport> findByStatusInOrderByCreatedAtDesc(List<String> statuses);
