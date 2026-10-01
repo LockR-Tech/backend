@@ -763,7 +763,7 @@ public class LockerService {
                 "đang được đội bảo trì xử lý");
         publishStaffNotification(
                 DomainEventNames.LOCKER_REPORT_ASSIGNED, technicianId, saved.getId(), "LOCKER_REPORT",
-                "Admin giao cho bạn phiếu #" + saved.getId() + " — " + saved.getTitle()
+                "Admin giao cho bạn phiếu RPT-" + saved.getId() + " — " + saved.getTitle()
                         + " tại tủ " + lockerLabel(saved.getLockerId()) + ".");
         return toReport(saved);
     }
@@ -938,7 +938,7 @@ public class LockerService {
         if (!admin && (actorUserId == null || !actorUserId.equals(report.getAssignedToUserId()))) {
             throw new BusinessException(
                     "REPORT_OPEN",
-                    "Đang có phiếu sự cố #" + report.getId() + " — nhận phiếu rồi hoàn tất phiếu để khôi phục",
+                    "Đang có phiếu sự cố RPT-" + report.getId() + " — nhận phiếu rồi hoàn tất phiếu để khôi phục",
                     HttpStatus.CONFLICT);
         }
         closeReport(report, actorUserId, null, admin);
@@ -1178,7 +1178,7 @@ public class LockerService {
                 .filter(r -> OPEN_REPORT_STATUSES.contains(r.getStatus())).isPresent()) {
             throw new BusinessException(
                     "SCHEDULE_PENDING_REPORT",
-                    "Lần kiểm tra trước chưa đạt — hoàn tất phiếu #" + pendingReportId + " trước",
+                    "Lần kiểm tra trước chưa đạt — hoàn tất phiếu RPT-" + pendingReportId + " trước",
                     HttpStatus.CONFLICT);
         }
         InspectionOutcome outcome = evaluateInspection(schedule, req);
@@ -2031,7 +2031,7 @@ public class LockerService {
         if (report.getAssignedToUserId() != null) {
             return;
         }
-        String message = "Phiếu #" + report.getId() + " — " + report.getTitle() + " tại tủ "
+        String message = "Phiếu RPT-" + report.getId() + " — " + report.getTitle() + " tại tủ "
                 + (locker == null ? "#" + report.getLockerId() : locker.getName()) + " đang chờ KTV nhận.";
         List<Long> recipients = report.getRoutedToUserId() != null
                 ? List.of(report.getRoutedToUserId())
@@ -2414,7 +2414,7 @@ public class LockerService {
                 }
                 logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
-                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+                attachIncidentPhotos(report, request, userId, logId);
                 reportRepository.save(report);
 
                 if (activeOrder != null) {
@@ -2495,7 +2495,7 @@ public class LockerService {
                 }
                 logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
-                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+                attachIncidentPhotos(report, request, userId, logId);
                 reportRepository.save(report);
             }
             case "HANDOVER" -> {
@@ -2534,7 +2534,7 @@ public class LockerService {
                 }
                 logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
-                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+                attachIncidentPhotos(report, request, userId, logId);
                 reportRepository.save(report);
             }
             case "HUB_ESCROW" -> {
@@ -2574,7 +2574,7 @@ public class LockerService {
                 }
                 logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
-                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+                attachIncidentPhotos(report, request, userId, logId);
                 reportRepository.save(report);
             }
             default -> {
@@ -2603,11 +2603,21 @@ public class LockerService {
                 }
                 logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
-                attachmentService.attach(report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+                attachIncidentPhotos(report, request, userId, logId);
                 reportRepository.save(report);
             }
         }
 
         return toReport(report);
+    }
+
+    private void attachIncidentPhotos(
+            LockerReport report, BoxIncidentResolutionRequest request, Long userId, Long logId) {
+        attachmentService.attach(
+                report, AttachmentStage.INSPECTION, request.attachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+        if (request.progressAttachments() != null && !request.progressAttachments().isEmpty()) {
+            attachmentService.attach(
+                    report, AttachmentStage.PROGRESS, request.progressAttachments(), userId, logId, rules.reportPhotosPerRequestStaff());
+        }
     }
 }
