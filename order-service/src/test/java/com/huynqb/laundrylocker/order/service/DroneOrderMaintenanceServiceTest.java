@@ -56,6 +56,9 @@ class DroneOrderMaintenanceServiceTest {
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
         when(lockerDroneClient.getDroneUnit(9L))
                 .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
+        // Tủ nguồn (nơi drone đỗ) cũng phải ACTIVE và có bãi đáp sẵn sàng.
+        when(lockerDroneClient.getLockerLayout(3L))
+                .thenReturn(ApiResponse.ok(new LockerLayoutDto(3L, "CAB-03", "Locker 3", "ACTIVE", true, "OK")));
         when(lockerDroneClient.getLockerLayout(5L))
                 .thenReturn(ApiResponse.ok(new LockerLayoutDto(5L, "CAB-05", "Locker 5", "ACTIVE", true, "OK")));
         when(lockerDroneClient.transitionDroneStatus(
@@ -130,6 +133,7 @@ class DroneOrderMaintenanceServiceTest {
                         notificationClient,
                         TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "ACCEPTED");
+        order.setSourceBoxId(8001L);
         DroneMission mission = new DroneMission();
         mission.setId(301L);
         mission.setOrderId(21L);
@@ -160,6 +164,10 @@ class DroneOrderMaintenanceServiceTest {
         assertTrue(mission.isPayloadSecured());
         assertTrue(mission.isCompartmentLocked());
         verify(missionRepository).save(mission);
+        // Kiện đã lên drone: ô gửi ở tủ nguồn được trả lại, ô nhận ở tủ đích vẫn giữ.
+        verify(lockerClient).releaseBox(8001L);
+        verify(lockerClient, never()).releaseBox(9001L);
+        assertNull(order.getSourceBoxId());
         verify(orderRepository).save(order);
     }
 
@@ -313,6 +321,7 @@ class DroneOrderMaintenanceServiceTest {
                         TestOrderRules.defaults());
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setStatus("AWAITING_DISPATCH");
+        order.setSourceBoxId(8001L);
         DroneMission mission = new DroneMission();
         mission.setId(301L);
         mission.setOrderId(21L);
@@ -341,6 +350,7 @@ class DroneOrderMaintenanceServiceTest {
         assertEquals("Gio giat manh", order.getStaffNote());
         assertEquals("CANCELED", order.getStatus());
         verify(lockerClient).releaseBox(9001L);
+        verify(lockerClient).releaseBox(8001L);
         verify(lockerDroneClient).transitionDroneStatus(
                 9L, new DroneStatusTransitionRequest("RESERVED", "IDLE", null));
         verify(missionRepository).delete(mission);

@@ -19,6 +19,7 @@ public final class OrderNextActions {
                 case "AWAITING_DISPATCH" -> "WAIT_FOR_DRONE";
                 case "COMPLETED" -> "DONE";
                 case "CANCELED" -> "CANCELED";
+                case "EXPIRED" -> "CONTACT_STAFF";
                 default -> "UNKNOWN";
             };
         }

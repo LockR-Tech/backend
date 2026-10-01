@@ -45,7 +45,9 @@ public class OrderPaymentEventListener {
                 .findById(orderId)
                 .ifPresent(
                         order -> {
-                            if (!"PAID".equals(order.getPaymentStatus())) {
+                            // REFUNDED: sự kiện thanh toán tới trễ không được lật đơn đã hoàn tiền về PAID.
+                            if (!"PAID".equals(order.getPaymentStatus())
+                                    && !"REFUNDED".equals(order.getPaymentStatus())) {
                                 order.setPaymentStatus("PAID");
                                 order.setPaidAt(LocalDateTime.now());
                                 // Ghi nhận khách đã trả tới mức tổng hiện tại; lần gia hạn

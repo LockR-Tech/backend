@@ -7,6 +7,9 @@ import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.model.Promotion;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
+import com.huynqb.laundrylocker.order.service.DroneDeliveryQueryService;
+import com.huynqb.laundrylocker.order.service.DroneMissionProgressService;
+import com.huynqb.laundrylocker.order.service.DroneRefundService;
 import com.huynqb.laundrylocker.order.service.OrderService;
 import com.huynqb.laundrylocker.order.service.PromotionImageService;
 import jakarta.validation.Valid;
@@ -22,6 +25,9 @@ import java.util.Map;
 public class OrderController {
 
     private final DroneOrderMaintenanceService droneOrderMaintenanceService;
+    private final DroneDeliveryQueryService droneDeliveryQueryService;
+    private final DroneMissionProgressService droneMissionProgressService;
+    private final DroneRefundService droneRefundService;
     private final OrderService orderService;
     private final PromotionImageService promotionImageService;
 
@@ -151,7 +157,13 @@ public class OrderController {
             @PathVariable Long orderId,
             @RequestParam(required = false) Integer reason,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return ApiResponse.ok("ORDER_CANCELED", "Order canceled", orderService.cancel(orderId, reason, userId));
+        OrderResponse canceled = orderService.cancel(orderId, reason, userId);
+        // Đơn drone đã trả tiền mà huỷ trước khi bay ⇒ hoàn về ví. Chạy sau khi huỷ đã
+        // commit; hoàn được thì trả lại bản đơn mới nhất (paymentStatus = REFUNDED).
+        if (droneRefundService.refundCanceledOrder(orderId, userId)) {
+            canceled = orderService.get(orderId);
+        }
+        return ApiResponse.ok("ORDER_CANCELED", "Order canceled", canceled);
     }
 
     @PostMapping("/api/orders/{orderId}/reset-pin")
@@ -213,13 +225,33 @@ public class OrderController {
     @GetMapping("/api/orders/{orderId}/drone-delivery")
     public ApiResponse<DroneDeliveryOrderResponse> getDroneDelivery(
             @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok(orderService.getDroneDelivery(orderId, userId));
+        return ApiResponse.ok(droneDeliveryQueryService.get(orderId, userId));
     }
 
     @GetMapping("/api/drone-technician/drone-orders")
-    public ApiResponse<List<DroneMissionResponse>> maintenanceDroneOrders(
-            @RequestParam(required = false) String deliveryStage) {
-        return ApiResponse.ok(droneOrderMaintenanceService.queue(deliveryStage));
+    public ApiResponse<List<DroneDeliveryOrderResponse>> maintenanceDroneOrders(
+            @RequestParam(required = false) String deliveryStage,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(droneDeliveryQueryService.operations(deliveryStage, userId, false));
+    }
+
+    @GetMapping("/api/drone-technician/drone-orders/{orderId}")
+    public ApiResponse<DroneDeliveryOrderResponse> maintenanceDroneOrder(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(droneDeliveryQueryService.getForTechnician(orderId, userId));
+    }
+
+    // Admin xem lại cả hành trình đã kết thúc; includeFinished=false chỉ lấy nhiệm vụ đang chạy.
+    @GetMapping("/api/admin/drone-orders")
+    public ApiResponse<List<DroneDeliveryOrderResponse>> adminDroneOrders(
+            @RequestParam(required = false) String deliveryStage,
+            @RequestParam(defaultValue = "true") boolean includeFinished) {
+        return ApiResponse.ok(droneDeliveryQueryService.operations(deliveryStage, null, true, includeFinished));
+    }
+
+    @GetMapping("/api/admin/drone-orders/{orderId}")
+    public ApiResponse<DroneDeliveryOrderResponse> adminDroneOrder(@PathVariable Long orderId) {
+        return ApiResponse.ok(droneDeliveryQueryService.getForAdmin(orderId));
     }
 
     @PostMapping("/api/drone-technician/drone-orders/{orderId}/accept")
@@ -265,10 +297,21 @@ public class OrderController {
             @PathVariable Long orderId,
             @Valid @RequestBody CancelDroneOrderRequest request,
             @RequestHeader("X-User-Id") Long userId) {
+        DroneMissionResponse canceled = droneOrderMaintenanceService.cancel(orderId, userId, request);
+        droneRefundService.refundCanceledOrder(orderId, userId);
+        return ApiResponse.ok("DRONE_ORDER_CANCELED", "Drone order canceled", canceled);
+    }
+
+    /// Đơn STANDARD chưa có telemetry tự báo chặng: điều phối viên đã tiếp nhận xác nhận
+    /// drone sang chặng kế tiếp (rời trạm → trên đường → sắp tới → đã tới → hàng vào ô).
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/advance")
+    public ApiResponse<DroneDeliveryOrderResponse> advanceDroneOrder(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        droneMissionProgressService.advanceByOperator(orderId, userId);
         return ApiResponse.ok(
-                "DRONE_ORDER_CANCELED",
-                "Drone order canceled",
-                droneOrderMaintenanceService.cancel(orderId, userId, request));
+                "DRONE_STAGE_ADVANCED",
+                "Drone mission advanced to the next stage",
+                droneDeliveryQueryService.getForTechnician(orderId, userId));
     }
 
     @GetMapping("/api/orders/{orderId}/status")

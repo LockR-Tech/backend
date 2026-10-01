@@ -46,6 +46,16 @@ public class LockerOrder {
     @Column(name = "destination_locker_id")
     private Long destinationLockerId;
 
+    /// Trạm người gửi mang kiện tới. Với DRONE_DELIVERY, drone được chọn phải
+    /// đang đỗ tại đúng tủ nguồn này và bay tới destinationLockerId.
+    @Column(name = "source_locker_id")
+    private Long sourceLockerId;
+
+    /// Ô DRONE tại tủ gửi mà người gửi bỏ kiện vào chờ nạp lên drone. Chỉ có ở
+    /// DRONE_DELIVERY; được nhả khi đã nạp hàng lên drone hoặc khi đơn bị huỷ.
+    @Column(name = "source_box_id")
+    private Long sourceBoxId;
+
     @Column(name = "send_box_id")
     private Long sendBoxId;
 
