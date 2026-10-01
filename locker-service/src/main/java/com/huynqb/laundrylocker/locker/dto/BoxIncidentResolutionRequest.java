@@ -12,12 +12,19 @@ public record BoxIncidentResolutionRequest(
         String customerOtp,
         String sealNumber,
         List<ReportAttachmentRequest> attachments,
-        Boolean lockBox
+        Boolean lockBox,
+        List<ReportAttachmentRequest> progressAttachments
 ) {
     public BoxIncidentResolutionRequest(
             Long boxId, String action, Long targetBoxId, String reason,
             String customerOtp, String sealNumber, List<ReportAttachmentRequest> attachments) {
-        this(boxId, action, targetBoxId, reason, customerOtp, sealNumber, attachments, null);
+        this(boxId, action, targetBoxId, reason, customerOtp, sealNumber, attachments, null, null);
+    }
+
+    public BoxIncidentResolutionRequest(
+            Long boxId, String action, Long targetBoxId, String reason,
+            String customerOtp, String sealNumber, List<ReportAttachmentRequest> attachments, Boolean lockBox) {
+        this(boxId, action, targetBoxId, reason, customerOtp, sealNumber, attachments, lockBox, null);
     }
 }
 
