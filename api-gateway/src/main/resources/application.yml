@@ -39,6 +39,12 @@ spring:
               uri: lb://order-service
               predicates:
                 - Path=/api/drone-technician/drone-orders/**
+            # Admin theo dõi hành trình drone (ADMIN — JwtGatewayFilter chặn /api/admin/**).
+            # Không trùng /api/admin/drones/** của locker-service: "drone-orders" ≠ "drones".
+            - id: order-service-admin-drone-orders
+              uri: lb://order-service
+              predicates:
+                - Path=/api/admin/drone-orders,/api/admin/drone-orders/**
             # Thiết bị IoT là việc của KTV tủ nhưng do iot-service phục vụ; phải
             # khai báo TRƯỚC locker-service, nếu không /api/locker-technician/**
             # bên dưới sẽ nuốt mất đường này.

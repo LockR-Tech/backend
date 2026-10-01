@@ -1,9 +1,5 @@
 package com.huynqb.laundrylocker.order.service;
 
-import com.huynqb.laundrylocker.common.dto.NotificationRequest;
-import com.huynqb.laundrylocker.order.client.LockerDroneClient;
-import com.huynqb.laundrylocker.order.client.NotificationClient;
-import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
@@ -16,20 +12,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 
+/// Bộ giả lập cho đơn DEMO: mỗi nhịp phát vị trí nội suy cho bản đồ trực tiếp và, khi
+/// đủ thời gian một chặng, đẩy mission sang chặng kế tiếp. Đơn STANDARD không bị đụng tới.
 @Service
 @RequiredArgsConstructor
 public class DroneDeliverySimulator {
 
-    private static final List<String> ACTIVE_STAGES =
-            List.of("LAUNCHING", "DEPARTED", "EN_ROUTE", "APPROACHING", "ARRIVED");
-
     private final DroneMissionRepository missionRepository;
     private final LockerOrderRepository orderRepository;
-    private final NotificationClient notificationClient;
-    private final LockerDroneClient lockerDroneClient;
+    private final DroneMissionProgressService progressService;
+    private final DronePositionBroadcaster positionBroadcaster;
     private final OrderRules rules;
 
     @Scheduled(fixedDelayString = "${app.drone.demo.scheduler-delay-ms:1000}")
@@ -40,85 +33,24 @@ public class DroneDeliverySimulator {
 
     void advanceEligibleMissions(LocalDateTime now) {
         long stageDelayMs = rules.droneDemoStageDelayMs();
-        for (DroneMission mission : missionRepository.findByStatusIn(ACTIVE_STAGES)) {
+        for (DroneMission mission : missionRepository.findByStatusIn(DroneMissionProgressService.IN_FLIGHT_STAGES)) {
             LockerOrder order = orderRepository.findById(mission.getOrderId()).orElse(null);
             if (order == null || !"DEMO".equalsIgnoreCase(order.getFulfillmentMode())) {
                 continue;
             }
             LocalDateTime updatedAt = mission.getUpdatedAt();
             if (updatedAt == null || Duration.between(updatedAt, now).toMillis() < stageDelayMs) {
+                positionBroadcaster.broadcast(order, mission, now, stageDelayMs);
                 continue;
             }
-            advance(order, mission);
-        }
-    }
-
-    private void advance(LockerOrder order, DroneMission mission) {
-        String nextStage = switch (mission.getStatus()) {
-            case "LAUNCHING" -> "DEPARTED";
-            case "DEPARTED" -> "EN_ROUTE";
-            case "EN_ROUTE" -> "APPROACHING";
-            case "APPROACHING" -> "ARRIVED";
-            case "ARRIVED" -> "READY_FOR_PICKUP";
-            default -> null;
-        };
-        if (nextStage == null) {
-            return;
-        }
-
-        if ("READY_FOR_PICKUP".equals(nextStage)) {
-            mission.setStatus("DEPOSITED");
-            order.setStatus("STORING");
-            order.setDeliveryStage(nextStage);
-            order.setPinCode(String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000)));
-            order.setPinCodeIssuedAt(LocalDateTime.now());
-            order.setPickupDeadline(LocalDateTime.now().plusHours(rules.dronePickupHours()));
-        } else {
-            mission.setStatus(nextStage);
-            order.setDeliveryStage(nextStage);
-        }
-        missionRepository.save(mission);
-        orderRepository.save(order);
-
-        if ("READY_FOR_PICKUP".equals(nextStage)) {
-            releaseDroneQuietly(mission);
-        }
-        if (List.of("DEPARTED", "APPROACHING", "ARRIVED", "READY_FOR_PICKUP").contains(nextStage)) {
-            notifyQuietly(order, nextStage);
-        }
-    }
-
-    private void releaseDroneQuietly(DroneMission mission) {
-        if (mission.getDroneUnitId() == null) {
-            return;
-        }
-        try {
-            lockerDroneClient.transitionDroneStatus(
-                    mission.getDroneUnitId(), new DroneStatusTransitionRequest("IN_FLIGHT", "IDLE", null));
-        } catch (Exception ignored) {
-            // A delivered parcel stays authoritative even if fleet status sync is temporarily unavailable.
-        }
-    }
-
-    private void notifyQuietly(LockerOrder order, String stage) {
-        String message = switch (stage) {
-            case "DEPARTED" -> "Drone đã rời trạm và bắt đầu giao hàng.";
-            case "APPROACHING" -> "Drone sắp đến tủ nhận hàng.";
-            case "ARRIVED" -> "Drone đã đến tủ đích.";
-            case "READY_FOR_PICKUP" -> "Hàng đã sẵn sàng. Vui lòng thanh toán trước khi mở tủ.";
-            default -> "Đơn drone có cập nhật mới.";
-        };
-        try {
-            notificationClient.requestNotification(
-                    new NotificationRequest(
-                            order.getUserId(),
-                            "Cập nhật giao drone",
-                            message,
-                            "DRONE_DELIVERY_STATUS_CHANGED",
-                            order.getId(),
-                            "ORDER"));
-        } catch (Exception ignored) {
-            // Stage progression remains authoritative if notification-service is down.
+            String previousStage = order.getDeliveryStage();
+            progressService.advance(
+                    order,
+                    mission,
+                    null,
+                    "Drone demo chuyển chặng " + previousStage + " → "
+                            + DroneMissionProgressService.nextStage(mission.getStatus()));
+            positionBroadcaster.broadcast(order, mission, now, stageDelayMs);
         }
     }
 }

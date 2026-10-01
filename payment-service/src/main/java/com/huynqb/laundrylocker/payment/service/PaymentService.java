@@ -451,6 +451,54 @@ public class PaymentService {
         return toRefund(refundRepository.save(refund));
     }
 
+    /**
+     * Hoàn toàn bộ tiền đã thu của một đơn về ví Lock.R của người trả, khi đơn bị huỷ
+     * trước lúc dịch vụ được thực hiện (order-service gọi qua /internal).
+     *
+     * <p>Mọi phương thức đều hoàn về ví: tiền từ cổng thanh toán không tự quay ngược
+     * được, còn ví thì khách dùng tiếp hoặc rút. Gọi lại nhiều lần an toàn — khoản đã
+     * có bản ghi hoàn thì bỏ qua, và ví chỉ cộng một lần cho mỗi khoản (khoá theo mã
+     * tham chiếu).
+     */
+    @Transactional
+    public com.huynqb.laundrylocker.payment.dto.internal.OrderRefundResult refundOrder(
+            Long orderId, String reason, Long processedByUserId) {
+        BigDecimal total = BigDecimal.ZERO;
+        int count = 0;
+        for (PaymentRecord payment : repository.findByOrderId(orderId)) {
+            if (!"COMPLETED".equals(payment.getStatus())
+                    || payment.getAmount() == null
+                    || payment.getAmount().signum() <= 0) {
+                continue;
+            }
+            boolean alreadyRefunded = refundRepository.findByPaymentIdIn(List.of(payment.getId())).stream()
+                    .anyMatch(refund -> "COMPLETED".equals(refund.getStatus()));
+            if (alreadyRefunded) {
+                continue;
+            }
+            String transactionId = "RF-" + payment.getReferenceId();
+            RefundRecord refund = new RefundRecord();
+            refund.setPaymentId(payment.getId());
+            refund.setOrderId(payment.getOrderId());
+            refund.setAmount(payment.getAmount());
+            refund.setReason(reason);
+            refund.setProcessedByUserId(processedByUserId);
+            refund.setStatus("COMPLETED");
+            refund.setProcessedAt(LocalDateTime.now());
+            refund.setTransactionId(transactionId);
+            refundRepository.save(refund);
+            walletService.credit(
+                    payment.getUserId(),
+                    payment.getAmount(),
+                    WalletService.SOURCE_REFUND,
+                    transactionId,
+                    "Hoàn tiền đơn #" + orderId + (reason == null || reason.isBlank() ? "" : ": " + reason));
+            total = total.add(payment.getAmount());
+            count++;
+        }
+        return new com.huynqb.laundrylocker.payment.dto.internal.OrderRefundResult(orderId, total, count);
+    }
+
     @Transactional(readOnly = true)
     public PaymentResponse get(Long id) {
         return toResponse(find(id));

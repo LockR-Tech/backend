@@ -69,8 +69,16 @@ public class DroneOrderMaintenanceService {
 
         DroneUnitDto drone = fetchDrone(request.droneUnitId());
         validateDronePreflight(drone);
+        if (order.getSourceLockerId() != null && !Objects.equals(order.getSourceLockerId(), drone.lockerId())) {
+            throw new BusinessException(
+                    "DRONE_WRONG_SOURCE_LOCKER", "Selected drone is not stationed at the order source locker");
+        }
+        if (order.getSourceLockerId() == null) {
+            order.setSourceLockerId(drone.lockerId());
+        }
+        validateLockerPreflight(fetchLockerLayout(order.getSourceLockerId()), "Source");
         LockerLayoutDto layout = fetchLockerLayout(requireDestinationLockerId(order));
-        validateLockerPreflight(layout);
+        validateLockerPreflight(layout, "Destination");
 
         DroneUnitDto reservedDrone = transitionDroneStatus(
                 drone.id(), "IDLE", "RESERVED", "Reserved for order " + order.getOrderCode());
@@ -90,6 +98,9 @@ public class DroneOrderMaintenanceService {
             order.setDeliveryStage("ACCEPTED");
             order.setStaffId(userId);
             orderRepository.save(order);
+            addJourneyEvent(order.getId(), "AWAITING_DISPATCH", "ACCEPTED", userId,
+                    "Điều phối viên tiếp nhận và gán drone " + reservedDrone.code());
+            notifyDeliveryStageQuietly(order, "accepted", "10 phút");
             return toResponse(order, mission, reservedDrone);
         } catch (RuntimeException failure) {
             releaseReservationQuietly(reservedDrone.id());
@@ -135,8 +146,13 @@ public class DroneOrderMaintenanceService {
         mission.setStatus("READY_TO_LAUNCH");
         missionRepository.save(mission);
 
+        // Kiện đã rời ô gửi lên drone ⇒ trả ô cho người gửi kế tiếp.
+        releaseSourceBoxQuietly(order);
         order.setStaffId(userId);
         orderRepository.save(order);
+        addJourneyEvent(order.getId(), "ACCEPTED", "ACCEPTED", userId,
+                "Đã nạp kiện " + request.payloadWeightGrams() + " g, niêm phong " + request.sealCode().trim());
+        notifyDeliveryStageQuietly(order, "loading_confirmed", "10 phút");
         return toResponse(order, mission, drone);
     }
 
@@ -162,7 +178,7 @@ public class DroneOrderMaintenanceService {
         DroneUnitDto drone = fetchDrone(mission.getDroneUnitId());
         validateReservedDroneForLaunch(drone);
         LockerLayoutDto layout = fetchLockerLayout(requireDestinationLockerId(order));
-        validateLockerPreflight(layout);
+        validateLockerPreflight(layout, "Destination");
         DroneUnitDto updatedDrone = transitionDroneStatus(
                 mission.getDroneUnitId(), "RESERVED", "IN_FLIGHT", null);
         mission.setStatus("LAUNCHING");
@@ -173,6 +189,9 @@ public class DroneOrderMaintenanceService {
         order.setDeliveryStage("LAUNCHING");
         order.setStaffId(userId);
         orderRepository.save(order);
+        addJourneyEvent(order.getId(), "ACCEPTED", "LAUNCHING", userId,
+                "Đã phát lệnh khởi phóng drone " + updatedDrone.code());
+        notifyDeliveryStageQuietly(order, "launching", "9 phút");
         return toResponse(order, mission, updatedDrone);
     }
 
@@ -205,6 +224,7 @@ public class DroneOrderMaintenanceService {
         if (order.getReservedBoxId() != null) {
             lockerClient.releaseBox(order.getReservedBoxId());
         }
+        releaseSourceBoxQuietly(order);
 
         order.setCancelReason(request.reasonCode());
         order.setStaffNote(note);
@@ -255,6 +275,22 @@ public class DroneOrderMaintenanceService {
                 mission.getLoadedByUserId(),
                 mission.getLoadedAt(),
                 mission.getReadyToLaunchAt());
+    }
+
+    /// Nhả ô DRONE ở tủ gửi và xoá liên kết khỏi đơn để không nhả lần hai. Trạng thái ô
+    /// chỉ là bản sao của đơn: lỗi gọi locker-service không được làm hỏng thao tác chính,
+    /// job đối soát sẽ nhả ô mồ côi sau.
+    private void releaseSourceBoxQuietly(LockerOrder order) {
+        Long sourceBoxId = order.getSourceBoxId();
+        if (sourceBoxId == null) {
+            return;
+        }
+        try {
+            lockerClient.releaseBox(sourceBoxId);
+        } catch (RuntimeException ignored) {
+            // Xem chú thích trên.
+        }
+        order.setSourceBoxId(null);
     }
 
     private LockerOrder findDroneOrder(Long orderId) {
@@ -326,6 +362,27 @@ public class DroneOrderMaintenanceService {
                 && mission.isCompartmentLocked();
     }
 
+    private void addJourneyEvent(
+            Long orderId, String fromStage, String toStage, Long actorUserId, String note) {
+        OrderStatusHistory history = new OrderStatusHistory();
+        history.setOrderId(orderId);
+        history.setOldStatus(fromStage);
+        history.setNewStatus(toStage);
+        history.setChangedByUserId(actorUserId);
+        history.setNote(note);
+        historyRepository.save(history);
+    }
+
+    private void notifyDeliveryStageQuietly(LockerOrder order, String status, String eta) {
+        try {
+            Long receiver = order.getReceiverUserId() != null ? order.getReceiverUserId() : order.getUserId();
+            notificationClient.notifyDeliveryStatus(
+                    new DeliveryStatusNotificationRequest(order.getId(), receiver, status, eta));
+        } catch (RuntimeException ignored) {
+            // Trạng thái DB là nguồn sự thật; push/STOMP chỉ là kênh cập nhật nhanh.
+        }
+    }
+
     private void validateAssignedOperator(DroneMission mission, Long userId) {
         if (!Objects.equals(mission.getAssignedByUserId(), userId)) {
             throw new BusinessException(
@@ -360,12 +417,12 @@ public class DroneOrderMaintenanceService {
         }
     }
 
-    private void validateLockerPreflight(LockerLayoutDto layout) {
+    private void validateLockerPreflight(LockerLayoutDto layout, String role) {
         if (!"ACTIVE".equals(layout.status())) {
-            throw new BusinessException("LOCKER_INACTIVE", "Destination locker is not active");
+            throw new BusinessException("LOCKER_INACTIVE", role + " locker is not active");
         }
         if (!Boolean.TRUE.equals(layout.landingPad())) {
-            throw new BusinessException("LANDING_PAD_ABSENT", "Destination locker has no landing pad");
+            throw new BusinessException("LANDING_PAD_ABSENT", role + " locker has no landing pad");
         }
         if (!"OK".equals(layout.landingPadStatus())) {
             throw new BusinessException("LANDING_PAD_UNAVAILABLE", "Landing pad is not ready");

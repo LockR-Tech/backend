@@ -213,6 +213,65 @@ class PaymentServiceCheckoutTest {
         assertFalse(rules.isMethodEnabled("WALLET"));
     }
 
+    @Test
+    void refundOrderCreditsWalletOncePerCompletedPayment() {
+        PaymentRecord paid = new PaymentRecord();
+        paid.setId(7L);
+        paid.setOrderId(55L);
+        paid.setUserId(44L);
+        paid.setAmount(BigDecimal.valueOf(15000));
+        paid.setStatus("COMPLETED");
+        paid.setReferenceId("PAY-55-1");
+        PaymentRecord pending = new PaymentRecord();
+        pending.setId(8L);
+        pending.setOrderId(55L);
+        pending.setUserId(44L);
+        pending.setAmount(BigDecimal.valueOf(15000));
+        pending.setStatus("PENDING");
+        when(repository.findByOrderId(55L)).thenReturn(List.of(paid, pending));
+        when(refundRepository.findByPaymentIdIn(List.of(7L))).thenReturn(List.of());
+
+        var result = paymentService.refundOrder(55L, "Đơn drone bị huỷ", 99L);
+
+        assertEquals(0, BigDecimal.valueOf(15000).compareTo(result.refundedAmount()));
+        assertEquals(1, result.refundedPayments());
+        verify(refundRepository).save(org.mockito.ArgumentMatchers.argThat(refund ->
+                refund.getPaymentId().equals(7L) && "COMPLETED".equals(refund.getStatus())));
+        // Mọi phương thức đều hoàn về ví; khoản chưa hoàn tất không được hoàn.
+        verify(walletService).credit(
+                org.mockito.ArgumentMatchers.eq(44L),
+                org.mockito.ArgumentMatchers.eq(BigDecimal.valueOf(15000)),
+                org.mockito.ArgumentMatchers.eq(WalletService.SOURCE_REFUND),
+                org.mockito.ArgumentMatchers.eq("RF-PAY-55-1"),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void refundOrderSkipsPaymentsAlreadyRefunded() {
+        PaymentRecord paid = new PaymentRecord();
+        paid.setId(7L);
+        paid.setOrderId(55L);
+        paid.setUserId(44L);
+        paid.setAmount(BigDecimal.valueOf(15000));
+        paid.setStatus("COMPLETED");
+        paid.setReferenceId("PAY-55-1");
+        com.huynqb.laundrylocker.payment.model.RefundRecord done =
+                new com.huynqb.laundrylocker.payment.model.RefundRecord();
+        done.setPaymentId(7L);
+        done.setStatus("COMPLETED");
+        when(repository.findByOrderId(55L)).thenReturn(List.of(paid));
+        when(refundRepository.findByPaymentIdIn(List.of(7L))).thenReturn(List.of(done));
+
+        var result = paymentService.refundOrder(55L, "Đơn drone bị huỷ", 99L);
+
+        assertEquals(0, result.refundedPayments());
+        verify(refundRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        verify(walletService, org.mockito.Mockito.never()).credit(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+    }
+
     private PaymentService serviceWith(Map<String, ?> overrides) {
         return new PaymentService(
                 repository, refundRepository, rabbitTemplate, environment, walletService, orderClient, momoService,

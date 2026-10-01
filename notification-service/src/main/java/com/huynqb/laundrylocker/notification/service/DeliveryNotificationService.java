@@ -32,10 +32,18 @@ public class DeliveryNotificationService {
      * 6 mốc trạng thái + tiêu đề/nội dung tiếng Việt mặc định.
      */
     public enum DeliveryStatus {
+        AWAITING_DISPATCH("awaiting_dispatch", "Đơn drone đang chờ tiếp nhận", "Đội bay đã nhận được yêu cầu của bạn"),
+        ACCEPTED("accepted", "Đội bay đã tiếp nhận", "Điều phối viên đã gán drone cho đơn hàng"),
+        LOADING_CONFIRMED("loading_confirmed", "Đã nạp hàng lên drone", "Kiện hàng đã được cân, niêm phong và khóa an toàn"),
+        LAUNCHING("launching", "Drone đang khởi phóng", "Đội bay đang thực hiện quy trình khởi phóng"),
         DISPATCHED("dispatched", "Drone đang giao hàng", "Drone đang trên đường giao hàng của bạn"),
+        DEPARTED("departed", "Drone đã rời trạm", "Drone đã cất cánh khỏi tủ nguồn"),
+        EN_ROUTE("en_route", "Drone đang trên đường", "Drone đang bay tới tủ nhận"),
         APPROACHING("approaching", "Drone sắp đến", "Drone sắp đến nơi, vui lòng chuẩn bị ra nhận"),
         ARRIVED("arrived", "Drone đã đến nơi", "Drone đã đến nơi, vui lòng ra nhận hàng"),
         DELIVERED("delivered", "Giao hàng thành công", "Đã giao hàng thành công. Cảm ơn bạn!"),
+        READY_FOR_PICKUP("ready_for_pickup", "Hàng sẵn sàng để nhận", "Kiện hàng đã được gửi an toàn vào tủ nhận"),
+        CANCELED("canceled", "Nhiệm vụ drone đã hủy", "Nhiệm vụ đã được hủy trước khi cất cánh"),
         DELAYED("delayed", "Đơn hàng bị chậm", "Đơn của bạn đang bị chậm"),
         FAILED("failed", "Giao hàng không thành công", "Giao không thành công, drone đang quay về"),
         UNKNOWN("unknown", "Cập nhật đơn hàng", "Đơn hàng của bạn có cập nhật mới");

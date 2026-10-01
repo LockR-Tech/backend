@@ -102,7 +102,7 @@ class OrderServiceDroneDeliveryTest {
 
         DroneDeliveryOrderResponse response =
                 orderService.createDroneDelivery(
-                        new CreateDroneDeliveryOrderRequest(5L, 9001L, "Tai lieu", 1200, "CASH"), 44L, "idem-1");
+                        new CreateDroneDeliveryOrderRequest(3L, 5L, 9001L, "Tai lieu", 1200, "CASH"), 44L, "idem-1");
 
         assertEquals(existing.getId(), response.orderId());
         assertEquals(existing.getReservedBoxId(), response.reservedBoxId());
@@ -123,6 +123,13 @@ class OrderServiceDroneDeliveryTest {
                                                 91L, "m1@test", "0911", "M1", "ACTIVE", Set.of("DRONE_TECHNICIAN")),
                                         new UserSummary(
                                                 92L, "m2@test", "0912", "M2", "ACTIVE", Set.of("DRONE_TECHNICIAN")))));
+        when(lockerLookupClient.getLockers(any()))
+                .thenReturn(ApiResponse.ok(List.of(droneLocker(3L), droneLocker(5L))));
+        // Người gửi không chọn ô ⇒ hệ thống lấy một ô DRONE trống của tủ gửi.
+        when(lockerCellClient.findAvailable(3L, null, "DRONE"))
+                .thenReturn(ApiResponse.ok(new CellDto(8001L, 1, "M", "DRONE", 0, 0, "AVAILABLE", null)));
+        when(lockerClient.reserveBox(8001L, "DRONE"))
+                .thenReturn(ApiResponse.ok(new LockerBoxSummary(3L, 8001L, "CAB-03", 1, "RESERVED")));
         when(lockerCellClient.getCell(9001L))
                 .thenReturn(ApiResponse.ok(new CellDto(9001L, 7, "M", "DRONE", 0, 0, "AVAILABLE", null)));
         when(lockerClient.reserveBox(9001L, "DRONE"))
@@ -138,15 +145,76 @@ class OrderServiceDroneDeliveryTest {
 
         DroneDeliveryOrderResponse response =
                 orderService.createDroneDelivery(
-                        new CreateDroneDeliveryOrderRequest(5L, 9001L, "Tai lieu", 1200, "CASH"), 44L, "idem-2");
+                        new CreateDroneDeliveryOrderRequest(3L, 5L, 9001L, "Tai lieu", 1200, "CASH"), 44L, "idem-2");
 
         assertEquals(77L, response.orderId());
         assertEquals(9001L, response.reservedBoxId());
         assertEquals("DRONE_DELIVERY", response.type());
         assertEquals("AWAITING_DISPATCH", response.deliveryStage());
         assertEquals("DEMO", response.fulfillmentMode());
+        assertEquals(3L, response.sourceLockerId());
+        assertEquals(5L, response.destinationLockerId());
         verify(lockerClient).reserveBox(9001L, "DRONE");
+        // Ô gửi ở Locker A cũng được giữ để người khác không đặt chồng lên.
+        verify(lockerClient).reserveBox(8001L, "DRONE");
         verify(notificationClient, org.mockito.Mockito.times(2)).requestNotification(any());
+    }
+
+    @Test
+    void createDroneDeliveryReleasesSourceCellWhenDestinationCellCannotBeHeld() {
+        when(orderRepository.findByUserIdAndIdempotencyKey(44L, "idem-5")).thenReturn(Optional.empty());
+        when(userClient.getUser(44L))
+                .thenReturn(ApiResponse.ok(new UserSummary(44L, "u@test", "0901", "User", "ACTIVE")));
+        when(lockerLookupClient.getLockers(any()))
+                .thenReturn(ApiResponse.ok(List.of(droneLocker(3L), droneLocker(5L))));
+        when(lockerCellClient.getCell(8001L))
+                .thenReturn(ApiResponse.ok(new CellDto(8001L, 1, "M", "DRONE", 0, 0, "AVAILABLE", null)));
+        when(lockerClient.getBox(8001L))
+                .thenReturn(ApiResponse.ok(new LockerBoxSummary(3L, 8001L, "CAB-03", 1, "AVAILABLE")));
+        when(lockerClient.reserveBox(8001L, "DRONE"))
+                .thenReturn(ApiResponse.ok(new LockerBoxSummary(3L, 8001L, "CAB-03", 1, "RESERVED")));
+        // Tủ nhận hết ô DRONE trống.
+        when(lockerCellClient.findAvailable(5L, null, "DRONE")).thenReturn(ApiResponse.ok(null));
+
+        BusinessException error =
+                assertThrows(
+                        BusinessException.class,
+                        () ->
+                                orderService.createDroneDelivery(
+                                        new CreateDroneDeliveryOrderRequest(
+                                                3L, 5L, null, "Tai lieu", 1200, "WALLET", null, 8001L),
+                                        44L,
+                                        "idem-5"));
+
+        assertEquals("BOX_NOT_AVAILABLE", error.getCode());
+        verify(lockerClient).releaseBox(8001L);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void createDroneDeliveryRejectsSourceCellOfAnotherLocker() {
+        when(orderRepository.findByUserIdAndIdempotencyKey(44L, "idem-6")).thenReturn(Optional.empty());
+        when(userClient.getUser(44L))
+                .thenReturn(ApiResponse.ok(new UserSummary(44L, "u@test", "0901", "User", "ACTIVE")));
+        when(lockerLookupClient.getLockers(any()))
+                .thenReturn(ApiResponse.ok(List.of(droneLocker(3L), droneLocker(5L))));
+        when(lockerCellClient.getCell(8001L))
+                .thenReturn(ApiResponse.ok(new CellDto(8001L, 1, "M", "DRONE", 0, 0, "AVAILABLE", null)));
+        when(lockerClient.getBox(8001L))
+                .thenReturn(ApiResponse.ok(new LockerBoxSummary(9L, 8001L, "CAB-09", 1, "AVAILABLE")));
+
+        BusinessException error =
+                assertThrows(
+                        BusinessException.class,
+                        () ->
+                                orderService.createDroneDelivery(
+                                        new CreateDroneDeliveryOrderRequest(
+                                                3L, 5L, null, "Tai lieu", 1200, "WALLET", null, 8001L),
+                                        44L,
+                                        "idem-6"));
+
+        assertEquals("DRONE_SOURCE_CELL_MISMATCH", error.getCode());
+        verify(lockerClient, never()).reserveBox(any(), any());
     }
 
     @Test
@@ -159,7 +227,7 @@ class OrderServiceDroneDeliveryTest {
                         () ->
                                 orderService.createDroneDelivery(
                                         new CreateDroneDeliveryOrderRequest(
-                                                5L, 9001L, "Tai lieu", 1200, "CASH", "DEMO"),
+                                                3L, 5L, 9001L, "Tai lieu", 1200, "CASH", "DEMO"),
                                         44L,
                                         "idem-denied"));
 
@@ -183,8 +251,27 @@ class OrderServiceDroneDeliveryTest {
     }
 
     @Test
+    void completingPickupEndsTheDeliveryStageToo() {
+        LockerOrder order = droneOrder(41L, 44L, 5L, 9001L, "idem-7");
+        order.setStatus("STORING");
+        order.setDeliveryStage("READY_FOR_PICKUP");
+        order.setPaymentStatus("PAID");
+        when(orderRepository.findById(41L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = orderService.complete(41L, 44L);
+
+        // Trước đây deliveryStage giữ READY_FOR_PICKUP nên app vẫn hiện "Chờ nhận hàng".
+        assertEquals("COMPLETED", order.getStatus());
+        assertEquals("COMPLETED", order.getDeliveryStage());
+        assertEquals("DONE", response.nextAction());
+        verify(lockerClient).releaseBox(9001L);
+    }
+
+    @Test
     void cancelDroneDeliveryReleasesReservedBox() {
         LockerOrder order = droneOrder(21L, 44L, 5L, 9001L, "idem-3");
+        order.setSourceBoxId(8001L);
         when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
         when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -194,6 +281,14 @@ class OrderServiceDroneDeliveryTest {
         orderService.cancel(21L, null, 44L);
 
         verify(lockerClient).releaseBox(9001L);
+        verify(lockerClient).releaseBox(8001L);
+        assertEquals("CANCELED", order.getStatus());
+        assertEquals("CANCELED", order.getDeliveryStage());
+    }
+
+    private com.huynqb.laundrylocker.order.dto.admin.LockerInfo droneLocker(Long id) {
+        return new com.huynqb.laundrylocker.order.dto.admin.LockerInfo(
+                id, 1L, "LK-" + id, "Locker " + id, "ACTIVE", "Dia chi " + id, 10.7, 106.7, true, null, 8, 4);
     }
 
     private LockerOrder droneOrder(Long id, Long userId, Long lockerId, Long boxId, String idempotencyKey) {

@@ -225,15 +225,25 @@ public class OrderService {
 
         String fulfillmentMode = resolveDroneFulfillmentMode(request.fulfillmentMode(), userId);
         userClient.getUser(userId);
-        Long reservedBoxId = resolveAndReserveDroneBox(request);
+        validateDroneRoute(request.sourceLockerId(), request.destinationLockerId());
+        Long sourceBoxId = resolveAndReserveDroneSourceBox(request);
+        Long reservedBoxId;
+        try {
+            reservedBoxId = resolveAndReserveDroneBox(request);
+        } catch (RuntimeException ex) {
+            // Không giữ được ô nhận thì không được để ô gửi kẹt RESERVED.
+            releaseBoxQuietly(sourceBoxId);
+            throw ex;
+        }
 
         LockerOrder order = new LockerOrder();
         order.setOrderCode(generateOrderCode());
         order.setUserId(userId);
-        order.setReceiverId(userId);
-        order.setReceiverUserId(userId);
+        applyDroneReceiver(order, request, userId);
         order.setLockerId(request.destinationLockerId());
+        order.setSourceLockerId(request.sourceLockerId());
         order.setDestinationLockerId(request.destinationLockerId());
+        order.setSourceBoxId(sourceBoxId);
         order.setSendBoxId(reservedBoxId);
         order.setReservedBoxId(reservedBoxId);
         order.setType("DRONE_DELIVERY");
@@ -249,8 +259,71 @@ public class OrderService {
         order.setOriginalPrice(rules.droneDeliveryFee());
 
         LockerOrder saved = orderRepository.save(order);
+        addHistory(saved.getId(), null, "AWAITING_DISPATCH", userId,
+                "Đơn drone được tạo tại tủ nguồn #" + request.sourceLockerId()
+                        + " và chờ điều phối tới tủ đích #" + request.destinationLockerId());
         notifyMaintenanceDroneOrderCreated(saved);
         return toDroneDeliveryResponse(saved);
+    }
+
+    /// Người nhận của đơn drone. Không nhập số điện thoại ⇒ người đặt tự nhận. Có nhập:
+    /// số trùng một tài khoản Lock.R thì người đó thấy hành trình và nhận mã trong app;
+    /// không trùng thì mã mở ô gửi qua SMS tới đúng số này khi hàng vào tủ.
+    private void applyDroneReceiver(LockerOrder order, CreateDroneDeliveryOrderRequest request, Long userId) {
+        String phone = StringUtils.hasText(request.receiverPhone()) ? request.receiverPhone().trim() : null;
+        String name = StringUtils.hasText(request.receiverName()) ? request.receiverName().trim() : null;
+        if (phone == null) {
+            order.setReceiverId(userId);
+            order.setReceiverUserId(userId);
+            order.setReceiverName(name);
+            return;
+        }
+        if (!phone.matches("^[+]?[0-9]{9,15}$")) {
+            throw new BusinessException("DRONE_RECEIVER_PHONE_INVALID", "Receiver phone number is not valid");
+        }
+        order.setReceiverPhone(phone);
+        order.setReceiverName(name);
+        Long receiverUserId = null;
+        try {
+            var receiver = userClient.getUserByPhone(phone).data();
+            if (receiver != null) {
+                receiverUserId = receiver.id();
+                if (name == null && StringUtils.hasText(receiver.fullName())) {
+                    order.setReceiverName(receiver.fullName());
+                }
+            }
+        } catch (Exception ex) {
+            // Không tra được ⇒ coi như người nhận chưa có tài khoản, mã sẽ gửi qua SMS.
+            log.info("Drone receiver {} has no Lock.R account or lookup failed: {}", phone, ex.getMessage());
+        }
+        order.setReceiverId(receiverUserId);
+        order.setReceiverUserId(receiverUserId);
+    }
+
+    private void validateDroneRoute(Long sourceLockerId, Long destinationLockerId) {
+        if (sourceLockerId == null || destinationLockerId == null) {
+            throw new BusinessException("DRONE_ROUTE_REQUIRED", "Source and destination lockers are required");
+        }
+        if (sourceLockerId.equals(destinationLockerId)) {
+            throw new BusinessException("DRONE_ROUTE_INVALID", "Source and destination lockers must be different");
+        }
+        var response = lockerLookupClient.getLockers(List.of(sourceLockerId, destinationLockerId));
+        var lockers = response == null || response.data() == null ? List.<com.huynqb.laundrylocker.order.dto.admin.LockerInfo>of() : response.data();
+        var source = lockers.stream().filter(l -> sourceLockerId.equals(l.id())).findFirst()
+                .orElseThrow(() -> new BusinessException("DRONE_SOURCE_NOT_FOUND", "Source locker was not found"));
+        var destination = lockers.stream().filter(l -> destinationLockerId.equals(l.id())).findFirst()
+                .orElseThrow(() -> new BusinessException("DRONE_DESTINATION_NOT_FOUND", "Destination locker was not found"));
+        validateDroneLocker(source, "source");
+        validateDroneLocker(destination, "destination");
+    }
+
+    private void validateDroneLocker(com.huynqb.laundrylocker.order.dto.admin.LockerInfo locker, String role) {
+        if (!"ACTIVE".equalsIgnoreCase(locker.status())) {
+            throw new BusinessException("DRONE_LOCKER_INACTIVE", "Drone " + role + " locker is not active");
+        }
+        if (!Boolean.TRUE.equals(locker.landingPad())) {
+            throw new BusinessException("LANDING_PAD_ABSENT", "Drone " + role + " locker has no landing pad");
+        }
     }
 
     private String resolveDroneFulfillmentMode(String requestedMode, Long userId) {
@@ -370,6 +443,56 @@ public class OrderService {
             throw ex;
         } catch (Exception ex) {
             throw new BusinessException("BOX_NOT_AVAILABLE", "No available cell of requested type");
+        }
+    }
+
+    /// Giữ ô DRONE tại tủ gửi để người gửi bỏ kiện vào. Người gửi chỉ định ô thì ô đó
+    /// phải là ô DRONE còn trống của đúng tủ gửi; không chỉ định thì lấy một ô DRONE
+    /// trống bất kỳ. Tủ gửi không còn ô DRONE trống ⇒ từ chối đơn: kiện không có chỗ
+    /// chờ nạp.
+    private Long resolveAndReserveDroneSourceBox(CreateDroneDeliveryOrderRequest request) {
+        Long boxId = request.sourceBoxId();
+        if (boxId == null) {
+            try {
+                boxId = findAvailableCell(request.sourceLockerId(), null, "DRONE");
+            } catch (BusinessException ex) {
+                throw new BusinessException(
+                        "DRONE_SOURCE_CELL_UNAVAILABLE", "Source locker has no available DRONE cell");
+            }
+        } else {
+            CellDto cell = lockerCellClient.getCell(boxId).data();
+            if (cell == null) {
+                throw new BusinessException("BOX_NOT_FOUND", "Box not found");
+            }
+            if (!"DRONE".equalsIgnoreCase(cell.cellType())) {
+                throw new BusinessException("DRONE_CELL_REQUIRED", "Selected box must be a DRONE cell");
+            }
+            if (!"AVAILABLE".equalsIgnoreCase(cell.status())) {
+                throw new BusinessException(
+                        "DRONE_SOURCE_CELL_UNAVAILABLE", "Selected drone cell at the source locker is not available");
+            }
+            var box = lockerClient.getBox(boxId).data();
+            if (box == null || !request.sourceLockerId().equals(box.lockerId())) {
+                throw new BusinessException(
+                        "DRONE_SOURCE_CELL_MISMATCH", "Selected drone cell does not belong to the source locker");
+            }
+        }
+        try {
+            lockerClient.reserveBox(boxId, "DRONE");
+            return boxId;
+        } catch (Exception ex) {
+            throw unwrapDownstreamError(ex, "BOX_RESERVE_FAILED", "Could not reserve drone box " + boxId);
+        }
+    }
+
+    private void releaseBoxQuietly(Long boxId) {
+        if (boxId == null) {
+            return;
+        }
+        try {
+            lockerClient.releaseBox(boxId);
+        } catch (Exception ex) {
+            log.warn("Could not release box {}: {}", boxId, ex.getMessage());
         }
     }
 
@@ -1328,7 +1451,9 @@ public class OrderService {
         }
 
         List<LockerOrder> activeOrders = new ArrayList<>();
-        for (String status : List.of("INITIALIZED", "STORING", "RETURNED")) {
+        // AWAITING_DISPATCH: đơn drone giữ ô ở cả tủ gửi lẫn tủ nhận suốt thời gian chờ
+        // đội bay; thiếu trạng thái này thì job coi các ô đó là mồ côi và nhả mất.
+        for (String status : List.of("INITIALIZED", "AWAITING_DISPATCH", "STORING", "RETURNED")) {
             activeOrders.addAll(orderRepository.findByStatusOrderByCreatedAtDesc(status));
         }
         java.util.Set<Long> heldBoxIds = new java.util.HashSet<>();
@@ -1338,6 +1463,12 @@ public class OrderService {
             }
             if (order.getReceiveBoxId() != null) {
                 heldBoxIds.add(order.getReceiveBoxId());
+            }
+            if (order.getReservedBoxId() != null) {
+                heldBoxIds.add(order.getReservedBoxId());
+            }
+            if (order.getSourceBoxId() != null) {
+                heldBoxIds.add(order.getSourceBoxId());
             }
         }
 
@@ -1437,6 +1568,13 @@ public class OrderService {
             LockerOrder order, String newStatus, Long actorId, Long receiveBoxId, String note) {
         String oldStatus = order.getStatus();
         order.setStatus(newStatus.toUpperCase());
+        // Đơn drone kết thúc thì chặng giao kết thúc theo. Client hiển thị đơn drone
+        // bằng deliveryStage: để nguyên READY_FOR_PICKUP thì đơn khách đã lấy hàng vẫn
+        // hiện "Chờ nhận hàng", đơn đã huỷ vẫn hiện "Chờ điều phối".
+        if ("DRONE_DELIVERY".equalsIgnoreCase(order.getType())
+                && Set.of("COMPLETED", "CANCELED", "EXPIRED").contains(order.getStatus())) {
+            order.setDeliveryStage(order.getStatus());
+        }
         if (actorId != null && !"COMPLETED".equals(order.getStatus()) && !"CANCELED".equals(order.getStatus())) {
             order.setStaffId(actorId);
         }
@@ -1665,6 +1803,7 @@ public class OrderService {
         boxIds.add(order.getSendBoxId());
         boxIds.add(order.getReceiveBoxId());
         boxIds.add(order.getReservedBoxId());
+        boxIds.add(order.getSourceBoxId());
         for (Long boxId : boxIds) {
             if (boxId != null) {
                 lockerClient.releaseBox(boxId);
@@ -1878,7 +2017,7 @@ public class OrderService {
                 null,
                 null,
                 null,
-                null,
+                order.getSourceLockerId(),
                 null);
     }
 

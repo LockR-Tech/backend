@@ -166,6 +166,17 @@ public class PaymentController {
         return updateStatus(paymentId, request);
     }
 
+    /// order-service gọi khi một đơn đã thanh toán bị huỷ (gateway chặn /internal từ ngoài).
+    @PostMapping("/internal/payments/orders/{orderId}/refund")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.internal.OrderRefundResult> refundOrderInternal(
+            @PathVariable Long orderId,
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) Long actorUserId) {
+        return ApiResponse.ok(
+                "ORDER_REFUNDED", "Order payments refunded to wallet",
+                paymentService.refundOrder(orderId, reason, actorUserId));
+    }
+
     @GetMapping("/internal/payments/{id}")
     public ApiResponse<PaymentResponse> getInternal(@PathVariable Long id) {
         return ApiResponse.ok(paymentService.get(id));
