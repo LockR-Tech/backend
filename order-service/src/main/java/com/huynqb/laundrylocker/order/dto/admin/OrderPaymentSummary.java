@@ -15,5 +15,7 @@ public record OrderPaymentSummary(
         BigDecimal paidAmount,
         String lastPaidMethod,
         LocalDateTime lastPaidAt,
-        BigDecimal refundedAmount) {
+        BigDecimal refundedAmount,
+        String lastPaidReference,
+        String lastPaidTransactionId) {
 }

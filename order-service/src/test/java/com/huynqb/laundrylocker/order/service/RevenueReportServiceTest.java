@@ -221,7 +221,7 @@ class RevenueReportServiceTest {
         when(orderRepository.findAll(any(Specification.class))).thenReturn(List.of(send));
         when(resolver.paymentSummaries(anyCollection())).thenReturn(lookup(List.of(new OrderPaymentSummary(
                 1L, 2, 12L, "CASH", "COMPLETED", BigDecimal.valueOf(2000), null, BigDecimal.valueOf(17000), "CASH",
-                LocalDateTime.of(2026, 9, 12, 3, 0), BigDecimal.ZERO)), OrderPaymentSummary::orderId));
+                LocalDateTime.of(2026, 9, 12, 3, 0), BigDecimal.ZERO, null, null)), OrderPaymentSummary::orderId));
 
         CustomerRevenueDetailResponse detail = service.customerDetail(44L, FROM, TO);
 

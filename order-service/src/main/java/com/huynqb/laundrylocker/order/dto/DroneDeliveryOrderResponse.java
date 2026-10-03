@@ -58,7 +58,13 @@ public record DroneDeliveryOrderResponse(
         String cancelNote,
         /// Ô DRONE tại tủ gửi đang giữ cho kiện này; null sau khi đã nạp lên drone.
         Long sourceBoxId,
-        Integer sourceBoxNumber) {
+        Integer sourceBoxNumber,
+        /// Lần thanh toán thành công gần nhất (payment-service); null khi chưa trả hoặc tra cứu lỗi.
+        String paymentMethod,
+        /// Mã tham chiếu Lock.R của giao dịch — nội dung chuyển khoản / mã đơn gửi sang cổng.
+        String paymentReference,
+        /// Mã giao dịch phía cổng thanh toán/ngân hàng; null với ví Lock.R và tiền mặt.
+        String paymentTransactionId) {
 
     /** Constructor tương thích cho response ngay sau khi tạo đơn/chưa có mission. */
     public DroneDeliveryOrderResponse(
@@ -75,6 +81,7 @@ public record DroneDeliveryOrderResponse(
                 fulfillmentMode, missionId, missionStatus, droneUnitId, droneCode,
                 sourceLockerId, etaMinutes, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, List.of(),
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null);
     }
 }

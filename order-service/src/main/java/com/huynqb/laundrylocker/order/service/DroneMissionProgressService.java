@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
+import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.DeliveryStatusNotificationRequest;
 import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.dto.GuestNotification;
@@ -25,6 +26,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
@@ -52,6 +54,7 @@ public class DroneMissionProgressService {
     private final NotificationClient notificationClient;
     private final LockerDroneClient lockerDroneClient;
     private final LockerClient lockerClient;
+    private final UserClient userClient;
     private final OrderRules rules;
 
     /// Chặng kế tiếp của một mission đang bay; null nếu mission không ở chặng bay.
@@ -206,41 +209,130 @@ public class DroneMissionProgressService {
     }
 
     /**
-     * Người nhận khác người đặt không thấy đơn trong app của mình nên phải được gửi
-     * mã mở ô: thông báo trong app nếu có tài khoản, SMS tới số ghi trên đơn nếu không.
-     * Người đặt tự nhận thì xem mã ngay trong đơn hàng — không gửi thêm.
+     * Gửi mã mở ô cho người nhận khi hàng vào tủ, rồi ghi vào nhật ký hành trình đã gửi
+     * lúc nào, qua kênh nào — khách, điều phối viên và admin đều thấy người nhận đã có mã chưa.
+     *
+     * <p>Thử MỌI kênh có thể, không dừng ở kênh đầu thành công:
+     * <ul>
+     *   <li>thông báo trong app — người nhận có tài khoản và khác người đặt (người đặt tự
+     *       nhận thì xem mã ngay trong đơn);</li>
+     *   <li>email — email tài khoản người nhận, hoặc email người đặt nhập cho người nhận
+     *       chưa có tài khoản;</li>
+     *   <li>SMS — người nhận chưa có tài khoản, tới số ghi trên đơn.</li>
+     * </ul>
+     * Không bao giờ ném lỗi: hỏng kênh nhắn tin không được làm hỏng việc giao hàng.
      */
     private void sendPickupCodeQuietly(LockerOrder order) {
         Long receiver = order.getReceiverUserId();
         boolean receiverIsSender = receiver != null && receiver.equals(order.getUserId());
-        if (receiverIsSender) {
-            return;
-        }
         String deadline = order.getPickupDeadline() == null
                 ? "chưa xác định"
                 : DEADLINE_FORMAT.format(
                         order.getPickupDeadline().atZone(ZoneOffset.UTC).withZoneSameInstant(DISPLAY_ZONE));
-        try {
-            if (receiver != null) {
-                notificationClient.requestNotification(new NotificationRequest(
-                        receiver,
-                        "Mã nhận hàng giao bằng drone",
-                        "Kiện hàng " + order.getOrderCode() + " đã vào tủ nhận. Mã mở ô: " + order.getPinCode()
-                                + ". Hạn nhận: " + deadline + ".",
-                        "DRONE_DELIVERY_STATUS_CHANGED",
-                        order.getId(),
-                        "ORDER"));
-            } else if (StringUtils.hasText(order.getReceiverPhone())) {
-                notificationClient.notifyGuest(new GuestNotification.Request(
-                        order.getReceiverPhone(),
-                        null,
-                        "Mã mở tủ Lock.R cho đơn " + order.getOrderCode(),
-                        "Lock.R: Kien hang " + order.getOrderCode() + " giao bang drone da vao tu. Ma mo tu: "
-                                + order.getPinCode() + ". Han lay: " + deadline + ".",
-                        null));
+        List<String> reached = new ArrayList<>();
+
+        if (receiver != null && !receiverIsSender && sendInAppQuietly(order, receiver, deadline)) {
+            reached.add("thông báo trong app");
+        }
+
+        String email = rules.receiverNotifyEmail() ? receiverEmail(order, receiver) : null;
+        String phone = receiver == null ? order.getReceiverPhone() : null;
+        if (StringUtils.hasText(email) || StringUtils.hasText(phone)) {
+            GuestNotification.Result result = sendOutOfBandQuietly(order, phone, email, deadline);
+            if (result.emailSent()) {
+                reached.add("email " + maskEmail(email));
             }
+            if (result.smsSent()) {
+                reached.add("SMS " + phone);
+            }
+        }
+
+        String note;
+        if (!reached.isEmpty()) {
+            note = "Đã gửi mã nhận hàng cho người nhận qua " + String.join(", ", reached) + ".";
+        } else if (receiverIsSender) {
+            note = "Người đặt tự nhận hàng — mã mở ô có trong đơn hàng.";
+        } else {
+            note = "Chưa gửi được mã nhận hàng cho người nhận — người gửi cần tự chuyển mã trong đơn.";
+        }
+        recordQuietly(order, note);
+    }
+
+    private boolean sendInAppQuietly(LockerOrder order, Long receiver, String deadline) {
+        try {
+            notificationClient.requestNotification(new NotificationRequest(
+                    receiver,
+                    "Mã nhận hàng giao bằng drone",
+                    "Kiện hàng " + order.getOrderCode() + " đã vào tủ nhận. Mã mở ô: " + order.getPinCode()
+                            + ". Hạn nhận: " + deadline + ".",
+                    "DRONE_DELIVERY_STATUS_CHANGED",
+                    order.getId(),
+                    "ORDER"));
+            return true;
         } catch (Exception ignored) {
-            // Người gửi vẫn xem được mã trong đơn và tự chuyển cho người nhận.
+            return false;
+        }
+    }
+
+    private GuestNotification.Result sendOutOfBandQuietly(
+            LockerOrder order, String phone, String email, String deadline) {
+        String name = StringUtils.hasText(order.getReceiverName()) ? " " + order.getReceiverName() : "";
+        String emailBody = "Xin chào" + name + ",\n\n"
+                + "Kiện hàng giao bằng drone của bạn đã nằm trong tủ Lock.R.\n\n"
+                + "Mã đơn: " + order.getOrderCode() + "\n"
+                + "Mã mở ô: " + order.getPinCode() + "\n"
+                + "Hạn nhận hàng: " + deadline + "\n\n"
+                + "Nhập mã này trên màn hình tủ để mở ô và lấy hàng. Không chia sẻ mã cho người khác.\n";
+        try {
+            var response = notificationClient.notifyGuest(new GuestNotification.Request(
+                    phone,
+                    email,
+                    "Mã mở tủ Lock.R cho đơn " + order.getOrderCode(),
+                    "Lock.R: Kien hang " + order.getOrderCode() + " giao bang drone da vao tu. Ma mo tu: "
+                            + order.getPinCode() + ". Han lay: " + deadline + ".",
+                    emailBody));
+            GuestNotification.Result result = response == null ? null : response.data();
+            return result == null ? new GuestNotification.Result(false, false, false, false) : result;
+        } catch (Exception ignored) {
+            return new GuestNotification.Result(false, false, false, false);
+        }
+    }
+
+    /// Email người đặt nhập cho người nhận được ưu tiên; không có thì lấy email tài khoản người nhận.
+    private String receiverEmail(LockerOrder order, Long receiver) {
+        if (StringUtils.hasText(order.getReceiverEmail())) {
+            return order.getReceiverEmail().trim();
+        }
+        if (receiver == null) {
+            return null;
+        }
+        try {
+            var account = userClient.getUser(receiver);
+            return account == null || account.data() == null ? null : account.data().email();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /// `khacquan@gmail.com` ⇒ `kh***@gmail.com`: nhật ký hiện cho cả người gửi lẫn nhân viên.
+    static String maskEmail(String email) {
+        int at = email == null ? -1 : email.indexOf('@');
+        if (at <= 0) {
+            return "***";
+        }
+        return email.substring(0, Math.min(2, at)) + "***" + email.substring(at);
+    }
+
+    private void recordQuietly(LockerOrder order, String note) {
+        try {
+            OrderStatusHistory history = new OrderStatusHistory();
+            history.setOrderId(order.getId());
+            history.setOldStatus("READY_FOR_PICKUP");
+            history.setNewStatus("READY_FOR_PICKUP");
+            history.setNote(note);
+            historyRepository.save(history);
+        } catch (Exception ignored) {
+            // Nhật ký gửi mã chỉ để hiển thị, không được làm hỏng việc giao hàng.
         }
     }
 

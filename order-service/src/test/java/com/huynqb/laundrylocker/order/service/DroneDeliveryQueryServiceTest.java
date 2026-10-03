@@ -5,6 +5,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.dto.DroneDeliveryOrderResponse;
 import com.huynqb.laundrylocker.order.dto.admin.BoxInfo;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
+import com.huynqb.laundrylocker.order.dto.admin.OrderPaymentSummary;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
@@ -18,15 +19,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -95,6 +99,34 @@ class DroneDeliveryQueryServiceTest {
         assertEquals("Dieu Phoi Vien", response.journeyEvents().getFirst().actorName());
         // Chưa xác nhận nạp hàng thì checklist chưa có giá trị, không phải "không đạt".
         assertNull(response.parcelMatched());
+    }
+
+    @Test
+    void paidOrderShowsTheTransactionThatPaidIt() {
+        LockerOrder order = order();
+        order.setPaymentStatus("PAID");
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission(77L)));
+        when(references.paymentSummaries(any())).thenReturn(Lookup.of(Map.of(21L, new OrderPaymentSummary(
+                21L, 1, 90L, "VNPAY", "COMPLETED", BigDecimal.valueOf(30000), null,
+                BigDecimal.valueOf(30000), "VNPAY", null, BigDecimal.ZERO, "PAY-21-ABC", "14523311"))));
+
+        DroneDeliveryOrderResponse response = service.get(21L, 44L);
+
+        assertEquals("VNPAY", response.paymentMethod());
+        assertEquals("PAY-21-ABC", response.paymentReference());
+        assertEquals("14523311", response.paymentTransactionId());
+    }
+
+    @Test
+    void unpaidOrderDoesNotAskPaymentServiceForATransaction() {
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order()));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission(77L)));
+
+        DroneDeliveryOrderResponse response = service.get(21L, 44L);
+
+        assertNull(response.paymentReference());
+        verify(references).paymentSummaries(Set.of());
     }
 
     @Test

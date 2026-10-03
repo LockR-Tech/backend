@@ -16,7 +16,24 @@ public record CreateDroneDeliveryOrderRequest(
         Long sourceBoxId,
         /// Người nhận tại tủ đích. Bỏ trống cả hai ⇒ người đặt tự nhận.
         @jakarta.validation.constraints.Size(max = 20) String receiverPhone,
-        @jakarta.validation.constraints.Size(max = 120) String receiverName) {
+        @jakarta.validation.constraints.Size(max = 120) String receiverName,
+        /// Email nhận mã mở ô, tuỳ chọn. Bỏ trống thì dùng email tài khoản của người nhận (nếu có).
+        @jakarta.validation.constraints.Email @jakarta.validation.constraints.Size(max = 255) String receiverEmail) {
+
+    public CreateDroneDeliveryOrderRequest(
+            Long sourceLockerId,
+            Long destinationLockerId,
+            Long preferredBoxId,
+            String description,
+            Integer parcelWeightGrams,
+            String paymentMethod,
+            String fulfillmentMode,
+            Long sourceBoxId,
+            String receiverPhone,
+            String receiverName) {
+        this(sourceLockerId, destinationLockerId, preferredBoxId, description, parcelWeightGrams,
+                paymentMethod, fulfillmentMode, sourceBoxId, receiverPhone, receiverName, null);
+    }
 
     public CreateDroneDeliveryOrderRequest(
             Long sourceLockerId,
