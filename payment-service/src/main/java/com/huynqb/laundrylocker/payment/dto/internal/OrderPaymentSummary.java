@@ -16,5 +16,9 @@ public record OrderPaymentSummary(
         BigDecimal paidAmount,
         String lastPaidMethod,
         LocalDateTime lastPaidAt,
-        BigDecimal refundedAmount) {
+        BigDecimal refundedAmount,
+        /// Mã tham chiếu Lock.R của payment COMPLETED gần nhất (nội dung chuyển khoản / mã đơn ở cổng).
+        String lastPaidReference,
+        /// Mã giao dịch phía cổng thanh toán/ngân hàng; null với ví Lock.R và tiền mặt.
+        String lastPaidTransactionId) {
 }

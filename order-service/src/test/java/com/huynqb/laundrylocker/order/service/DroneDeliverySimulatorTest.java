@@ -42,11 +42,13 @@ class DroneDeliverySimulatorTest {
     private com.huynqb.laundrylocker.order.client.LockerClient lockerClient;
     @Mock
     private DronePositionBroadcaster positionBroadcaster;
+    @Mock
+    private com.huynqb.laundrylocker.order.client.UserClient userClient;
 
     private DroneDeliverySimulator simulator(com.huynqb.laundrylocker.order.settings.OrderRules rules) {
         DroneMissionProgressService progress = new DroneMissionProgressService(
                 missionRepository, orderRepository, historyRepository, notificationClient,
-                lockerDroneClient, lockerClient, rules);
+                lockerDroneClient, lockerClient, userClient, rules);
         return new DroneDeliverySimulator(missionRepository, orderRepository, progress, positionBroadcaster, rules);
     }
 
@@ -95,7 +97,8 @@ class DroneDeliverySimulatorTest {
         verify(lockerDroneClient)
                 .transitionDroneStatus(9L, new DroneStatusTransitionRequest("IN_FLIGHT", "IDLE", null));
         verify(notificationClient).notifyDeliveryStatus(any());
-        verify(historyRepository).save(any());
+        // Một dòng cho chặng hàng vào ô, một dòng ghi đã gửi mã cho người nhận lúc nào.
+        verify(historyRepository, times(2)).save(any());
     }
 
     @Test

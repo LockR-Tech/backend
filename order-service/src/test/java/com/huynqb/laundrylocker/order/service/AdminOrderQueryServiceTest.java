@@ -96,7 +96,8 @@ class AdminOrderQueryServiceTest {
                 3L, new StoreInfo(3L, "Chi nhánh Q1", "028", "1 Lê Lợi", null, null, true, "ACTIVE"))));
         when(resolver.paymentSummaries(anyCollection())).thenReturn(lookup(Map.of(1L, new OrderPaymentSummary(
                 1L, 1, 90L, "WALLET", "COMPLETED", BigDecimal.valueOf(15000), LocalDateTime.of(2026, 9, 14, 1, 0),
-                BigDecimal.valueOf(15000), "WALLET", LocalDateTime.of(2026, 9, 14, 1, 0), BigDecimal.ZERO))));
+                BigDecimal.valueOf(15000), "WALLET", LocalDateTime.of(2026, 9, 14, 1, 0), BigDecimal.ZERO,
+                null, null))));
 
         PageResponse<AdminOrderResponse> page = service.search(criteria(0, 20, null));
 

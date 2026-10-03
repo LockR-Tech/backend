@@ -272,6 +272,8 @@ public class OrderService {
     private void applyDroneReceiver(LockerOrder order, CreateDroneDeliveryOrderRequest request, Long userId) {
         String phone = StringUtils.hasText(request.receiverPhone()) ? request.receiverPhone().trim() : null;
         String name = StringUtils.hasText(request.receiverName()) ? request.receiverName().trim() : null;
+        // Email nhận mã mở ô; bỏ trống thì lúc hàng vào tủ dùng email tài khoản người nhận.
+        order.setReceiverEmail(StringUtils.hasText(request.receiverEmail()) ? request.receiverEmail().trim() : null);
         if (phone == null) {
             order.setReceiverId(userId);
             order.setReceiverUserId(userId);

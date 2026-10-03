@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.order.dto.DroneJourneyEventResponse;
 import com.huynqb.laundrylocker.order.dto.DroneLockerPointResponse;
 import com.huynqb.laundrylocker.order.dto.admin.BoxInfo;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
+import com.huynqb.laundrylocker.order.dto.admin.OrderPaymentSummary;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
@@ -32,6 +33,7 @@ import java.util.Set;
 public class DroneDeliveryQueryService {
 
     private static final List<String> TERMINAL_ORDER_STATUSES = List.of("COMPLETED", "CANCELED", "EXPIRED");
+    private static final Set<String> PAID_PAYMENT_STATUSES = Set.of("PAID", "REFUNDED");
 
     private final LockerOrderRepository orderRepository;
     private final DroneMissionRepository missionRepository;
@@ -112,10 +114,15 @@ public class DroneDeliveryQueryService {
         Set<Long> lockerIds = new HashSet<>();
         Set<Long> boxIds = new HashSet<>();
         Set<Long> userIds = new HashSet<>();
+        Set<Long> paidOrderIds = new HashSet<>();
         List<List<OrderStatusHistory>> histories = new ArrayList<>(rows.size());
         for (Row row : rows) {
             LockerOrder order = row.order();
             DroneMission mission = row.mission();
+            // Chỉ đơn đã trả (hoặc đã hoàn) mới có mã giao dịch — không hỏi payment-service cho đơn chưa trả.
+            if (PAID_PAYMENT_STATUSES.contains(order.getPaymentStatus())) {
+                paidOrderIds.add(order.getId());
+            }
             lockerIds.add(sourceLockerId(order, mission));
             lockerIds.add(destinationLockerId(order));
             boxIds.add(boxId(order));
@@ -134,10 +141,11 @@ public class DroneDeliveryQueryService {
         Lookup<LockerInfo> lockers = references.lockers(lockerIds);
         Lookup<BoxInfo> boxes = references.boxes(boxIds);
         Lookup<UserSummary> users = references.users(userIds);
+        Lookup<OrderPaymentSummary> payments = references.paymentSummaries(paidOrderIds);
 
         List<DroneDeliveryOrderResponse> result = new ArrayList<>(rows.size());
         for (int i = 0; i < rows.size(); i++) {
-            result.add(toResponse(rows.get(i), histories.get(i), lockers, boxes, users));
+            result.add(toResponse(rows.get(i), histories.get(i), lockers, boxes, users, payments));
         }
         return result;
     }
@@ -147,9 +155,11 @@ public class DroneDeliveryQueryService {
             List<OrderStatusHistory> history,
             Lookup<LockerInfo> lockers,
             Lookup<BoxInfo> boxes,
-            Lookup<UserSummary> users) {
+            Lookup<UserSummary> users,
+            Lookup<OrderPaymentSummary> payments) {
         LockerOrder order = row.order();
         DroneMission mission = row.mission();
+        OrderPaymentSummary payment = payments == null ? null : payments.get(order.getId());
         Long sourceId = sourceLockerId(order, mission);
         Long destinationId = destinationLockerId(order);
         Long boxId = boxId(order);
@@ -203,7 +213,10 @@ public class DroneDeliveryQueryService {
                 order.getCancelReason(),
                 "CANCELED".equals(order.getStatus()) ? order.getStaffNote() : null,
                 order.getSourceBoxId(),
-                sourceBox == null ? null : sourceBox.boxNumber());
+                sourceBox == null ? null : sourceBox.boxNumber(),
+                payment == null ? null : payment.lastPaidMethod(),
+                payment == null ? null : payment.lastPaidReference(),
+                payment == null ? null : payment.lastPaidTransactionId());
     }
 
     private static Long sourceLockerId(LockerOrder order, DroneMission mission) {

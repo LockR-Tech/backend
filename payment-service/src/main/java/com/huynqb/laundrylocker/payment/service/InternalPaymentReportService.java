@@ -148,7 +148,9 @@ public class InternalPaymentReportService {
                 paid,
                 lastPaid == null ? null : lastPaid.getMethod(),
                 lastPaid == null ? null : PaymentReportRules.paidAt(lastPaid),
-                refunded == null ? BigDecimal.ZERO : refunded);
+                refunded == null ? BigDecimal.ZERO : refunded,
+                lastPaid == null ? null : lastPaid.getReferenceId(),
+                lastPaid == null ? null : lastPaid.getReferenceTransactionId());
     }
 
     private LocalDateTime parse(String value, String name) {
