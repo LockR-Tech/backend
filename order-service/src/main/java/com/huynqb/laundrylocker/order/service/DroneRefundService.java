@@ -41,7 +41,7 @@ public class DroneRefundService {
         if (order == null
                 || !"DRONE_DELIVERY".equals(order.getType())
                 || !"CANCELED".equals(order.getStatus())
-                || !"PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+                || !hasCollectedMoney(order)) {
             return false;
         }
         OrderRefundResult result;
@@ -76,6 +76,16 @@ public class DroneRefundService {
             // Tiền đã về ví; thông báo chỉ là kênh báo nhanh.
         }
         return true;
+    }
+
+    /// Đơn đã PAID, hoặc đang nợ phụ thu cân lệch (UNPAID) nhưng đã trả phần phí ban đầu.
+    private static boolean hasCollectedMoney(LockerOrder order) {
+        if ("PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+            return true;
+        }
+        return "UNPAID".equalsIgnoreCase(order.getPaymentStatus())
+                && order.getPaidAmount() != null
+                && order.getPaidAmount().signum() > 0;
     }
 
     private void addHistory(LockerOrder order, Long actorUserId, String note) {

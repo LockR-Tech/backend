@@ -418,6 +418,130 @@ class DroneOrderMaintenanceServiceTest {
         verify(orderRepository, never()).save(any());
     }
 
+    /// Đơn khai 500 g đã trả 15.000 đ, chờ nạp hàng.
+    private DroneMission awaitingLoading(LockerOrder order) {
+        order.setParcelWeightGrams(500);
+        order.setTotalPrice(java.math.BigDecimal.valueOf(15000));
+        order.setOriginalPrice(java.math.BigDecimal.valueOf(15000));
+        order.setPaidAmount(java.math.BigDecimal.valueOf(15000));
+        DroneMission mission = new DroneMission();
+        mission.setId(301L);
+        mission.setOrderId(order.getId());
+        mission.setDroneUnitId(9L);
+        mission.setStatus("AWAITING_LOADING");
+        mission.setAssignedByUserId(99L);
+        when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(order.getId())).thenReturn(Optional.of(mission));
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)));
+        when(missionRepository.save(any(DroneMission.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        return mission;
+    }
+
+    @Test
+    void confirmLoadingGeneratesSealCodeWhenNoneIsSent() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        awaitingLoading(order);
+
+        DroneMissionResponse response = service.confirmLoading(
+                21L, 99L, "load-1", new ConfirmDroneLoadingRequest(500, "  ", true, true, true, null));
+
+        assertTrue(response.sealCode().matches("NP-\\d{6}-[A-Z2-9]{6}"), response.sealCode());
+        assertNull(response.weightSurcharge());
+        assertEquals("PAID", order.getPaymentStatus());
+    }
+
+    @Test
+    void confirmLoadingChargesTheDifferenceWhenParcelIsHeavierThanDeclared() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = awaitingLoading(order);
+
+        // 1200 g = 500 g cơ bản + 3 nấc 250 g (nấc cuối chưa trọn) × 3.000 đ ⇒ 24.000 đ.
+        DroneMissionResponse response = service.confirmLoading(
+                21L, 99L, "load-1", new ConfirmDroneLoadingRequest(1200, null, true, true, true, null));
+
+        assertEquals(0, java.math.BigDecimal.valueOf(9000).compareTo(response.weightSurcharge()));
+        assertEquals(0, java.math.BigDecimal.valueOf(24000).compareTo(order.getTotalPrice()));
+        assertEquals(0, java.math.BigDecimal.valueOf(15000).compareTo(order.getPaidAmount()));
+        assertEquals("UNPAID", order.getPaymentStatus());
+        assertEquals("UNPAID", response.paymentStatus());
+        assertEquals("READY_TO_LAUNCH", mission.getStatus());
+        // Báo khách khoản cần trả thêm.
+        verify(notificationClient).requestNotification(any());
+    }
+
+    @Test
+    void confirmLoadingDoesNotChargeWithinScaleToleranceOrWhenLighter() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        awaitingLoading(order);
+
+        DroneMissionResponse response = service.confirmLoading(
+                21L, 99L, "load-1", new ConfirmDroneLoadingRequest(550, null, true, true, true, null));
+
+        assertNull(response.weightSurcharge());
+        assertEquals(0, java.math.BigDecimal.valueOf(15000).compareTo(order.getTotalPrice()));
+        assertEquals("PAID", order.getPaymentStatus());
+        verify(notificationClient, never()).requestNotification(any());
+    }
+
+    @Test
+    void launchRejectsMissionWhileWeightSurchargeIsUnpaid() {
+        DroneOrderMaintenanceService service =
+                new DroneOrderMaintenanceService(
+                        orderRepository,
+                        missionRepository,
+                        lockerDroneClient,
+                        lockerClient,
+                        historyRepository,
+                        notificationClient,
+                        TestOrderRules.defaults());
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        order.setPaymentStatus("UNPAID");
+        DroneMission mission = new DroneMission();
+        mission.setOrderId(21L);
+        mission.setDroneUnitId(9L);
+        mission.setDestinationLockerId(5L);
+        mission.setStatus("READY_TO_LAUNCH");
+        mission.setAssignedByUserId(99L);
+        markLoadingConfirmed(mission);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException error =
+                assertThrows(BusinessException.class, () -> service.launch(21L, 99L, "launch-1"));
+
+        assertEquals("DRONE_SURCHARGE_UNPAID", error.getCode());
+        verify(lockerDroneClient, never()).transitionDroneStatus(any(), any());
+    }
+
     private LockerOrder droneOrder(Long orderId, String deliveryStage) {
         LockerOrder order = new LockerOrder();
         order.setId(orderId);

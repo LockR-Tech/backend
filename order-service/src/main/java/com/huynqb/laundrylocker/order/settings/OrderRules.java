@@ -25,6 +25,20 @@ public class OrderRules {
         return BigDecimal.valueOf(settings.getLong(DRONE_DELIVERY_FEE));
     }
 
+    /// Phí giao drone theo khối lượng: phí cơ bản gồm sẵn khối lượng cơ bản, mỗi nấc
+    /// vượt (kể cả nấc chưa trọn) cộng một lần phụ phí. Dùng chung cho lúc đặt đơn và
+    /// lúc đội bay cân lại, nên hai nơi luôn ra cùng một bảng giá.
+    public BigDecimal droneDeliveryFee(int weightGrams) {
+        long over = Math.max(0, (long) weightGrams - settings.getInt(DRONE_BASE_WEIGHT));
+        long step = Math.max(1, settings.getInt(DRONE_WEIGHT_STEP));
+        long steps = (over + step - 1) / step;
+        return droneDeliveryFee().add(BigDecimal.valueOf(steps * settings.getLong(DRONE_WEIGHT_STEP_FEE)));
+    }
+
+    public int droneWeightToleranceGrams() {
+        return settings.getInt(DRONE_WEIGHT_TOLERANCE);
+    }
+
     public BigDecimal rentalRate(String cellType) {
         return BigDecimal.valueOf(settings.getLong("XL".equalsIgnoreCase(cellType) ? RENTAL_RATE_XL : RENTAL_RATE_STANDARD));
     }

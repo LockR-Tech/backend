@@ -225,6 +225,7 @@ public class OrderService {
 
         String fulfillmentMode = resolveDroneFulfillmentMode(request.fulfillmentMode(), userId);
         userClient.getUser(userId);
+        int parcelWeightGrams = validateDroneParcelWeight(request.parcelWeightGrams());
         validateDroneRoute(request.sourceLockerId(), request.destinationLockerId());
         Long sourceBoxId = resolveAndReserveDroneSourceBox(request);
         Long reservedBoxId;
@@ -255,8 +256,11 @@ public class OrderService {
         order.setParcelWeightGrams(request.parcelWeightGrams());
         order.setDescription(request.description());
         order.setIdempotencyKey(idempotencyKey);
-        order.setTotalPrice(rules.droneDeliveryFee());
-        order.setOriginalPrice(rules.droneDeliveryFee());
+        // Phí theo khối lượng khách khai báo; đội bay cân lại lúc nạp hàng, nặng hơn thì
+        // thu thêm phần chênh (DroneOrderMaintenanceService.confirmLoading).
+        BigDecimal droneFee = rules.droneDeliveryFee(parcelWeightGrams);
+        order.setTotalPrice(droneFee);
+        order.setOriginalPrice(droneFee);
 
         LockerOrder saved = orderRepository.save(order);
         addHistory(saved.getId(), null, "AWAITING_DISPATCH", userId,
@@ -300,6 +304,19 @@ public class OrderService {
         }
         order.setReceiverId(receiverUserId);
         order.setReceiverUserId(receiverUserId);
+    }
+
+    private int validateDroneParcelWeight(Integer parcelWeightGrams) {
+        if (parcelWeightGrams == null || parcelWeightGrams <= 0) {
+            throw new BusinessException("DRONE_PARCEL_WEIGHT_INVALID", "Parcel weight must be greater than zero");
+        }
+        if (parcelWeightGrams > rules.droneMaxPayloadWeightGrams()) {
+            throw new BusinessException(
+                    "DRONE_PAYLOAD_TOO_HEAVY",
+                    "Payload exceeds the configured drone limit of "
+                            + rules.droneMaxPayloadWeightGrams() + " grams");
+        }
+        return parcelWeightGrams;
     }
 
     private void validateDroneRoute(Long sourceLockerId, Long destinationLockerId) {

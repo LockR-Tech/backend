@@ -44,6 +44,11 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
     public static final String DRONE_DEFAULT_PARCEL_WEIGHT = "app.order.drone-default-parcel-weight-grams";
     public static final String DRONE_MAX_PAYLOAD_WEIGHT = "app.order.drone-max-payload-weight-grams";
+    public static final String DRONE_BASE_WEIGHT = "app.order.drone-base-weight-grams";
+    public static final String DRONE_WEIGHT_STEP = "app.order.drone-weight-step-grams";
+    public static final String DRONE_WEIGHT_STEP_FEE = "app.order.drone-weight-step-fee";
+    public static final String DRONE_WEIGHT_OPTIONS = "app.order.drone-weight-options-grams";
+    public static final String DRONE_WEIGHT_TOLERANCE = "app.order.drone-weight-tolerance-grams";
     public static final String RECEIVER_NOTIFY_SMS = "app.order.receiver-notify-sms";
     public static final String RECEIVER_NOTIFY_EMAIL = "app.order.receiver-notify-email";
 
@@ -60,7 +65,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(SEND_BASE_FEE, PRICING, "Phí gửi hàng qua tủ",
                         "Giá mỗi đơn gửi hàng (SEND). Áp dụng cho đơn tạo sau khi lưu.", 15000, 0, 100_000_000, "VND").asPublic(),
                 integer(DRONE_DELIVERY_FEE, PRICING, "Phí giao hàng drone",
-                        "Giá mỗi đơn giao bằng drone.", 15000, 0, 100_000_000, "VND").asPublic(),
+                        "Giá cơ bản mỗi đơn giao bằng drone, đã gồm khối lượng cơ bản.", 15000, 0, 100_000_000, "VND").asPublic(),
+                integer(DRONE_WEIGHT_STEP_FEE, PRICING, "Phụ phí drone mỗi nấc khối lượng",
+                        "Cộng thêm cho mỗi nấc khối lượng (kể cả nấc chưa trọn) vượt khối lượng cơ bản. 0 = giá đồng nhất.",
+                        3000, 0, 10_000_000, "VND").asPublic(),
                 integer(RENTAL_RATE_STANDARD, PRICING, "Giá thuê ô tiêu chuẩn",
                         "Giá mỗi giờ thuê ô STANDARD (và mọi loại ô không phải XL).", 5000, 0, 10_000_000, "VND/giờ").asPublic(),
                 integer(RENTAL_RATE_XL, PRICING, "Giá thuê ô XL",
@@ -120,7 +128,17 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_DEFAULT_PARCEL_WEIGHT, DRONE, "Khối lượng kiện mặc định trên app",
                         "", 1200, 1, 100_000, "gram").asPublic(),
                 integer(DRONE_MAX_PAYLOAD_WEIGHT, DRONE, "Khối lượng tải tối đa của drone",
-                        "Chặn xác nhận nạp hàng nếu kiện vượt tải vận hành cho phép.",
-                        5000, 1, 100_000, "gram"));
+                        "Chặn đặt đơn và xác nhận nạp hàng nếu kiện vượt tải vận hành cho phép.",
+                        5000, 1, 100_000, "gram").asPublic(),
+                integer(DRONE_BASE_WEIGHT, DRONE, "Khối lượng cơ bản của phí drone",
+                        "Kiện tới mức này chỉ trả phí giao hàng drone cơ bản.", 500, 1, 100_000, "gram").asPublic(),
+                integer(DRONE_WEIGHT_STEP, DRONE, "Nấc khối lượng tính phụ phí drone",
+                        "Mỗi nấc vượt khối lượng cơ bản cộng một lần phụ phí.", 250, 1, 100_000, "gram").asPublic(),
+                integerList(DRONE_WEIGHT_OPTIONS, DRONE, "Các mức khối lượng khách chọn khi đặt drone",
+                        "Danh sách gram hiển thị trên app, phân tách bằng dấu phẩy. Mức vượt tải tối đa bị ẩn.",
+                        "500,750,1000,1500,2000,3000", 1, 100_000, "gram").asPublic(),
+                integer(DRONE_WEIGHT_TOLERANCE, DRONE, "Sai số cân cho phép khi nạp hàng drone",
+                        "Cân thực tế vượt khối lượng khai báo không quá mức này thì không thu thêm.",
+                        50, 0, 10_000, "gram").asPublic());
     }
 }
