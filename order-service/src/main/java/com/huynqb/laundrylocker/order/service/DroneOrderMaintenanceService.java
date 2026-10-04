@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -35,6 +36,8 @@ public class DroneOrderMaintenanceService {
     private final OrderStatusHistoryRepository historyRepository;
     private final NotificationClient notificationClient;
     private final OrderRules rules;
+
+    private static final java.security.SecureRandom SEAL_RANDOM = new java.security.SecureRandom();
 
     @Transactional(readOnly = true)
     public List<DroneMissionResponse> queue(String deliveryStage) {
@@ -133,8 +136,13 @@ public class DroneOrderMaintenanceService {
 
         DroneUnitDto drone = fetchDrone(mission.getDroneUnitId());
         validateDroneReservation(drone);
+        String sealCode = StringUtils.hasText(request.sealCode())
+                ? request.sealCode().trim()
+                : generateSealCode();
+        BigDecimal surcharge = applyWeightSurcharge(order, request.payloadWeightGrams());
         mission.setPayloadWeightGrams(request.payloadWeightGrams());
-        mission.setSealCode(request.sealCode().trim());
+        mission.setSealCode(sealCode);
+        mission.setWeightSurcharge(surcharge);
         mission.setParcelMatched(request.parcelMatched());
         mission.setPayloadSecured(request.payloadSecured());
         mission.setCompartmentLocked(request.compartmentLocked());
@@ -151,8 +159,15 @@ public class DroneOrderMaintenanceService {
         order.setStaffId(userId);
         orderRepository.save(order);
         addJourneyEvent(order.getId(), "ACCEPTED", "ACCEPTED", userId,
-                "Đã nạp kiện " + request.payloadWeightGrams() + " g, niêm phong " + request.sealCode().trim());
+                "Đã nạp kiện " + request.payloadWeightGrams() + " g, niêm phong " + sealCode
+                        + (surcharge == null
+                                ? ""
+                                : ". Nặng hơn khai báo " + order.getParcelWeightGrams() + " g — thu thêm "
+                                        + surcharge.toBigInteger() + " đ trước khi phóng"));
         notifyDeliveryStageQuietly(order, "loading_confirmed", "10 phút");
+        if (surcharge != null) {
+            notifyWeightSurchargeQuietly(order, request.payloadWeightGrams(), surcharge);
+        }
         return toResponse(order, mission, drone);
     }
 
@@ -173,6 +188,11 @@ public class DroneOrderMaintenanceService {
         if (!isLoadingConfirmed(mission)) {
             throw new BusinessException(
                     "DRONE_LOADING_NOT_CONFIRMED", "Loading checklist must be completed before launch");
+        }
+        // Kiện nặng hơn khai báo làm đơn nợ phần chênh: chưa trả đủ thì chưa bay.
+        if (!"PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+            throw new BusinessException(
+                    "DRONE_SURCHARGE_UNPAID", "Customer must pay the weight surcharge before launch");
         }
 
         DroneUnitDto drone = fetchDrone(mission.getDroneUnitId());
@@ -274,7 +294,60 @@ public class DroneOrderMaintenanceService {
                 mission.getSealCode(),
                 mission.getLoadedByUserId(),
                 mission.getLoadedAt(),
-                mission.getReadyToLaunchAt());
+                mission.getReadyToLaunchAt(),
+                mission.getWeightSurcharge(),
+                order.getPaymentStatus());
+    }
+
+    /// Cân thực tế vượt khối lượng khai báo quá sai số cho phép thì tính lại phí theo cân
+    /// thực tế; phần chênh cộng vào tổng đơn và đơn về UNPAID để khách trả thêm (cùng cơ
+    /// chế gia hạn thuê: `paidAmount` giữ nguyên, checkout chỉ thu phần còn thiếu). Kiện
+    /// nhẹ hơn khai báo không hoàn lại. Trả về phần thu thêm, null khi không thu.
+    private BigDecimal applyWeightSurcharge(LockerOrder order, int actualWeightGrams) {
+        int declared = order.getParcelWeightGrams() == null ? 0 : order.getParcelWeightGrams();
+        if (actualWeightGrams <= declared + rules.droneWeightToleranceGrams()) {
+            return null;
+        }
+        BigDecimal current = order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice();
+        BigDecimal surcharge = rules.droneDeliveryFee(actualWeightGrams).subtract(current);
+        if (surcharge.signum() <= 0) {
+            return null;
+        }
+        order.setTotalPrice(current.add(surcharge));
+        if (order.getOriginalPrice() != null) {
+            order.setOriginalPrice(order.getOriginalPrice().add(surcharge));
+        }
+        order.setPaymentStatus("UNPAID");
+        order.setPaidAt(null);
+        return surcharge;
+    }
+
+    /// Mã niêm phong do hệ thống cấp: `NP-<yyMMdd>-<6 ký tự>`, bỏ các ký tự dễ đọc nhầm.
+    private String generateSealCode() {
+        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        StringBuilder suffix = new StringBuilder();
+        for (int i = 0; i < 6; i++) {
+            suffix.append(alphabet.charAt(SEAL_RANDOM.nextInt(alphabet.length())));
+        }
+        return "NP-" + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyMMdd"))
+                + "-" + suffix;
+    }
+
+    private void notifyWeightSurchargeQuietly(LockerOrder order, int actualWeightGrams, BigDecimal surcharge) {
+        try {
+            notificationClient.requestNotification(
+                    new NotificationRequest(
+                            order.getUserId(),
+                            "Đơn drone cần trả thêm phí",
+                            "Kiện đơn " + order.getOrderCode() + " cân thực tế " + actualWeightGrams
+                                    + " g, nặng hơn khai báo. Vui lòng trả thêm " + surcharge.toBigInteger()
+                                    + " đ để drone cất cánh.",
+                            "DRONE_DELIVERY_STATUS_CHANGED",
+                            order.getId(),
+                            "ORDER"));
+        } catch (RuntimeException ignored) {
+            // Trạng thái đơn là nguồn sự thật; màn theo dõi tự làm mới sẽ hiện khoản cần trả.
+        }
     }
 
     /// Nhả ô DRONE ở tủ gửi và xoá liên kết khỏi đơn để không nhả lần hai. Trạng thái ô
@@ -454,7 +527,9 @@ public class DroneOrderMaintenanceService {
                 mission == null ? null : mission.getSealCode(),
                 mission == null ? null : mission.getLoadedByUserId(),
                 mission == null ? null : mission.getLoadedAt(),
-                mission == null ? null : mission.getReadyToLaunchAt());
+                mission == null ? null : mission.getReadyToLaunchAt(),
+                mission == null ? null : mission.getWeightSurcharge(),
+                order.getPaymentStatus());
     }
 
     private String cancelReasonLabel(Integer reasonCode) {

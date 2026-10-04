@@ -86,6 +86,19 @@ class DroneRefundServiceTest {
     }
 
     @Test
+    void refundsWhatWasPaidWhenCanceledWhileWeightSurchargeIsStillOwed() {
+        LockerOrder order = order("CANCELED", "UNPAID");
+        order.setPaidAmount(BigDecimal.valueOf(15000));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(paymentRefundClient.refundOrder(eq(21L), any(), eq(99L)))
+                .thenReturn(ApiResponse.ok(new OrderRefundResult(21L, BigDecimal.valueOf(15000), 1)));
+
+        assertTrue(service.refundCanceledOrder(21L, 99L));
+
+        assertEquals("REFUNDED", order.getPaymentStatus());
+    }
+
+    @Test
     void doesNotRefundTwice() {
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order("CANCELED", "REFUNDED")));
 

@@ -19,5 +19,8 @@ public record DroneMissionResponse(
         String sealCode,
         Long loadedByUserId,
         LocalDateTime loadedAt,
-        LocalDateTime readyToLaunchAt) {
+        LocalDateTime readyToLaunchAt,
+        /// Phí thu thêm do cân lệch; khác 0 và đơn chưa PAID thì chưa được phóng.
+        java.math.BigDecimal weightSurcharge,
+        String paymentStatus) {
 }

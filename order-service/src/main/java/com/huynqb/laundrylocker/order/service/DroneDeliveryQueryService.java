@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -216,7 +217,15 @@ public class DroneDeliveryQueryService {
                 sourceBox == null ? null : sourceBox.boxNumber(),
                 payment == null ? null : payment.lastPaidMethod(),
                 payment == null ? null : payment.lastPaidReference(),
-                payment == null ? null : payment.lastPaidTransactionId());
+                payment == null ? null : payment.lastPaidTransactionId(),
+                mission == null ? null : mission.getWeightSurcharge(),
+                amountDue(order));
+    }
+
+    private static BigDecimal amountDue(LockerOrder order) {
+        BigDecimal total = order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice();
+        BigDecimal paid = order.getPaidAmount() == null ? BigDecimal.ZERO : order.getPaidAmount();
+        return total.subtract(paid).max(BigDecimal.ZERO);
     }
 
     private static Long sourceLockerId(LockerOrder order, DroneMission mission) {

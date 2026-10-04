@@ -64,7 +64,11 @@ public record DroneDeliveryOrderResponse(
         /// Mã tham chiếu Lock.R của giao dịch — nội dung chuyển khoản / mã đơn gửi sang cổng.
         String paymentReference,
         /// Mã giao dịch phía cổng thanh toán/ngân hàng; null với ví Lock.R và tiền mặt.
-        String paymentTransactionId) {
+        String paymentTransactionId,
+        /// Phí thu thêm vì kiện cân thực tế nặng hơn khai báo; null khi không lệch.
+        BigDecimal weightSurcharge,
+        /// Phần khách còn phải trả (tổng hiện tại trừ phần đã trả).
+        BigDecimal amountDue) {
 
     /** Constructor tương thích cho response ngay sau khi tạo đơn/chưa có mission. */
     public DroneDeliveryOrderResponse(
@@ -82,6 +86,6 @@ public record DroneDeliveryOrderResponse(
                 sourceLockerId, etaMinutes, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, List.of(),
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null);
+                null, null, null, null, null);
     }
 }

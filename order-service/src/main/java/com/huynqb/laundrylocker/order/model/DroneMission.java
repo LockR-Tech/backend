@@ -61,6 +61,11 @@ public class DroneMission {
     @Column(name = "compartment_locked", nullable = false)
     private boolean compartmentLocked;
 
+    /// Phần phí thu thêm vì kiện cân thực tế nặng hơn khối lượng khách khai báo; null
+    /// khi chưa cân hoặc không lệch.
+    @Column(name = "weight_surcharge", precision = 12, scale = 2)
+    private java.math.BigDecimal weightSurcharge;
+
     @Column(name = "loading_note", length = 500)
     private String loadingNote;
 
