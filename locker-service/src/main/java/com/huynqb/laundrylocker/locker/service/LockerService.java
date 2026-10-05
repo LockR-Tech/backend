@@ -1396,6 +1396,21 @@ public class LockerService {
         return logs.stream().map(this::toInspectionLogResponse).toList();
     }
 
+    /// Lịch sử tổng hợp của đúng một Drone: biên bản kiểm tra định kỳ và phiếu sự cố đã đóng.
+    @Transactional(readOnly = true)
+    public DroneMaintenanceHistoryResponse droneMaintenanceHistory(Long droneUnitId) {
+        DroneUnit drone = findDroneUnit(droneUnitId);
+        List<MaintenanceInspectionLogResponse> completedMaintenance =
+                inspectionLogRepository.findByDroneUnitIdOrderByCreatedAtDesc(droneUnitId).stream()
+                        .map(this::toInspectionLogResponse)
+                        .toList();
+        List<LockerReportResponse> resolvedIncidents = toReports(
+                reportRepository.findByDroneUnitIdAndStatusInOrderByCreatedAtDesc(
+                        droneUnitId, List.of("RESOLVED")));
+        return new DroneMaintenanceHistoryResponse(
+                drone.getId(), drone.getCode(), completedMaintenance, resolvedIncidents);
+    }
+
     private MaintenanceInspectionLogResponse toInspectionLogResponse(MaintenanceInspectionLog log) {
         LockerUnit locker = log.getLockerId() == null ? null : lockerRepository.findById(log.getLockerId()).orElse(null);
         DroneUnit drone = log.getDroneUnitId() == null ? null : droneUnitRepository.findById(log.getDroneUnitId()).orElse(null);
@@ -1505,6 +1520,12 @@ public class LockerService {
                 s.getDroneUnitId() == null
                         ? null
                         : droneUnitRepository.findById(s.getDroneUnitId()).orElse(null);
+        // Drone luôn đóng tại một tủ/bãi đáp cố định. Trả kèm thông tin tủ liên kết
+        // để màn hình lịch Drone hiển thị vị trí thực tế, nhưng vẫn giữ droneUnitId
+        // để client phân biệt với lịch bảo trì Kiosk.
+        if (locker == null && drone != null && drone.getLockerId() != null) {
+            locker = lockerRepository.findById(drone.getLockerId()).orElse(null);
+        }
         boolean due =
                 Boolean.TRUE.equals(s.getActive())
                         && s.getNextDueAt() != null
@@ -1514,7 +1535,7 @@ public class LockerService {
                 : technicianNames.computeIfAbsent(s.getAssignedTechnicianId(), this::resolveUserName);
         return new MaintenanceScheduleResponse(
                 s.getId(),
-                s.getLockerId(),
+                locker == null ? s.getLockerId() : locker.getId(),
                 locker == null ? null : locker.getName(),
                 locker == null ? null : locker.getCode(),
                 s.getDroneUnitId(),
