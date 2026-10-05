@@ -8,5 +8,11 @@ import java.util.List;
 public record BoxFaultRequest(
         @Size(max = 2000) String reason,
         // Số ảnh tối đa theo cấu hình admin (app.maintenance.report-photos-per-request-reporter), kiểm trong service.
-        List<@Valid ReportAttachmentRequest> attachments) {
+        List<@Valid ReportAttachmentRequest> attachments,
+        Long orderId,
+        String orderCode) {
+
+    public BoxFaultRequest(String reason, List<ReportAttachmentRequest> attachments) {
+        this(reason, attachments, null, null);
+    }
 }

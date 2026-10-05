@@ -121,9 +121,11 @@ public class LockerController {
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         String reason = body == null ? null : body.reason();
         List<ReportAttachmentRequest> attachments = body == null ? null : body.attachments();
+        Long orderId = body == null ? null : body.orderId();
+        String orderCode = body == null ? null : body.orderCode();
         return ApiResponse.ok(
                 "BOX_FAULT_REPORTED", "Box marked as faulty",
-                lockerService.markFault(id, reason, userId, attachments, roles));
+                lockerService.markFault(id, reason, userId, attachments, roles, orderId, orderCode));
     }
 
     @PostMapping("/api/admin/lockers/boxes/{id}/clear-fault")
@@ -556,8 +558,11 @@ public class LockerController {
     }
 
     @GetMapping("/api/lockers/my-reports")
-    public ApiResponse<List<LockerReportResponse>> myReports(@RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok(lockerService.myReports(userId));
+    public ApiResponse<List<LockerReportResponse>> myReports(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(required = false) Long orderId,
+            @RequestParam(required = false) String orderCode) {
+        return ApiResponse.ok(lockerService.myReports(userId, orderId, orderCode));
     }
 
     @GetMapping("/api/lockers/reports/{id}")

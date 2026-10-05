@@ -91,7 +91,7 @@ class OrderServiceBoxFaultTest {
         order.setSendBoxId(7003L);
 
         when(orderRepository.findById(22L)).thenReturn(Optional.of(order));
-        when(lockerClient.reportFault(7003L, Map.of("reason", "Kẹt cửa"), 44L))
+        when(lockerClient.reportFault(7003L, Map.of("reason", "Kẹt cửa", "orderId", 22L), 44L))
                 .thenReturn(ApiResponse.ok(Map.of("boxId", 7003L, "status", "FAULT")));
         when(lockerClient.releaseBox(7003L))
                 .thenReturn(ApiResponse.ok(new LockerBoxSummary(7L, 7003L, "CAB-07", 3, "FAULT")));
@@ -101,7 +101,7 @@ class OrderServiceBoxFaultTest {
 
         assertEquals("CANCELED", order.getStatus());
         InOrder calls = inOrder(lockerClient);
-        calls.verify(lockerClient).reportFault(7003L, Map.of("reason", "Kẹt cửa"), 44L);
+        calls.verify(lockerClient).reportFault(7003L, Map.of("reason", "Kẹt cửa", "orderId", 22L), 44L);
         calls.verify(lockerClient).releaseBox(7003L);
     }
 
@@ -114,7 +114,7 @@ class OrderServiceBoxFaultTest {
         order.setSendBoxId(7004L);
 
         when(orderRepository.findById(23L)).thenReturn(Optional.of(order));
-        when(lockerClient.reportFault(7004L, Map.of("reason", "Kẹt cửa"), 44L))
+        when(lockerClient.reportFault(7004L, Map.of("reason", "Kẹt cửa", "orderId", 23L), 44L))
                 .thenReturn(ApiResponse.ok(Map.of("boxId", 7004L, "status", "FAULT")));
 
         orderService.reportBoxFault(23L, 44L, "Kẹt cửa");
@@ -150,7 +150,7 @@ class OrderServiceBoxFaultTest {
         order.setSendBoxId(7007L);
 
         when(orderRepository.findById(27L)).thenReturn(Optional.of(order));
-        when(lockerClient.reportFault(7007L, Map.of(), 44L))
+        when(lockerClient.reportFault(7007L, Map.of("orderId", 27L), 44L))
                 .thenReturn(ApiResponse.ok(Map.of("boxId", 7007L, "status", "FAULT")));
         when(lockerClient.releaseBox(7007L))
                 .thenReturn(ApiResponse.ok(new LockerBoxSummary(7L, 7007L, "CAB-07", 7, "FAULT")));
@@ -158,7 +158,7 @@ class OrderServiceBoxFaultTest {
 
         orderService.reportBoxFault(27L, 44L, null);
 
-        verify(lockerClient).reportFault(7007L, Map.of(), 44L);
+        verify(lockerClient).reportFault(7007L, Map.of("orderId", 27L), 44L);
         assertEquals("CANCELED", order.getStatus());
     }
 
@@ -170,7 +170,7 @@ class OrderServiceBoxFaultTest {
         order.setPaymentStatus("PAID");
         order.setSendBoxId(7008L);
         Map<String, Object> photo = Map.of("publicId", "lockr/reports/u44/abc", "version", 1, "signature", "sig");
-        Map<String, Object> expectedBody = Map.of("reason", "Kẹt cửa", "attachments", java.util.List.of(photo));
+        Map<String, Object> expectedBody = Map.of("reason", "Kẹt cửa", "attachments", java.util.List.of(photo), "orderId", 28L);
 
         when(orderRepository.findById(28L)).thenReturn(Optional.of(order));
         when(lockerClient.reportFault(7008L, expectedBody, 44L))
