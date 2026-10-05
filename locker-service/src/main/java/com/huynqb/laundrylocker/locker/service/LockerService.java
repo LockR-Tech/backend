@@ -460,13 +460,25 @@ public class LockerService {
         LockerUnit locker =
                 lockerRepository.findById(lockerId).orElseThrow(() -> new NotFoundException("Locker", lockerId));
         List<LockerBox> boxes = boxRepository.findByLockerIdOrderByRowIndexAscColIndexAsc(lockerId);
-        List<CellResponse> cells = boxes.stream().map(this::toCell).toList();
+        Map<Long, IotClient.BoxHardwareStatus> hwByBox = fetchHardwareStatuses(lockerId);
+        List<CellResponse> cells = boxes.stream().map(b -> toCell(b, hwByBox.get(b.getId()))).toList();
         long available = boxes.stream().filter(b -> "AVAILABLE".equalsIgnoreCase(b.getStatus())).count();
         long fault = boxes.stream().filter(b -> "FAULT".equalsIgnoreCase(b.getStatus())).count();
+
+        Boolean online = null;
+        try {
+            var gwResp = iotClient.getGatewayByLockerId(lockerId);
+            if (gwResp != null && gwResp.data() != null) {
+                online = gwResp.data().online();
+            }
+        } catch (Exception ex) {
+            log.debug("Could not fetch gateway online status for locker {}: {}", lockerId, ex.getMessage());
+        }
+
         return new LockerLayoutResponse(
                 locker.getId(), locker.getCode(), locker.getName(), locker.getStatus(),
                 locker.getLandingPad(), locker.getLandingMarkerId(), locker.getLandingPadStatus(),
-                cells.size(), available, fault, cells);
+                cells.size(), available, fault, cells, online);
     }
 
     @Transactional
@@ -1998,6 +2010,12 @@ public class LockerService {
     }
 
     private CellResponse toCell(LockerBox box) {
+        return toCell(box, null);
+    }
+
+    private CellResponse toCell(LockerBox box, IotClient.BoxHardwareStatus hw) {
+        Boolean doorOpen = hw != null && "OPEN".equalsIgnoreCase(hw.hwState());
+        String hwState = hw != null ? hw.hwState() : null;
         return new CellResponse(
                 box.getId(),
                 box.getBoxNumber(),
@@ -2006,7 +2024,9 @@ public class LockerService {
                 box.getRowIndex(),
                 box.getColIndex(),
                 box.getStatus(),
-                box.getFaultReason());
+                box.getFaultReason(),
+                doorOpen,
+                hwState);
     }
 
     private void publishBoxFault(LockerBox box, String reason) {

@@ -45,4 +45,9 @@ public class GatewayController {
         provisioning.forget(id);
         return ApiResponse.ok("GATEWAY_DELETED", "Gateway removed");
     }
+
+    @GetMapping("/internal/iot/gateways/{lockerId}")
+    public ApiResponse<GatewayDeviceResponse> getGatewayByLockerId(@PathVariable Long lockerId) {
+        return ApiResponse.ok(provisioning.getByLockerId(lockerId));
+    }
 }
