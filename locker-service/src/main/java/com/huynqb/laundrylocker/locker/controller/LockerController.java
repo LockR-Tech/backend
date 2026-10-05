@@ -350,6 +350,11 @@ public class LockerController {
         return ApiResponse.ok(lockerService.listInspectionLogs(null, lockerId, technicianId));
     }
 
+    @GetMapping("/api/admin/drones/{id}/maintenance-history")
+    public ApiResponse<DroneMaintenanceHistoryResponse> adminDroneMaintenanceHistory(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.droneMaintenanceHistory(id));
+    }
+
     @PostMapping("/api/admin/lockers/schedules")
     public ApiResponse<MaintenanceScheduleResponse> adminCreateSchedule(
             @Valid @RequestBody MaintenanceScheduleRequest request) {
