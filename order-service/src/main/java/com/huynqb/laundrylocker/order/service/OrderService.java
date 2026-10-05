@@ -702,12 +702,16 @@ public class OrderService {
     public OrderResponse complete(Long id, Long userId) {
         LockerOrder order = find(id);
         assertOwnerOrReceiver(order, userId);
-        validateStatus(order, Set.of("STORING", "RETURNED"));
+        validateStatus(order, Set.of("STORING", "RETURNED", "EXPIRED"));
         assertPaidBeforePickup(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
-            order.setExtraFee(order.getExtraFee().add(overtime));
-            order.setTotalPrice(order.getTotalPrice().add(overtime));
+            BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+            if (currentExtra.compareTo(overtime) < 0) {
+                BigDecimal diff = overtime.subtract(currentExtra);
+                order.setExtraFee(overtime);
+                order.setTotalPrice(order.getTotalPrice().add(diff));
+            }
         }
         releaseBoxes(order);
         order.setCompletedAt(LocalDateTime.now());
@@ -790,13 +794,17 @@ public class OrderService {
         }
         validateStatus(order,
                 "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory())
-                        ? Set.of("STORING", "RETURNED")
-                        : Set.of("STORING", "INITIALIZED", "RETURNED"));
+                        ? Set.of("STORING", "RETURNED", "EXPIRED")
+                        : Set.of("STORING", "INITIALIZED", "RETURNED", "EXPIRED"));
         assertPaidBeforeStorageCompletion(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
-            order.setExtraFee(order.getExtraFee().add(overtime));
-            order.setTotalPrice(order.getTotalPrice().add(overtime));
+            BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+            if (currentExtra.compareTo(overtime) < 0) {
+                BigDecimal diff = overtime.subtract(currentExtra);
+                order.setExtraFee(overtime);
+                order.setTotalPrice(order.getTotalPrice().add(diff));
+            }
         }
         releaseBoxes(order);
         order.setCompletedAt(LocalDateTime.now());
@@ -1889,13 +1897,23 @@ public class OrderService {
         if (!rules.requirePaymentBeforeDrop()) {
             return;
         }
+        // Đơn EXPIRED: khách đã thanh toán qua app flow trước khi gọi endpoint này.
+        // paymentStatus có thể chưa kịp sync từ payment-service → bỏ qua check.
+        if ("EXPIRED".equalsIgnoreCase(order.getStatus())) {
+            return;
+        }
         BigDecimal total = order.getTotalPrice();
         boolean hasFee = total != null && total.compareTo(BigDecimal.ZERO) > 0;
         boolean paid = "PAID".equalsIgnoreCase(order.getPaymentStatus());
+        // Cũng chấp nhận nếu paidAmount >= totalPrice (payment đã xử lý nhưng status chưa sync)
         if (hasFee && !paid) {
-            throw new BusinessException(
-                    "ORDER_UNPAID",
-                    "Vui lòng thanh toán đơn trước khi kết thúc thuê/trả ô.");
+            BigDecimal pa = order.getPaidAmount();
+            boolean fullyCovered = pa != null && pa.compareTo(total) >= 0;
+            if (!fullyCovered) {
+                throw new BusinessException(
+                        "ORDER_UNPAID",
+                        "Vui lòng thanh toán đơn trước khi kết thúc thuê/trả ô.");
+            }
         }
     }
 
