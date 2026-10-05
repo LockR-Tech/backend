@@ -100,7 +100,14 @@ public class OrderService {
         applyPromotion(saved, request.promotionCode(), request.promotionCodes());
         saved = orderRepository.save(saved);
         addHistory(saved.getId(), null, saved.getStatus(), saved.getUserId(), "Order created");
-        publish(DomainEventNames.ORDER_CREATED, saved, Map.of("orderId", saved.getId(), "userId", saved.getUserId()));
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderId", saved.getId());
+        payload.put("orderCode", saved.getOrderCode());
+        payload.put("userId", saved.getUserId());
+        payload.put("status", saved.getStatus());
+        payload.put("type", saved.getType());
+        publish(DomainEventNames.ORDER_CREATED, saved, payload);
+        notifyQuietly(saved.getUserId(), "Đơn hàng mới", "Đơn hàng " + saved.getOrderCode() + " đã được tạo thành công", "ORDER_CREATED", saved.getId());
         return toResponse(saved);
     }
 
@@ -266,6 +273,14 @@ public class OrderService {
         addHistory(saved.getId(), null, "AWAITING_DISPATCH", userId,
                 "Đơn drone được tạo tại tủ nguồn #" + request.sourceLockerId()
                         + " và chờ điều phối tới tủ đích #" + request.destinationLockerId());
+        Map<String, Object> droneCreatedPayload = new HashMap<>();
+        droneCreatedPayload.put("orderId", saved.getId());
+        droneCreatedPayload.put("orderCode", saved.getOrderCode());
+        droneCreatedPayload.put("userId", saved.getUserId());
+        droneCreatedPayload.put("status", saved.getStatus());
+        droneCreatedPayload.put("type", saved.getType());
+        publish(DomainEventNames.ORDER_CREATED, saved, droneCreatedPayload);
+        notifyQuietly(saved.getUserId(), "Đơn hàng mới", "Đơn drone " + saved.getOrderCode() + " đã được tạo thành công", "ORDER_CREATED", saved.getId());
         notifyMaintenanceDroneOrderCreated(saved);
         return toDroneDeliveryResponse(saved);
     }
@@ -405,6 +420,7 @@ public class OrderService {
         notifyQuietly(saved.getUserId(), "Rental extended",
                 "Rental " + saved.getOrderCode() + " extended until " + saved.getPickupDeadline(),
                 "ORDER_RENTAL_EXTENDED", saved.getId());
+        publishStatusChanged(saved, saved.getStatus());
         return toResponse(saved);
     }
 
@@ -2110,9 +2126,13 @@ public class OrderService {
     private void publishStatusChanged(LockerOrder order, String oldStatus) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("orderId", order.getId());
+        payload.put("orderCode", order.getOrderCode());
         payload.put("userId", order.getUserId());
         payload.put("oldStatus", oldStatus);
         payload.put("newStatus", order.getStatus());
+        payload.put("status", order.getStatus());
+        payload.put("type", order.getType());
+        payload.put("paymentStatus", order.getPaymentStatus());
         publish(DomainEventNames.ORDER_STATUS_CHANGED, order, payload);
     }
 

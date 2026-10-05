@@ -40,4 +40,25 @@ public class WebSocketNotificationService {
             log.warn("Failed to send WebSocket message to {}: {}", destination, ex.getMessage());
         }
     }
+
+    public void sendOrderUpdate(Long userId, Object orderUpdate) {
+        sendToDestination("/topic/orders", orderUpdate);
+        sendToDestination("/topic/notifications", orderUpdate);
+
+        if (orderUpdate instanceof java.util.Map<?, ?> map && map.containsKey("orderId")) {
+            Object orderId = map.get("orderId");
+            if (orderId != null) {
+                sendToDestination("/topic/orders/" + orderId, orderUpdate);
+            }
+        }
+
+        if (userId != null) {
+            try {
+                messagingTemplate.convertAndSendToUser(
+                        String.valueOf(userId), "/queue/orders", orderUpdate);
+            } catch (Exception ex) {
+                log.warn("Failed to send order WebSocket message to user {}: {}", userId, ex.getMessage());
+            }
+        }
+    }
 }

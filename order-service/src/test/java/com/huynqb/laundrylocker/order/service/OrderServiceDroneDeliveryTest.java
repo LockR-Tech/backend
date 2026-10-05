@@ -157,7 +157,7 @@ class OrderServiceDroneDeliveryTest {
         verify(lockerClient).reserveBox(9001L, "DRONE");
         // Ô gửi ở Locker A cũng được giữ để người khác không đặt chồng lên.
         verify(lockerClient).reserveBox(8001L, "DRONE");
-        verify(notificationClient, org.mockito.Mockito.times(2)).requestNotification(any());
+        verify(notificationClient, org.mockito.Mockito.times(3)).requestNotification(any());
     }
 
     @Test
