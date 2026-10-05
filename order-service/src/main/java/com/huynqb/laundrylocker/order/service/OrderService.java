@@ -828,6 +828,12 @@ public class OrderService {
             if (attachments != null && !attachments.isEmpty()) {
                 body.put("attachments", attachments);
             }
+            if (order.getId() != null) {
+                body.put("orderId", order.getId());
+            }
+            if (order.getOrderCode() != null && !order.getOrderCode().isBlank()) {
+                body.put("orderCode", order.getOrderCode());
+            }
             lockerClient.reportFault(boxId, body, userId);
         } catch (Exception ex) {
             throw unwrapDownstreamError(ex, "BOX_FAULT_REPORT_FAILED", "Could not report fault for box " + boxId);
