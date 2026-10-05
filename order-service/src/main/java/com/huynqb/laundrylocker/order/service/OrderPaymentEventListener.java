@@ -12,6 +12,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
+import com.huynqb.laundrylocker.order.model.LockerOrder;
+import com.huynqb.laundrylocker.order.client.NotificationClient;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Marks an order PAID when payment-service confirms payment.
  */
@@ -21,6 +28,8 @@ import java.time.LocalDateTime;
 public class OrderPaymentEventListener {
 
     private final LockerOrderRepository orderRepository;
+    private final RabbitTemplate rabbitTemplate;
+    private final NotificationClient notificationClient;
 
     @RabbitListener(queues = RabbitConfig.ORDER_PAYMENT_QUEUE)
     @Transactional
@@ -56,9 +65,39 @@ public class OrderPaymentEventListener {
                                         order.getTotalPrice() == null
                                                 ? java.math.BigDecimal.ZERO
                                                 : order.getTotalPrice());
-                                orderRepository.save(order);
+                                LockerOrder saved = orderRepository.save(order);
                                 log.info("Order {} marked PAID via payment event", orderId);
+                                publishPaymentCompleted(saved);
                             }
                         });
+    }
+
+    private void publishPaymentCompleted(LockerOrder order) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderId", order.getId());
+        payload.put("orderCode", order.getOrderCode());
+        payload.put("userId", order.getUserId());
+        payload.put("status", order.getStatus());
+        payload.put("paymentStatus", "PAID");
+        try {
+            rabbitTemplate.convertAndSend(
+                    DomainEventNames.EXCHANGE,
+                    DomainEventNames.ORDER_STATUS_CHANGED,
+                    DomainEvent.of(DomainEventNames.ORDER_STATUS_CHANGED, "order-service", payload));
+        } catch (Exception ex) {
+            log.warn("Could not publish order status changed for paid order {}: {}", order.getId(), ex.getMessage());
+        }
+
+        try {
+            notificationClient.requestNotification(new com.huynqb.laundrylocker.common.dto.NotificationRequest(
+                    order.getUserId(),
+                    "Thanh toán thành công",
+                    "Đơn hàng " + order.getOrderCode() + " đã được thanh toán thành công",
+                    "PAYMENT_COMPLETED",
+                    order.getId(),
+                    "ORDER"));
+        } catch (Exception ex) {
+            log.warn("Could not notify user {} for paid order {}: {}", order.getUserId(), order.getId(), ex.getMessage());
+        }
     }
 }
