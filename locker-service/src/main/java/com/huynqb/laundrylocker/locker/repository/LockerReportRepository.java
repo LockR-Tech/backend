@@ -14,6 +14,9 @@ public interface LockerReportRepository extends JpaRepository<LockerReport, Long
 
     List<LockerReport> findByStatusInOrderByCreatedAtDesc(List<String> statuses);
 
+    List<LockerReport> findByDroneUnitIdAndStatusInOrderByCreatedAtDesc(
+            Long droneUnitId, List<String> statuses);
+
     List<LockerReport> findByAssignedToUserIdOrderByCreatedAtDesc(Long assignedToUserId);
 
     Optional<LockerReport> findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(Long boxId, List<String> statuses);
