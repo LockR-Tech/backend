@@ -41,10 +41,12 @@ class PaymentServiceCheckoutTest {
 
     @Mock private PaymentRepository repository;
     @Mock private RefundRepository refundRepository;
+    @Mock private com.huynqb.laundrylocker.payment.repository.UserBankAccountRepository userBankAccountRepository;
     @Mock private RabbitTemplate rabbitTemplate;
     @Mock private Environment environment;
     @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
+    @Mock private com.huynqb.laundrylocker.payment.client.NotificationClient notificationClient;
     @Mock private MomoService momoService;
     @Mock private SepayService sepayService;
 
@@ -55,10 +57,12 @@ class PaymentServiceCheckoutTest {
         paymentService = new PaymentService(
                 repository,
                 refundRepository,
+                userBankAccountRepository,
                 rabbitTemplate,
                 environment,
                 walletService,
                 orderClient,
+                notificationClient,
                 momoService,
                 sepayService,
                 TestPaymentRules.defaults());
@@ -214,7 +218,7 @@ class PaymentServiceCheckoutTest {
     }
 
     @Test
-    void refundOrderCreditsWalletOncePerCompletedPayment() {
+    void refundOrderCreatesPendingRefundWithoutWalletCredit() {
         PaymentRecord paid = new PaymentRecord();
         paid.setId(7L);
         paid.setOrderId(55L);
@@ -236,14 +240,14 @@ class PaymentServiceCheckoutTest {
         assertEquals(0, BigDecimal.valueOf(15000).compareTo(result.refundedAmount()));
         assertEquals(1, result.refundedPayments());
         verify(refundRepository).save(org.mockito.ArgumentMatchers.argThat(refund ->
-                refund.getPaymentId().equals(7L) && "COMPLETED".equals(refund.getStatus())));
-        // Mọi phương thức đều hoàn về ví; khoản chưa hoàn tất không được hoàn.
-        verify(walletService).credit(
-                org.mockito.ArgumentMatchers.eq(44L),
-                org.mockito.ArgumentMatchers.eq(BigDecimal.valueOf(15000)),
-                org.mockito.ArgumentMatchers.eq(WalletService.SOURCE_REFUND),
-                org.mockito.ArgumentMatchers.eq("RF-PAY-55-1"),
-                org.mockito.ArgumentMatchers.anyString());
+                refund.getPaymentId().equals(7L) && "PENDING".equals(refund.getStatus())));
+        // Không hoàn tiền về ví nữa; chờ admin duyệt chuyển khoản ngân hàng.
+        verify(walletService, org.mockito.Mockito.never()).credit(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -274,7 +278,7 @@ class PaymentServiceCheckoutTest {
 
     private PaymentService serviceWith(Map<String, ?> overrides) {
         return new PaymentService(
-                repository, refundRepository, rabbitTemplate, environment, walletService, orderClient, momoService,
-                sepayService, TestPaymentRules.of(overrides));
+                repository, refundRepository, userBankAccountRepository, rabbitTemplate, environment,
+                walletService, orderClient, notificationClient, momoService, sepayService, TestPaymentRules.of(overrides));
     }
 }

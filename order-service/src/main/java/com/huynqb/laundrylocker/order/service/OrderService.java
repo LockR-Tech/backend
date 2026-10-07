@@ -2285,4 +2285,14 @@ public class OrderService {
         LockerOrder order = find(orderId);
         addHistory(order.getId(), order.getStatus(), order.getStatus(), null, note);
     }
+
+    @Transactional
+    public void updatePaymentStatus(Long orderId, String paymentStatus, String note, Long actorUserId) {
+        LockerOrder order = find(orderId);
+        order.setPaymentStatus(paymentStatus);
+        orderRepository.save(order);
+        if (StringUtils.hasText(note)) {
+            addHistory(order.getId(), order.getStatus(), order.getStatus(), actorUserId, note);
+        }
+    }
 }
