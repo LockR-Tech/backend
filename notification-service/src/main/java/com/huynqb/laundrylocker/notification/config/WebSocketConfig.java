@@ -28,13 +28,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registration.interceptors(jwtStompPrincipalChannelInterceptor);
     }
 
+    /// Gateway đã gắn CORS cho mọi đường dẫn (globalcors). SockJS mà gắn thêm thì `/ws/info` có hai
+    /// header `Access-Control-Allow-Origin` và trình duyệt chặn, nên web admin không có realtime.
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry
                 .addEndpoint("/ws")
                 .setHandshakeHandler(jwtHandshakePrincipalHandler)
                 .setAllowedOriginPatterns("*")
-                .withSockJS();
+                .withSockJS()
+                .setSuppressCors(true);
         registry
                 .addEndpoint("/ws")
                 .setHandshakeHandler(jwtHandshakePrincipalHandler)
