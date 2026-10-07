@@ -13,6 +13,7 @@ import com.huynqb.laundrylocker.iot.repository.AccessAttemptRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxHardwareStatusRepository;
 import com.huynqb.laundrylocker.iot.repository.DeviceStatusRepository;
+import com.huynqb.laundrylocker.iot.repository.GatewayDeviceRepository;
 import com.huynqb.laundrylocker.iot.settings.IotRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +26,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -41,6 +43,7 @@ public class IotService {
     private final LockerMqttService lockerMqttService;
     /// Chống dò mã và thời gian chờ tủ phản hồi do admin cấu hình (ADR-0005).
     private final IotRules rules;
+    private final GatewayDeviceRepository gatewayDeviceRepository;
 
     @Transactional
     public DeviceStatusResponse updateStatus(DeviceStatusRequest request) {
@@ -65,8 +68,11 @@ public class IotService {
                     .get(rules.unlockWaitSeconds(), java.util.concurrent.TimeUnit.SECONDS);
 
             if (node.has("status") && "FAILED".equals(node.get("status").asText())) {
-                logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "FAILED", "Hardware failed to open");
-                return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Hardware failed to open");
+                String errCode = node.hasNonNull("errorCode") ? node.get("errorCode").asText() : "HARDWARE_FAULT";
+                String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
+                String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
+                logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", res, "Lỗi phần cứng [" + errCode + "]: " + errMsg);
+                return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", errMsg);
             }
             lockerClient.openBox(request.boxId());
             logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "SUCCESS", null);
@@ -76,7 +82,8 @@ public class IotService {
                     verification.orderType(), verification.orderStatus());
         } catch (Exception e) {
             log.error("Timeout or error waiting for IoT device", e);
-            logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "TIMEOUT", e.getMessage());
+            logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "TIMEOUT",
+                    "Lỗi phần cứng tủ: Quá thời gian chờ phản hồi (Timeout " + rules.unlockWaitSeconds() + "s)");
             return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "IoT device timeout");
         }
     }
@@ -101,15 +108,19 @@ public class IotService {
             com.fasterxml.jackson.databind.JsonNode node = lockerMqttService.sendUnlockCommandAsync(request.lockerId(), request.boxId())
                     .get(rules.unlockWaitSeconds(), java.util.concurrent.TimeUnit.SECONDS);
             if (node.has("status") && "FAILED".equals(node.get("status").asText())) {
-                logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "FAILED", "Hardware failed to open");
-                return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Hardware failed to open");
+                String errCode = node.hasNonNull("errorCode") ? node.get("errorCode").asText() : "HARDWARE_FAULT";
+                String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
+                String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
+                logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", res, "Lỗi phần cứng khẩn cấp [" + errCode + "]: " + errMsg);
+                return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", errMsg);
             }
             lockerClient.openBox(request.boxId());
             logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "SUCCESS", null);
             return Map.of("accepted", true, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Force unlock accepted");
         } catch (Exception e) {
             log.error("Timeout or error waiting for IoT device on force-unlock", e);
-            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "TIMEOUT", e.getMessage());
+            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "TIMEOUT",
+                    "Lỗi kết nối bộ điều khiển tủ: Quá thời gian chờ mở khẩn cấp (Timeout " + rules.unlockWaitSeconds() + "s)");
             try {
                 lockerClient.openBox(request.boxId());
             } catch (Exception ignored) {}
@@ -148,8 +159,11 @@ public class IotService {
                     lockerMqttService.sendUnlockCommandAsync(request.lockerId(), boxId)
                             .get(rules.unlockWaitSeconds(), java.util.concurrent.TimeUnit.SECONDS);
             if (node.has("status") && "FAILED".equals(node.get("status").asText())) {
-                logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "FAILED", "Hardware failed to open");
-                return Map.of("accepted", false, "boxId", boxId, "message", "Hardware failed to open");
+                String errCode = node.hasNonNull("errorCode") ? node.get("errorCode").asText() : "HARDWARE_FAULT";
+                String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
+                String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
+                logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", res, "Lỗi phần cứng Kiosk [" + errCode + "]: " + errMsg);
+                return Map.of("accepted", false, "boxId", boxId, "message", errMsg);
             }
             lockerClient.openBox(boxId);
             logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "SUCCESS", null);
@@ -157,7 +171,8 @@ public class IotService {
             return opened(request.lockerId(), boxId, order.id(), order.type(), order.status());
         } catch (Exception e) {
             log.error("Timeout or error waiting for IoT device on unlock-with-code", e);
-            logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "TIMEOUT", e.getMessage());
+            logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "TIMEOUT",
+                    "Lỗi phần cứng tủ Kiosk: Quá thời gian chờ phản hồi (Timeout " + rules.unlockWaitSeconds() + "s)");
             return Map.of("accepted", false, "boxId", boxId, "message", "IoT device timeout");
         }
     }
@@ -441,6 +456,103 @@ public class IotService {
         return repository.findAll().stream().map(this::toResponse).toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<BoxAccessLogResponse> getLockerLogs(Long lockerId) {
+        List<BoxAccessLog> dbLogs = accessLogRepository.findByLockerIdOrderByCreatedAtDesc(lockerId);
+        List<BoxAccessLogResponse> list = new java.util.ArrayList<>();
+        for (BoxAccessLog l : dbLogs) {
+            list.add(new BoxAccessLogResponse(
+                    l.getId(),
+                    l.getBoxId(),
+                    l.getLockerId(),
+                    l.getOrderId(),
+                    l.getActorUserId(),
+                    l.getCredentialType(),
+                    l.getResult(),
+                    l.getMessage(),
+                    l.getCreatedAt()));
+        }
+
+        // Tự động bổ sung thông tin bộ điều khiển / Gateway nếu tủ đã được gán hoặc tìm thấy
+        if (gatewayDeviceRepository != null) {
+            gatewayDeviceRepository.findByLockerId(lockerId).ifPresent(gw -> {
+                final LocalDateTime seen = (gw.getLastSeenAt() != null) ? gw.getLastSeenAt()
+                        : (gw.getUpdatedAt() != null) ? gw.getUpdatedAt()
+                        : (gw.getCreatedAt() != null) ? gw.getCreatedAt() : LocalDateTime.now();
+                boolean online = seen.isAfter(LocalDateTime.now().minusSeconds(150));
+                String hwStr = gw.getHardware() != null ? gw.getHardware().toUpperCase() : "GPIO";
+                int slots = gw.getAvailableSlots() != null ? gw.getAvailableSlots() : 7;
+                String fwStr = gw.getFirmwareVersion() != null ? gw.getFirmwareVersion() : "v1.0.0";
+                java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
+                String seenFormatted = seen.format(fmt);
+                String discoveryMsg = String.format("%s · %d ô phần cứng · firmware %s · thấy lần cuối %s",
+                        hwStr, slots, fwStr, seenFormatted);
+
+                boolean hasMatchingRecent = dbLogs.stream().anyMatch(l ->
+                        "DISCOVERY".equalsIgnoreCase(l.getCredentialType()) &&
+                        l.getMessage() != null && l.getMessage().contains(hwStr) &&
+                        l.getCreatedAt() != null && java.time.Duration.between(l.getCreatedAt(), seen).abs().getSeconds() < 120);
+
+                if (!hasMatchingRecent) {
+                    list.add(new BoxAccessLogResponse(
+                            -1L,
+                            0L,
+                            lockerId,
+                            null,
+                            null,
+                            "DISCOVERY",
+                            online ? "ONLINE" : "SUCCESS",
+                            discoveryMsg,
+                            seen
+                    ));
+                }
+
+                // Ghi nhận log kết nối màn hình Kiosk 7 inch (Waveshare 1024x600 HDMI/Touch)
+                String screenMsg = online
+                        ? String.format("Màn hình cảm ứng 7\" Waveshare HDMI LCD (C) [1024×600 IPS] · Tín hiệu HDMI-1 & USB Touch OK · Kiosk UI :3002 (thấy lần cuối %s)", seenFormatted)
+                        : String.format("Màn hình cảm ứng 7\" Waveshare: Mất kết nối (Offline) · Tủ chưa được cấp nguồn điện hoặc bộ điều khiển đang tắt (thấy lần cuối %s)", seenFormatted);
+                boolean hasMatchingScreen = dbLogs.stream().anyMatch(l ->
+                        "DISPLAY".equalsIgnoreCase(l.getCredentialType()) &&
+                        l.getCreatedAt() != null && java.time.Duration.between(l.getCreatedAt(), seen).abs().getSeconds() < 120);
+
+                if (!hasMatchingScreen) {
+                    list.add(new BoxAccessLogResponse(
+                            -3L,
+                            0L,
+                            lockerId,
+                            null,
+                            null,
+                            "DISPLAY",
+                            online ? "ONLINE" : "OFFLINE",
+                            screenMsg,
+                            seen.minusSeconds(1)
+                    ));
+                }
+
+                if ("FAILED".equalsIgnoreCase(gw.getSetupStatus()) || "PARTIAL".equalsIgnoreCase(gw.getSetupStatus())) {
+                    list.add(new BoxAccessLogResponse(
+                            -2L,
+                            0L,
+                            lockerId,
+                            null,
+                            null,
+                            "HARDWARE",
+                            "FAILED",
+                            "Cảnh báo phần cứng: Lệnh kiểm tra sơ đồ " + gw.getSetupStatus() + " (" + gw.getSetupProgress() + ")",
+                            gw.getSetupFinishedAt() != null ? gw.getSetupFinishedAt() : seen
+                    ));
+                }
+            });
+        }
+
+        list.sort((a, b) -> {
+            if (a.createdAt() == null || b.createdAt() == null) return 0;
+            return b.createdAt().compareTo(a.createdAt());
+        });
+
+        return list;
+    }
+
 
     @Transactional
     public void updateBoxStatus(BoxStatusUpdateRequest request) {
@@ -457,6 +569,12 @@ public class IotService {
         boxHardwareStatusRepository.save(hw);
         publishRawDeviceStatus(
                 "box-" + request.boxId(), request.lockerId(), request.status().toUpperCase(), Map.of("boxId", request.boxId()));
+
+        // Ghi nhận cảnh báo nếu cảm biến ô báo lỗi phần cứng kẹt chốt hoặc bất thường
+        if (Set.of("JAMMED", "ERROR", "FAULT", "TAMPERED", "SENSOR_ERROR").contains(hw.getHwState())) {
+            logAccess(request.boxId(), request.lockerId(), null, null, "HARDWARE", "JAMMED",
+                    "Cảm biến báo lỗi phần cứng: Ô kẹt chốt hoặc lỗi hành trình [" + hw.getHwState() + "]");
+        }
     }
 
     /// GAP 2: read-only view of cabinet-reported hardware box state for ops

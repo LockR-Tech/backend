@@ -49,6 +49,7 @@ class GatewayProvisioningServiceTest {
     GatewayDeviceRepository repository;
     LockerMqttService mqtt;
     CabinetLayoutLookup layoutLookup;
+    com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository boxAccessLogRepository;
     GatewayProvisioningService service;
 
     @BeforeEach
@@ -56,7 +57,8 @@ class GatewayProvisioningServiceTest {
         repository = mock(GatewayDeviceRepository.class);
         mqtt = mock(LockerMqttService.class);
         layoutLookup = mock(CabinetLayoutLookup.class);
-        service = new GatewayProvisioningService(repository, mqtt, layoutLookup, objectMapper);
+        boxAccessLogRepository = mock(com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository.class);
+        service = new GatewayProvisioningService(repository, mqtt, layoutLookup, objectMapper, boxAccessLogRepository);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(mqtt.isConnected()).thenReturn(true);
     }

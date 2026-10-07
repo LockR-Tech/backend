@@ -738,4 +738,16 @@ public class LockerController {
     public ApiResponse<LockerBoxSummary> adminBoxStatus(@PathVariable Long boxId, @RequestBody Map<String, Object> request) {
         return ApiResponse.ok("BOX_STATUS_UPDATED", "Box status updated", lockerService.updateBoxStatus(boxId, String.valueOf(request.get("status"))));
     }
+
+    @PutMapping("/api/admin/lockers/boxes/{boxId}")
+    public ApiResponse<LockerBoxSummary> adminUpdateBox(
+            @PathVariable Long boxId, @RequestBody UpdateBoxRequest request) {
+        return ApiResponse.ok("BOX_UPDATED", "Box updated", lockerService.updateBox(boxId, request));
+    }
+
+    @DeleteMapping("/api/admin/lockers/boxes/{boxId}")
+    public ApiResponse<Void> adminDeleteBox(@PathVariable Long boxId) {
+        lockerService.deleteBox(boxId);
+        return ApiResponse.ok("BOX_DELETED", "Box deleted");
+    }
 }

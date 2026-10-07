@@ -9,7 +9,9 @@ import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.iot.dto.AssignGatewayRequest;
 import com.huynqb.laundrylocker.iot.dto.GatewayDeviceResponse;
 import com.huynqb.laundrylocker.iot.dto.LockerLayoutView;
+import com.huynqb.laundrylocker.iot.model.BoxAccessLog;
 import com.huynqb.laundrylocker.iot.model.GatewayDevice;
+import com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository;
 import com.huynqb.laundrylocker.iot.repository.GatewayDeviceRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +22,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -40,6 +43,7 @@ import java.util.regex.Pattern;
 public class GatewayProvisioningService {
 
     private static final Pattern MAC = Pattern.compile("^([0-9A-F]{2}:){5}[0-9A-F]{2}$");
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
     /// Pi gửi heartbeat mỗi 60 s; quá 150 s không thấy thì coi là mất kết nối.
     static final long ONLINE_WINDOW_SECONDS = 150;
     static final int SETUP_TEST_TIMEOUT_SECONDS = 10;
@@ -48,6 +52,7 @@ public class GatewayProvisioningService {
     private final LockerMqttService mqtt;
     private final CabinetLayoutLookup layoutLookup;
     private final ObjectMapper objectMapper;
+    private final BoxAccessLogRepository boxAccessLogRepository;
 
     static String normalizeMac(String raw) {
         if (raw == null) {
@@ -87,6 +92,23 @@ public class GatewayProvisioningService {
         }
         device.setLastSeenAt(LocalDateTime.now());
         repository.save(device);
+
+        // Ghi nhận nhật ký phát hiện bộ điều khiển tủ
+        Long targetLockerId = device.getLockerId() != null ? device.getLockerId() : device.getReportedLockerId();
+        if (targetLockerId != null && boxAccessLogRepository != null) {
+            BoxAccessLog logEntry = new BoxAccessLog();
+            logEntry.setLockerId(targetLockerId);
+            logEntry.setBoxId(0L);
+            logEntry.setCredentialType("DISCOVERY");
+            logEntry.setResult("ONLINE");
+            String hwStr = device.getHardware() != null ? device.getHardware().toUpperCase() : "GPIO";
+            int slots = device.getAvailableSlots() != null ? device.getAvailableSlots() : 7;
+            String fw = device.getFirmwareVersion() != null ? device.getFirmwareVersion() : "v1.0.0";
+            String seenTime = LocalDateTime.now().format(TIME_FMT);
+            logEntry.setMessage(String.format("%s · %d ô phần cứng · firmware %s · thấy lần cuối %s",
+                    hwStr, slots, fw, seenTime));
+            boxAccessLogRepository.save(logEntry);
+        }
     }
 
     /// Heartbeat có MAC ⇒ cập nhật "lần cuối thấy". Không tạo thiết bị mới (chờ discovery).
@@ -126,6 +148,24 @@ public class GatewayProvisioningService {
             repository.save(device);
             log.info("Setup {} of {} for locker {}: {}", text(data, "commandId"), device.getMacAddress(),
                     device.getLockerId(), status);
+
+            // Ghi nhận nhật ký kiểm tra sơ đồ phần cứng hoặc cảnh báo lỗi
+            if (device.getLockerId() != null && boxAccessLogRepository != null) {
+                BoxAccessLog audit = new BoxAccessLog();
+                audit.setLockerId(device.getLockerId());
+                audit.setBoxId(0L);
+                audit.setCredentialType("HARDWARE");
+                if ("COMPLETED".equals(status)) {
+                    audit.setResult("SUCCESS");
+                    audit.setMessage("Kiểm tra sơ đồ phần cứng thành công: " + device.getSetupProgress() + " ô hoạt động tốt");
+                } else {
+                    audit.setResult("FAILED");
+                    String err = data.hasNonNull("errorMessage") ? data.get("errorMessage").asText() :
+                            "Phần cứng có ô kẹt chốt hoặc cảm biến không phản hồi (" + device.getSetupProgress() + ")";
+                    audit.setMessage("Cảnh báo lỗi phần cứng: Kiểm tra sơ đồ " + status + " - " + err);
+                }
+                boxAccessLogRepository.save(audit);
+            }
         });
     }
 
