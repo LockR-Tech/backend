@@ -96,18 +96,27 @@ public class GatewayProvisioningService {
         // Ghi nhận nhật ký phát hiện bộ điều khiển tủ
         Long targetLockerId = device.getLockerId() != null ? device.getLockerId() : device.getReportedLockerId();
         if (targetLockerId != null && boxAccessLogRepository != null) {
+            String hwStr = device.getHardware() != null ? device.getHardware().toUpperCase() : "GPIO";
+            int slots = device.getAvailableSlots() != null ? device.getAvailableSlots() : 7;
+            String fw = device.getFirmwareVersion() != null ? device.getFirmwareVersion() : "v1.0.0";
+            String seenTime = LocalDateTime.now().format(TIME_FMT);
+
             BoxAccessLog logEntry = new BoxAccessLog();
             logEntry.setLockerId(targetLockerId);
             logEntry.setBoxId(0L);
             logEntry.setCredentialType("DISCOVERY");
             logEntry.setResult("ONLINE");
-            String hwStr = device.getHardware() != null ? device.getHardware().toUpperCase() : "GPIO";
-            int slots = device.getAvailableSlots() != null ? device.getAvailableSlots() : 7;
-            String fw = device.getFirmwareVersion() != null ? device.getFirmwareVersion() : "v1.0.0";
-            String seenTime = LocalDateTime.now().format(TIME_FMT);
-            logEntry.setMessage(String.format("%s · %d ô phần cứng · firmware %s · thấy lần cuối %s",
+            logEntry.setMessage(String.format("Bộ điều khiển kết nối thành công (Cấp nguồn điện / Khởi động) · %s · %d ô phần cứng · firmware %s · lúc %s",
                     hwStr, slots, fw, seenTime));
             boxAccessLogRepository.save(logEntry);
+
+            BoxAccessLog screenLog = new BoxAccessLog();
+            screenLog.setLockerId(targetLockerId);
+            screenLog.setBoxId(0L);
+            screenLog.setCredentialType("DISPLAY");
+            screenLog.setResult("ONLINE");
+            screenLog.setMessage(String.format("Màn hình cảm ứng 7\" Waveshare [1024×600 IPS] & Kiosk UI :3002 kết nối thành công lúc %s", seenTime));
+            boxAccessLogRepository.save(screenLog);
         }
     }
 
@@ -119,8 +128,38 @@ public class GatewayProvisioningService {
             return;
         }
         repository.findByMacAddress(mac).ifPresent(device -> {
+            LocalDateTime prevSeen = device.getLastSeenAt();
+            boolean wasOffline = (prevSeen == null || prevSeen.isBefore(LocalDateTime.now().minusSeconds(ONLINE_WINDOW_SECONDS)));
             device.setLastSeenAt(LocalDateTime.now());
             repository.save(device);
+
+            // Nếu thiết bị trước đó đã mất kết nối (rút điện) mà nay có heartbeat trở lại (cắm điện lại)
+            if (wasOffline) {
+                Long targetLockerId = device.getLockerId() != null ? device.getLockerId() : device.getReportedLockerId();
+                if (targetLockerId != null && boxAccessLogRepository != null) {
+                    String hwStr = device.getHardware() != null ? device.getHardware().toUpperCase() : "GPIO";
+                    int slots = device.getAvailableSlots() != null ? device.getAvailableSlots() : 7;
+                    String fw = device.getFirmwareVersion() != null ? device.getFirmwareVersion() : "v1.0.0";
+                    String seenTime = LocalDateTime.now().format(TIME_FMT);
+
+                    BoxAccessLog logEntry = new BoxAccessLog();
+                    logEntry.setLockerId(targetLockerId);
+                    logEntry.setBoxId(0L);
+                    logEntry.setCredentialType("DISCOVERY");
+                    logEntry.setResult("ONLINE");
+                    logEntry.setMessage(String.format("Bộ điều khiển kết nối lại thành công (Cấp điện / Bắt được tín hiệu) · %s · %d ô phần cứng · firmware %s · lúc %s",
+                            hwStr, slots, fw, seenTime));
+                    boxAccessLogRepository.save(logEntry);
+
+                    BoxAccessLog screenLog = new BoxAccessLog();
+                    screenLog.setLockerId(targetLockerId);
+                    screenLog.setBoxId(0L);
+                    screenLog.setCredentialType("DISPLAY");
+                    screenLog.setResult("ONLINE");
+                    screenLog.setMessage(String.format("Màn hình cảm ứng 7\" Waveshare & Kiosk UI :3002 kết nối lại thành công lúc %s", seenTime));
+                    boxAccessLogRepository.save(screenLog);
+                }
+            }
         });
     }
 
