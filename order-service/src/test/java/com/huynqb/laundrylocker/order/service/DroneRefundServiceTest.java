@@ -53,7 +53,8 @@ class DroneRefundServiceTest {
 
         assertTrue(service.refundCanceledOrder(21L, 99L));
 
-        assertEquals("REFUNDED", order.getPaymentStatus());
+        // Tiền chưa về: chỉ mới có yêu cầu hoàn chờ admin chuyển khoản.
+        assertEquals("REFUND_PENDING", order.getPaymentStatus());
         verify(orderRepository).save(order);
         verify(historyRepository).save(any());
         verify(notificationClient).requestNotification(any());
@@ -95,7 +96,16 @@ class DroneRefundServiceTest {
 
         assertTrue(service.refundCanceledOrder(21L, 99L));
 
-        assertEquals("REFUNDED", order.getPaymentStatus());
+        assertEquals("REFUND_PENDING", order.getPaymentStatus());
+    }
+
+    @Test
+    void doesNotRequestARefundAgainWhileOneIsPending() {
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order("CANCELED", "REFUND_PENDING")));
+
+        assertFalse(service.refundCanceledOrder(21L, 99L));
+
+        verify(paymentRefundClient, never()).refundOrder(any(), any(), any());
     }
 
     @Test
@@ -131,7 +141,8 @@ class DroneRefundServiceTest {
 
         assertTrue(service.refundLatePayment(21L));
 
-        assertEquals("REFUNDED", order.getPaymentStatus());
+        // Có khoản mới đang chờ hoàn, nên đơn không còn là "đã hoàn xong".
+        assertEquals("REFUND_PENDING", order.getPaymentStatus());
         verify(notificationClient).requestNotification(any());
     }
 

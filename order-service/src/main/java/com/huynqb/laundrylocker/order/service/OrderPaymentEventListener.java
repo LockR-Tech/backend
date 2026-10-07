@@ -58,12 +58,14 @@ public class OrderPaymentEventListener {
                         order -> {
                             // Đơn drone đã huỷ mà tiền mới về (chuyển khoản còn chờ lúc huỷ):
                             // lúc huỷ chưa có gì để hoàn, nên phải hoàn khoản này bây giờ.
-                            if ("DRONE_DELIVERY".equals(order.getType())
-                                    && "CANCELED".equals(order.getStatus())) {
+                            boolean canceledDrone = "DRONE_DELIVERY".equals(order.getType())
+                                    && "CANCELED".equals(order.getStatus());
+                            if (canceledDrone) {
                                 droneLateRefunds.schedule(orderId);
                             }
-                            // REFUNDED: sự kiện thanh toán tới trễ không được lật đơn đã hoàn tiền về PAID.
+                            // Sự kiện thanh toán tới trễ không được lật đơn đang chờ hoàn / đã hoàn về PAID.
                             if (!"PAID".equals(order.getPaymentStatus())
+                                    && !"REFUND_PENDING".equals(order.getPaymentStatus())
                                     && !"REFUNDED".equals(order.getPaymentStatus())) {
                                 order.setPaymentStatus("PAID");
                                 order.setPaidAt(LocalDateTime.now());
@@ -75,7 +77,10 @@ public class OrderPaymentEventListener {
                                                 : order.getTotalPrice());
                                 LockerOrder saved = orderRepository.save(order);
                                 log.info("Order {} marked PAID via payment event", orderId);
-                                publishPaymentCompleted(saved);
+                                // Đơn drone đã huỷ: khoản này sắp được hoàn, không báo "thanh toán thành công".
+                                if (!canceledDrone) {
+                                    publishPaymentCompleted(saved);
+                                }
                             }
                         });
     }

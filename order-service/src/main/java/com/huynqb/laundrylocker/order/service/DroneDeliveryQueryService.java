@@ -34,7 +34,7 @@ import java.util.Set;
 public class DroneDeliveryQueryService {
 
     private static final List<String> TERMINAL_ORDER_STATUSES = List.of("COMPLETED", "CANCELED", "EXPIRED");
-    private static final Set<String> PAID_PAYMENT_STATUSES = Set.of("PAID", "REFUNDED");
+    private static final Set<String> PAID_PAYMENT_STATUSES = Set.of("PAID", "REFUND_PENDING", "REFUNDED");
 
     private final LockerOrderRepository orderRepository;
     private final DroneMissionRepository missionRepository;

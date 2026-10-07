@@ -168,8 +168,8 @@ public class OrderController {
             @RequestParam(required = false) Integer reason,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         OrderResponse canceled = orderService.cancel(orderId, reason, userId);
-        // Đơn drone đã trả tiền mà huỷ trước khi bay ⇒ hoàn về ví. Chạy sau khi huỷ đã
-        // commit; hoàn được thì trả lại bản đơn mới nhất (paymentStatus = REFUNDED).
+        // Đơn drone đã trả tiền mà huỷ trước khi bay ⇒ tạo yêu cầu hoàn tiền. Chạy sau khi huỷ
+        // đã commit; tạo được thì trả lại bản đơn mới nhất (paymentStatus = REFUND_PENDING).
         if (droneRefundService.refundCanceledOrder(orderId, userId)) {
             canceled = orderService.get(orderId);
         }

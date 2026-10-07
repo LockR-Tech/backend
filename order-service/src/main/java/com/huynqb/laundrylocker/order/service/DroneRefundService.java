@@ -17,12 +17,16 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 
 /**
- * Hoàn tiền đơn drone bị huỷ trước khi bay.
+ * Tạo yêu cầu hoàn tiền cho đơn drone bị huỷ trước khi bay.
  *
  * <p>Đơn drone phải trả tiền trước khi đội bay tiếp nhận, nên đơn bị huỷ (khách huỷ lúc
  * chờ điều phối, hoặc đội bay huỷ trước khi phóng) là đơn đã thu tiền mà không giao.
- * Chạy SAU khi việc huỷ đã commit: hoàn tiền lỗi thì đơn vẫn huỷ, ô và drone vẫn được
- * nhả, còn đơn giữ `PAID` để admin thấy và hoàn tay.
+ * Chạy SAU khi việc huỷ đã commit: tạo yêu cầu lỗi thì đơn vẫn huỷ, ô và drone vẫn được
+ * nhả, còn đơn giữ `PAID` để admin thấy và xử lý tay.
+ *
+ * <p>Tiền KHÔNG về ngay: payment-service chỉ ghi yêu cầu hoàn ở trạng thái chờ, admin chuyển
+ * khoản rồi xác nhận. Đơn vì thế sang `REFUND_PENDING`; payment-service tự đổi sang
+ * `REFUNDED` khi admin xác nhận đã chuyển, hoặc trả về `PAID` nếu admin từ chối.
  */
 @Slf4j
 @Service
@@ -34,14 +38,17 @@ public class DroneRefundService {
     private final PaymentRefundClient paymentRefundClient;
     private final NotificationClient notificationClient;
 
-    /// Trả về true nếu đơn đã được đánh dấu REFUNDED ở lần gọi này.
+    /// Đơn đã có yêu cầu hoàn (đang chờ hoặc đã chuyển khoản xong).
+    private static final java.util.Set<String> REFUND_STATUSES = java.util.Set.of("REFUND_PENDING", "REFUNDED");
+
+    /// Trả về true nếu lần gọi này tạo được yêu cầu hoàn tiền (đơn sang REFUND_PENDING).
     @Transactional
     public boolean refundCanceledOrder(Long orderId, Long actorUserId) {
         return refund(orderId, actorUserId, false);
     }
 
-    /// Hoàn khoản tiền tới sau khi đơn đã huỷ. Khác lần hoàn lúc huỷ: đơn có thể đã REFUNDED
-    /// (các khoản trước đã hoàn) và payment-service chỉ hoàn những khoản chưa hoàn.
+    /// Yêu cầu hoàn khoản tiền tới sau khi đơn đã huỷ. Khác lần lúc huỷ: đơn có thể đã có yêu
+    /// cầu hoàn cho các khoản trước, và payment-service chỉ tạo yêu cầu cho khoản chưa có.
     @Transactional
     public boolean refundLatePayment(Long orderId) {
         return refund(orderId, null, true);
@@ -61,37 +68,38 @@ public class DroneRefundService {
                     paymentRefundClient.refundOrder(orderId, "Đơn drone " + order.getOrderCode() + " bị huỷ", actorUserId);
             result = response == null ? null : response.data();
         } catch (RuntimeException ex) {
-            log.warn("Refund of canceled drone order {} failed, order stays PAID: {}", orderId, ex.getMessage());
-            addHistory(order, actorUserId, "Hoàn tiền tự động thất bại — cần admin hoàn tay");
+            log.warn("Refund request for canceled drone order {} failed, order stays PAID: {}", orderId, ex.getMessage());
+            addHistory(order, actorUserId, "Chưa tạo được yêu cầu hoàn tiền — cần admin xử lý tay");
             return false;
         }
         if (result == null) {
-            addHistory(order, actorUserId, "Hoàn tiền tự động thất bại — cần admin hoàn tay");
+            addHistory(order, actorUserId, "Chưa tạo được yêu cầu hoàn tiền — cần admin xử lý tay");
             return false;
         }
         BigDecimal amount = result.refundedAmount() == null ? BigDecimal.ZERO : result.refundedAmount();
         if (amount.signum() <= 0) {
-            // Không có khoản nào được hoàn: không được báo "đã hoàn 0 đ" rồi đóng đơn là REFUNDED.
-            if (!"REFUNDED".equals(order.getPaymentStatus())) {
-                addHistory(order, actorUserId, "Chưa hoàn được khoản đã thu — cần admin kiểm tra và hoàn tay");
+            // Không có khoản nào cần hoàn thêm: không được báo "hoàn 0 đ" rồi đổi trạng thái đơn.
+            if (!REFUND_STATUSES.contains(order.getPaymentStatus())) {
+                addHistory(order, actorUserId, "Chưa tạo được yêu cầu hoàn khoản đã thu — cần admin kiểm tra");
             }
             return false;
         }
 
-        order.setPaymentStatus("REFUNDED");
+        order.setPaymentStatus("REFUND_PENDING");
         orderRepository.save(order);
-        addHistory(order, actorUserId, "Đã hoàn " + amount.toBigInteger() + " đ về ví Lock.R của người đặt");
+        addHistory(order, actorUserId, "Đã ghi nhận yêu cầu hoàn " + amount.toBigInteger()
+                + " đ — chờ admin chuyển khoản cho người đặt");
         try {
             notificationClient.requestNotification(new NotificationRequest(
                     order.getUserId(),
-                    "Đã hoàn tiền đơn drone",
-                    "Đơn " + order.getOrderCode() + " đã huỷ. " + amount.toBigInteger()
-                            + " đ đã được hoàn về ví Lock.R của bạn.",
+                    "Đã ghi nhận yêu cầu hoàn tiền",
+                    "Đơn " + order.getOrderCode() + " đã huỷ. Yêu cầu hoàn " + amount.toBigInteger()
+                            + " đ đã được ghi nhận; admin sẽ chuyển khoản về tài khoản ngân hàng của bạn.",
                     "DRONE_DELIVERY_STATUS_CHANGED",
                     order.getId(),
                     "ORDER"));
         } catch (RuntimeException ignored) {
-            // Tiền đã về ví; thông báo chỉ là kênh báo nhanh.
+            // Yêu cầu hoàn đã được ghi; thông báo chỉ là kênh báo nhanh.
         }
         return true;
     }

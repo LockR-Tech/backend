@@ -34,9 +34,7 @@ class OrderPaymentEventListenerTest {
 
     @Test
     void paymentCompletedMarksDroneOrderPaidWithoutChangingDispatchStage() {
-        OrderPaymentEventListener listener = new OrderPaymentEventListener(orderRepository, droneLateRefunds);
-        OrderPaymentEventListener listener =
-                new OrderPaymentEventListener(orderRepository, rabbitTemplate, notificationClient);
+        OrderPaymentEventListener listener = listener();
         LockerOrder order = new LockerOrder();
         order.setId(21L);
         order.setType("DRONE_DELIVERY");
@@ -57,24 +55,41 @@ class OrderPaymentEventListenerTest {
         assertEquals("ACCEPTED", order.getDeliveryStage());
         verify(orderRepository).save(order);
         verify(droneLateRefunds, never()).schedule(any());
+        verify(notificationClient).requestNotification(any());
     }
 
     @Test
     void moneyArrivingAfterADroneOrderWasCanceledIsSentBackNotKept() {
-        OrderPaymentEventListener listener = new OrderPaymentEventListener(orderRepository, droneLateRefunds);
+        OrderPaymentEventListener listener = listener();
         LockerOrder order = droneOrder("CANCELED", "UNPAID");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         listener.onPaymentEvent(completed());
 
         // Vẫn ghi nhận đã thu để admin thấy nếu hoàn tự động hỏng.
         assertEquals("PAID", order.getPaymentStatus());
         verify(droneLateRefunds).schedule(21L);
+        // Khoản này sắp được hoàn: không báo khách "thanh toán thành công".
+        verify(notificationClient, never()).requestNotification(any());
+    }
+
+    @Test
+    void aLatePaymentOnADroneOrderAwaitingRefundDoesNotFlipItBackToPaid() {
+        OrderPaymentEventListener listener = listener();
+        LockerOrder order = droneOrder("CANCELED", "REFUND_PENDING");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+
+        listener.onPaymentEvent(completed());
+
+        assertEquals("REFUND_PENDING", order.getPaymentStatus());
+        verify(orderRepository, never()).save(any());
+        verify(droneLateRefunds).schedule(21L);
     }
 
     @Test
     void aSecondLatePaymentOnAnAlreadyRefundedDroneOrderIsAlsoRefunded() {
-        OrderPaymentEventListener listener = new OrderPaymentEventListener(orderRepository, droneLateRefunds);
+        OrderPaymentEventListener listener = listener();
         LockerOrder order = droneOrder("CANCELED", "REFUNDED");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
 
@@ -83,6 +98,10 @@ class OrderPaymentEventListenerTest {
         assertEquals("REFUNDED", order.getPaymentStatus());
         verify(orderRepository, never()).save(any());
         verify(droneLateRefunds).schedule(21L);
+    }
+
+    private OrderPaymentEventListener listener() {
+        return new OrderPaymentEventListener(orderRepository, droneLateRefunds, rabbitTemplate, notificationClient);
     }
 
     private static LockerOrder droneOrder(String status, String paymentStatus) {
