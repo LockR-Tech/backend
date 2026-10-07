@@ -68,7 +68,10 @@ public record DroneDeliveryOrderResponse(
         /// Phí thu thêm vì kiện cân thực tế nặng hơn khai báo; null khi không lệch.
         BigDecimal weightSurcharge,
         /// Phần khách còn phải trả (tổng hiện tại trừ phần đã trả).
-        BigDecimal amountDue) {
+        BigDecimal amountDue,
+        /// Đang có nguồn vị trí trực tiếp cho bản đồ: đơn DEMO đang bay (vị trí nội suy), hoặc
+        /// drone thật còn gửi telemetry. false ⇒ mở bản đồ sẽ không có tín hiệu.
+        Boolean liveTracking) {
 
     /** Constructor tương thích cho response ngay sau khi tạo đơn/chưa có mission. */
     public DroneDeliveryOrderResponse(
@@ -86,6 +89,6 @@ public record DroneDeliveryOrderResponse(
                 sourceLockerId, etaMinutes, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, List.of(),
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null);
+                null, null, null, null, null, false);
     }
 }

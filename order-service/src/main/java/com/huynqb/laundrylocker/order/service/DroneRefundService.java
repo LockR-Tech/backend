@@ -37,11 +37,22 @@ public class DroneRefundService {
     /// Trả về true nếu đơn đã được đánh dấu REFUNDED ở lần gọi này.
     @Transactional
     public boolean refundCanceledOrder(Long orderId, Long actorUserId) {
+        return refund(orderId, actorUserId, false);
+    }
+
+    /// Hoàn khoản tiền tới sau khi đơn đã huỷ. Khác lần hoàn lúc huỷ: đơn có thể đã REFUNDED
+    /// (các khoản trước đã hoàn) và payment-service chỉ hoàn những khoản chưa hoàn.
+    @Transactional
+    public boolean refundLatePayment(Long orderId) {
+        return refund(orderId, null, true);
+    }
+
+    private boolean refund(Long orderId, Long actorUserId, boolean latePayment) {
         LockerOrder order = orderRepository.findByIdForUpdate(orderId).orElse(null);
         if (order == null
                 || !"DRONE_DELIVERY".equals(order.getType())
                 || !"CANCELED".equals(order.getStatus())
-                || !hasCollectedMoney(order)) {
+                || !(latePayment || hasCollectedMoney(order))) {
             return false;
         }
         OrderRefundResult result;
@@ -58,10 +69,17 @@ public class DroneRefundService {
             addHistory(order, actorUserId, "Hoàn tiền tự động thất bại — cần admin hoàn tay");
             return false;
         }
+        BigDecimal amount = result.refundedAmount() == null ? BigDecimal.ZERO : result.refundedAmount();
+        if (amount.signum() <= 0) {
+            // Không có khoản nào được hoàn: không được báo "đã hoàn 0 đ" rồi đóng đơn là REFUNDED.
+            if (!"REFUNDED".equals(order.getPaymentStatus())) {
+                addHistory(order, actorUserId, "Chưa hoàn được khoản đã thu — cần admin kiểm tra và hoàn tay");
+            }
+            return false;
+        }
 
         order.setPaymentStatus("REFUNDED");
         orderRepository.save(order);
-        BigDecimal amount = result.refundedAmount() == null ? BigDecimal.ZERO : result.refundedAmount();
         addHistory(order, actorUserId, "Đã hoàn " + amount.toBigInteger() + " đ về ví Lock.R của người đặt");
         try {
             notificationClient.requestNotification(new NotificationRequest(

@@ -16,7 +16,9 @@ public final class OrderNextActions {
                 return "PAID".equalsIgnoreCase(order.getPaymentStatus()) ? "PICKUP" : "PAY_BEFORE_PICKUP";
             }
             return switch (order.getStatus()) {
-                case "AWAITING_DISPATCH" -> "WAIT_FOR_DRONE";
+                // Đội bay chỉ tiếp nhận / chỉ phóng khi đơn đã trả đủ (kể cả phụ thu cân lệch).
+                case "AWAITING_DISPATCH" ->
+                        "PAID".equalsIgnoreCase(order.getPaymentStatus()) ? "WAIT_FOR_DRONE" : "PAY_FOR_DRONE";
                 case "COMPLETED" -> "DONE";
                 case "CANCELED" -> "CANCELED";
                 case "EXPIRED" -> "CONTACT_STAFF";
@@ -37,6 +39,7 @@ public final class OrderNextActions {
         return switch (nextAction(order)) {
             case "PAY_AND_DROP" -> "Pay and place storage items in locker.";
             case "WAIT_FOR_DRONE" -> "Maintenance will accept and launch the drone delivery.";
+            case "PAY_FOR_DRONE" -> "Pay for the drone delivery so the flight team can dispatch it.";
             case "PAY_BEFORE_PICKUP" -> "Pay for the drone delivery before opening the locker.";
             case "PICKUP" -> "Pick up items from locker.";
             case "CONTACT_STAFF" -> "Items moved to storage; contact staff to retrieve them.";
@@ -46,8 +49,9 @@ public final class OrderNextActions {
 
     public static boolean paymentRequired(LockerOrder order) {
         if ("DRONE_DELIVERY".equalsIgnoreCase(order.getType())) {
-            return "READY_FOR_PICKUP".equalsIgnoreCase(order.getDeliveryStage())
-                    && !"PAID".equalsIgnoreCase(order.getPaymentStatus());
+            boolean active = "AWAITING_DISPATCH".equals(order.getStatus())
+                    || "READY_FOR_PICKUP".equalsIgnoreCase(order.getDeliveryStage());
+            return active && "UNPAID".equalsIgnoreCase(order.getPaymentStatus());
         }
         return "INITIALIZED".equals(order.getStatus());
     }

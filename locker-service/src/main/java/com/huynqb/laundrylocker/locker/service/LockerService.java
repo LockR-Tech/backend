@@ -1786,6 +1786,21 @@ public class LockerService {
         return toDroneUnit(saved);
     }
 
+    /// Pin do chính drone báo về. Khác cập nhật tay: không ghi nhật ký bảo trì và không coi
+    /// 100 % là "vừa sạc xong".
+    @Transactional
+    public DroneUnitResponse recordDroneTelemetry(String code, Integer batteryPercent) {
+        DroneUnit unit = droneUnitRepository
+                .findByCode(code)
+                .orElseThrow(() -> new BusinessException(
+                        "DRONE_NOT_FOUND", "Drone not found: " + code, org.springframework.http.HttpStatus.NOT_FOUND));
+        if (!batteryPercent.equals(unit.getBatteryPercent())) {
+            unit.setBatteryPercent(batteryPercent);
+            unit = droneUnitRepository.save(unit);
+        }
+        return toDroneUnit(unit);
+    }
+
     private void requireDroneWithoutActiveMission(DroneUnit unit, String action) {
         if (DroneStatus.RESERVED.equals(unit.getStatus()) || DroneStatus.IN_FLIGHT.equals(unit.getStatus())) {
             throw new BusinessException(

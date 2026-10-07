@@ -86,3 +86,20 @@ app:
       source-locker-id: ${APP_DRONE_DEMO_SOURCE_LOCKER_ID:1}
       stage-delay-ms: ${APP_DRONE_DEMO_STAGE_DELAY_MS:3000}
       scheduler-delay-ms: ${APP_DRONE_DEMO_SCHEDULER_DELAY_MS:1000}
+    # Telemetry drone thật qua MQTT (đơn STANDARD) — docs/01-overview/drone-telemetry-contract.md.
+    # Tắt mặc định; bật thì phải có secret ký bản tin hoặc tài khoản broker riêng.
+    telemetry:
+      enabled: ${APP_DRONE_TELEMETRY_ENABLED:false}
+      broker-url: ${DRONE_MQTT_BROKER_URL:${MQTT_BROKER_URL:tcp://broker.hivemq.com:1883}}
+      client-id: ${DRONE_MQTT_CLIENT_ID:lockr-order-drone-telemetry}
+      username: ${DRONE_MQTT_USERNAME:}
+      password: ${DRONE_MQTT_PASSWORD:}
+      # Khoá gốc: khoá của từng drone = HMAC-SHA256(secret, "lockr-drone:" + mã drone).
+      secret: ${DRONE_TELEMETRY_SECRET:}
+      max-clock-skew-seconds: ${APP_DRONE_TELEMETRY_MAX_CLOCK_SKEW_SECONDS:120}
+      # Quá số giây này không có bản tin ⇒ coi như mất tín hiệu.
+      live-window-seconds: ${APP_DRONE_TELEMETRY_LIVE_WINDOW_SECONDS:15}
+      # Ngưỡng suy ra chặng bay từ vị trí (mét).
+      departed-distance-m: ${APP_DRONE_TELEMETRY_DEPARTED_DISTANCE_M:30}
+      approach-distance-m: ${APP_DRONE_TELEMETRY_APPROACH_DISTANCE_M:150}
+      arrival-radius-m: ${APP_DRONE_TELEMETRY_ARRIVAL_RADIUS_M:30}

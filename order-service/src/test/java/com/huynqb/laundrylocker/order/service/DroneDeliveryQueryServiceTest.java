@@ -49,7 +49,8 @@ class DroneDeliveryQueryServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new DroneDeliveryQueryService(orderRepository, missionRepository, historyRepository, references);
+        service = new DroneDeliveryQueryService(
+                orderRepository, missionRepository, historyRepository, references, new DroneTelemetryRegistry(15));
         lenient().when(references.lockers(any())).thenReturn(Lookup.of(Map.of()));
         lenient().when(references.boxes(any())).thenReturn(Lookup.of(Map.of()));
         lenient().when(references.users(any())).thenReturn(Lookup.of(Map.of()));

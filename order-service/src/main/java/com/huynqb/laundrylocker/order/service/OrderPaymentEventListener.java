@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 public class OrderPaymentEventListener {
 
     private final LockerOrderRepository orderRepository;
+    private final DroneLateRefundScheduler droneLateRefunds;
 
     @RabbitListener(queues = RabbitConfig.ORDER_PAYMENT_QUEUE)
     @Transactional
@@ -41,10 +42,17 @@ public class OrderPaymentEventListener {
         if (!DomainEventNames.PAYMENT_COMPLETED.equals(event.type())) {
             return; // only completed payments flip the order to PAID
         }
+        // Khoá đơn: sự kiện này ghi đè cả bản ghi, không được chạy xen với huỷ/tiếp nhận/nạp hàng.
         orderRepository
-                .findById(orderId)
+                .findByIdForUpdate(orderId)
                 .ifPresent(
                         order -> {
+                            // Đơn drone đã huỷ mà tiền mới về (chuyển khoản còn chờ lúc huỷ):
+                            // lúc huỷ chưa có gì để hoàn, nên phải hoàn khoản này bây giờ.
+                            if ("DRONE_DELIVERY".equals(order.getType())
+                                    && "CANCELED".equals(order.getStatus())) {
+                                droneLateRefunds.schedule(orderId);
+                            }
                             // REFUNDED: sự kiện thanh toán tới trễ không được lật đơn đã hoàn tiền về PAID.
                             if (!"PAID".equals(order.getPaymentStatus())
                                     && !"REFUNDED".equals(order.getPaymentStatus())) {

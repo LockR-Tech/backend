@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.order.client;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.order.dto.DroneStatusUpdateRequest;
 import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
+import com.huynqb.laundrylocker.order.dto.DroneTelemetryReport;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -23,6 +24,10 @@ public interface LockerDroneClient {
     @PostMapping("/internal/drones/{id}/status")
     ApiResponse<DroneUnitDto> updateDroneStatus(
             @PathVariable Long id, @RequestBody DroneStatusUpdateRequest request);
+
+    /// Pin drone tự báo qua telemetry; tra theo mã drone vì drone đang rảnh không có mission.
+    @PostMapping("/internal/drones/telemetry")
+    ApiResponse<DroneUnitDto> reportTelemetry(@RequestBody DroneTelemetryReport request);
 
     @PostMapping("/internal/drones/{id}/status-transition")
     ApiResponse<DroneUnitDto> transitionDroneStatus(
