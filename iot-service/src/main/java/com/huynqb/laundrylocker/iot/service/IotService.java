@@ -456,7 +456,7 @@ public class IotService {
         return repository.findAll().stream().map(this::toResponse).toList();
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<BoxAccessLogResponse> getLockerLogs(Long lockerId) {
         List<BoxAccessLog> dbLogs = accessLogRepository.findByLockerIdOrderByCreatedAtDesc(lockerId);
         List<BoxAccessLogResponse> list = new java.util.ArrayList<>();
@@ -485,53 +485,60 @@ public class IotService {
                 String fwStr = gw.getFirmwareVersion() != null ? gw.getFirmwareVersion() : "v1.0.0";
                 java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
                 String seenFormatted = seen.format(fmt);
-                String discoveryMsg = String.format("%s · %d ô phần cứng · firmware %s · thấy lần cuối %s",
-                        hwStr, slots, fwStr, seenFormatted);
 
-                boolean hasMatchingRecent = dbLogs.stream().anyMatch(l ->
-                        "DISCOVERY".equalsIgnoreCase(l.getCredentialType()) &&
-                        l.getMessage() != null && l.getMessage().contains(hwStr) &&
-                        l.getCreatedAt() != null && java.time.Duration.between(l.getCreatedAt(), seen).abs().getSeconds() < 120);
+                // Kiểm tra xem trạng thái gần nhất trong DB đã phản ánh online/offline hiện tại chưa
+                BoxAccessLog lastDiscLog = dbLogs.stream()
+                        .filter(l -> "DISCOVERY".equalsIgnoreCase(l.getCredentialType()) || "GATEWAY".equalsIgnoreCase(l.getCredentialType()))
+                        .findFirst()
+                        .orElse(null);
 
-                if (!hasMatchingRecent) {
-                    list.add(new BoxAccessLogResponse(
-                            -1L,
-                            0L,
-                            lockerId,
-                            null,
-                            null,
-                            "DISCOVERY",
-                            online ? "ONLINE" : "SUCCESS",
-                            discoveryMsg,
-                            seen
-                    ));
+                boolean stateChanged = false;
+                if (lastDiscLog == null) {
+                    stateChanged = true;
+                } else {
+                    boolean wasOnline = "ONLINE".equalsIgnoreCase(lastDiscLog.getResult());
+                    if (online != wasOnline) {
+                        stateChanged = true;
+                    }
                 }
 
-                // Ghi nhận log kết nối màn hình Kiosk 7 inch (Waveshare 1024x600 HDMI/Touch)
-                String screenMsg = online
-                        ? String.format("Màn hình cảm ứng 7\" Waveshare HDMI LCD (C) [1024×600 IPS] · Tín hiệu HDMI-1 & USB Touch OK · Kiosk UI :3002 (thấy lần cuối %s)", seenFormatted)
-                        : String.format("Màn hình cảm ứng 7\" Waveshare: Mất kết nối (Offline) · Tủ chưa được cấp nguồn điện hoặc bộ điều khiển đang tắt (thấy lần cuối %s)", seenFormatted);
-                boolean hasMatchingScreen = dbLogs.stream().anyMatch(l ->
-                        "DISPLAY".equalsIgnoreCase(l.getCredentialType()) &&
-                        l.getCreatedAt() != null && java.time.Duration.between(l.getCreatedAt(), seen).abs().getSeconds() < 120);
+                if (stateChanged) {
+                    String discoveryMsg = online
+                            ? String.format("Bộ điều khiển kết nối thành công (Cấp nguồn điện / Trực tuyến) · %s · %d ô phần cứng · firmware %s · lúc %s", hwStr, slots, fwStr, seenFormatted)
+                            : String.format("Bộ điều khiển mất kết nối (Rút nguồn điện / Ngoại tuyến) · %s · thấy lần cuối lúc %s", hwStr, seenFormatted);
 
-                if (!hasMatchingScreen) {
-                    list.add(new BoxAccessLogResponse(
-                            -3L,
-                            0L,
-                            lockerId,
-                            null,
-                            null,
-                            "DISPLAY",
-                            online ? "ONLINE" : "OFFLINE",
-                            screenMsg,
-                            seen.minusSeconds(1)
-                    ));
+                    String screenMsg = online
+                            ? String.format("Màn hình cảm ứng 7\" Waveshare HDMI LCD (C) [1024×600 IPS] · Tín hiệu HDMI-1 & USB Touch OK · Kiosk UI :3002 (lúc %s)", seenFormatted)
+                            : String.format("Màn hình cảm ứng 7\" Waveshare: Mất kết nối (Offline) · Tủ chưa được cấp nguồn điện hoặc bộ điều khiển đang tắt (thấy lần cuối %s)", seenFormatted);
+
+                    try {
+                        BoxAccessLog newDisc = new BoxAccessLog();
+                        newDisc.setLockerId(lockerId);
+                        newDisc.setBoxId(0L);
+                        newDisc.setCredentialType("DISCOVERY");
+                        newDisc.setResult(online ? "ONLINE" : "OFFLINE");
+                        newDisc.setMessage(discoveryMsg);
+                        BoxAccessLog savedDisc = accessLogRepository.save(newDisc);
+
+                        BoxAccessLog newDisp = new BoxAccessLog();
+                        newDisp.setLockerId(lockerId);
+                        newDisp.setBoxId(0L);
+                        newDisp.setCredentialType("DISPLAY");
+                        newDisp.setResult(online ? "ONLINE" : "OFFLINE");
+                        newDisp.setMessage(screenMsg);
+                        BoxAccessLog savedDisp = accessLogRepository.save(newDisp);
+
+                        list.add(new BoxAccessLogResponse(savedDisc.getId(), 0L, lockerId, null, null, "DISCOVERY", savedDisc.getResult(), savedDisc.getMessage(), savedDisc.getCreatedAt()));
+                        list.add(new BoxAccessLogResponse(savedDisp.getId(), 0L, lockerId, null, null, "DISPLAY", savedDisp.getResult(), savedDisp.getMessage(), savedDisp.getCreatedAt()));
+                    } catch (Exception ex) {
+                        list.add(new BoxAccessLogResponse(-1L, 0L, lockerId, null, null, "DISCOVERY", online ? "ONLINE" : "OFFLINE", discoveryMsg, seen));
+                        list.add(new BoxAccessLogResponse(-2L, 0L, lockerId, null, null, "DISPLAY", online ? "ONLINE" : "OFFLINE", screenMsg, seen));
+                    }
                 }
 
                 if ("FAILED".equalsIgnoreCase(gw.getSetupStatus()) || "PARTIAL".equalsIgnoreCase(gw.getSetupStatus())) {
                     list.add(new BoxAccessLogResponse(
-                            -2L,
+                            -3L,
                             0L,
                             lockerId,
                             null,
