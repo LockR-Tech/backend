@@ -8,10 +8,7 @@ import com.huynqb.laundrylocker.payment.dto.admin.AdminRefundResponse;
 import com.huynqb.laundrylocker.payment.dto.admin.AdminWalletTransactionResponse;
 import com.huynqb.laundrylocker.payment.service.AdminPaymentQueryService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -23,6 +20,7 @@ public class AdminPaymentController {
 
     private final AdminPaymentQueryService queryService;
     private final com.huynqb.laundrylocker.payment.service.PaymentStatsService statsService;
+    private final com.huynqb.laundrylocker.payment.service.PaymentService paymentService;
 
     /// from/to: yyyy-MM-dd theo giờ Việt Nam, mặc định đầu tháng tới hôm nay.
     @GetMapping("/api/admin/payments/stats")
@@ -83,5 +81,23 @@ public class AdminPaymentController {
             @RequestParam(required = false) String sort) {
         return ApiResponse.ok(queryService.searchWalletTransactions(new AdminPaymentQueryService.WalletCriteria(
                 page, size, userId, type, source, from, to, q, sort)));
+    }
+
+    @PostMapping("/api/admin/payments/refunds/{id}/approve")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.RefundResponse> approveRefund(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long adminUserId,
+            @RequestBody(required = false) com.huynqb.laundrylocker.payment.dto.ProcessRefundRequest request) {
+        return ApiResponse.ok("REFUND_APPROVED", "Yêu cầu hoàn tiền đã được duyệt và xác nhận chuyển khoản",
+                paymentService.adminApproveRefund(id, adminUserId, request));
+    }
+
+    @PostMapping("/api/admin/payments/refunds/{id}/reject")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.RefundResponse> rejectRefund(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long adminUserId,
+            @RequestBody(required = false) com.huynqb.laundrylocker.payment.dto.ProcessRefundRequest request) {
+        return ApiResponse.ok("REFUND_REJECTED", "Yêu cầu hoàn tiền đã bị từ chối",
+                paymentService.adminRejectRefund(id, adminUserId, request));
     }
 }

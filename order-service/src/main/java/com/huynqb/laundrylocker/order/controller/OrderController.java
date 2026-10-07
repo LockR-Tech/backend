@@ -133,6 +133,16 @@ public class OrderController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/internal/orders/{id}/payment-status")
+    public ApiResponse<Void> updatePaymentStatus(
+            @PathVariable Long id,
+            @RequestParam String status,
+            @RequestParam(required = false) String note,
+            @RequestParam(required = false) Long actorUserId) {
+        orderService.updatePaymentStatus(id, status, note, actorUserId);
+        return ApiResponse.ok(null);
+    }
+
     @PatchMapping("/api/orders/{id}/status")
     public ApiResponse<OrderResponse> updateStatus(
             @PathVariable Long id, @Valid @RequestBody UpdateOrderStatusRequest request) {

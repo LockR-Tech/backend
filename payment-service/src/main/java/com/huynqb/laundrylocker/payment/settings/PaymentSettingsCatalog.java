@@ -23,8 +23,16 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
     public static final String ENABLED_METHODS = "app.payment.enabled-methods";
     public static final String CASH_AUTO_COMPLETE = "app.payment.cash-auto-complete";
 
+    // Quy tắc hoàn tiền & khiếu nại (ADR-0005)
+    public static final String REFUND_ENABLED = "app.payment.refund-enabled";
+    public static final String REFUND_MIN_AMOUNT = "app.payment.refund-min-amount";
+    public static final String REFUND_MAX_DAYS = "app.payment.refund-max-days";
+    public static final String REFUND_ALLOWED_REASONS = "app.payment.refund-allowed-reasons";
+    public static final String REFUND_REQUIRE_TRANSFER_REF = "app.payment.refund-require-transfer-ref";
+
     private static final String TOPUP = "Nạp ví";
     private static final String METHODS = "Phương thức thanh toán";
+    private static final String REFUND = "Hoàn tiền & khiếu nại";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -46,6 +54,21 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
                         "CASH,WALLET,VNPAY,MOMO,SEPAY", List.of()).asPublic(),
                 bool(CASH_AUTO_COMPLETE, METHODS, "Tự hoàn tất thanh toán tiền mặt",
                         "Bật: thanh toán CASH được ghi nhận COMPLETED ngay. Tắt: giữ PENDING chờ nhân viên xác nhận.",
-                        true));
+                        true),
+
+                bool(REFUND_ENABLED, REFUND, "Bật tính năng hoàn tiền ngân hàng",
+                        "Bật: cho phép khách gửi yêu cầu hoàn tiền khi có sự cố. Tắt: tạm khóa tạo yêu cầu hoàn tiền.",
+                        true).asPublic(),
+                integer(REFUND_MIN_AMOUNT, REFUND, "Số tiền hoàn tối thiểu",
+                        "Yêu cầu hoàn tiền nhỏ hơn số này bị từ chối.", 1000, 1000, 100_000_000, "VND").asPublic(),
+                integer(REFUND_MAX_DAYS, REFUND, "Thời hạn tối đa yêu cầu hoàn tiền",
+                        "Số ngày tối đa kể từ khi phát sinh đơn hàng mà khách được gửi yêu cầu hoàn tiền.", 7, 1, 90, "ngày").asPublic(),
+                string(REFUND_ALLOWED_REASONS, REFUND, "Danh sách lý do hoàn tiền gợi ý",
+                        "Các lý do hoàn tiền hợp lệ hiển thị trên ứng dụng, phân tách bằng dấu phẩy.",
+                        "Tủ lỗi không mở được,Không nhận được đồ giặt,Máy giặt gặp sự cố,Thanh toán trùng đơn,Phí lưu kho tính sai",
+                        List.of()).asPublic(),
+                bool(REFUND_REQUIRE_TRANSFER_REF, REFUND, "Bắt buộc nhập mã GD ngân hàng khi duyệt",
+                        "Bật: Quản trị viên bắt buộc phải điền mã giao dịch / UNC ngân hàng trước khi xác nhận đã chuyển tiền.",
+                        false));
     }
 }
