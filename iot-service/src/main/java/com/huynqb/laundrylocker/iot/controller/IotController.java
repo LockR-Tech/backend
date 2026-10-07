@@ -36,6 +36,12 @@ public class IotController {
         return ApiResponse.ok(iotService.listBoxHardwareStatuses(lockerId));
     }
 
+    // Access and hardware audit logs for a locker
+    @GetMapping("/api/admin/iot/lockers/{lockerId}/logs")
+    public ApiResponse<List<BoxAccessLogResponse>> getLockerLogs(@PathVariable Long lockerId) {
+        return ApiResponse.ok(iotService.getLockerLogs(lockerId));
+    }
+
     // Service-to-service (blocked at gateway): locker-service joins this with its
     // own logical box status to build the maintenance box-health view.
     @GetMapping("/internal/iot/box-status")

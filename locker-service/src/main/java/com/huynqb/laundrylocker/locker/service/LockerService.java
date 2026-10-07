@@ -175,6 +175,52 @@ public class LockerService {
     }
 
     @Transactional
+    public LockerBoxSummary updateBox(Long boxId, UpdateBoxRequest request) {
+        LockerBox box = findBox(boxId);
+        if (request.boxNumber() != null) {
+            box.setBoxNumber(request.boxNumber());
+        }
+        if (StringUtils.hasText(request.size())) {
+            box.setSize(request.size().toUpperCase());
+        }
+        if (StringUtils.hasText(request.cellType())) {
+            box.setCellType(request.cellType().toUpperCase());
+        }
+        if (request.rowIndex() != null) {
+            box.setRowIndex(request.rowIndex());
+        }
+        if (request.colIndex() != null) {
+            box.setColIndex(request.colIndex());
+        }
+        if (request.description() != null) {
+            box.setDescription(request.description());
+        }
+        if (StringUtils.hasText(request.status())) {
+            box.setStatus(request.status().toUpperCase());
+        }
+        LockerBox saved = boxRepository.save(box);
+        publishLockerLayoutUpdated(
+                saved.getLockerId(),
+                saved.getId(),
+                saved.getBoxNumber(),
+                saved.getStatus(),
+                "Cập nhật công năng ô #" + saved.getBoxNumber() + " (" + saved.getCellType() + ")");
+        return toSummary(saved);
+    }
+
+    @Transactional
+    public void deleteBox(Long boxId) {
+        LockerBox box = findBox(boxId);
+        if ("OCCUPIED".equalsIgnoreCase(box.getStatus()) || "RESERVED".equalsIgnoreCase(box.getStatus())) {
+            throw new BusinessException("BOX_IN_USE", "Không thể xóa ô đang chứa hàng hoặc đã được giữ chỗ");
+        }
+        Long lockerId = box.getLockerId();
+        Integer boxNumber = box.getBoxNumber();
+        boxRepository.delete(box);
+        publishLockerLayoutUpdated(lockerId, boxId, boxNumber, "DELETED", "Đã xóa ô #" + boxNumber);
+    }
+
+    @Transactional
     public LockerBoxSummary openBox(Long boxId) {
         LockerBox box = findBox(boxId);
         publishBoxOpened(box);
