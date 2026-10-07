@@ -134,6 +134,25 @@ public class PaymentController {
         return ApiResponse.ok("REFUND_CREATED", "Refund created", paymentService.refund(paymentId, request, userId));
     }
 
+    @GetMapping("/api/payments/bank-account")
+    public ApiResponse<UserBankAccountDto> getBankAccount(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok("BANK_ACCOUNT_OK", "Bank account retrieved", paymentService.getUserBankAccount(userId));
+    }
+
+    @PutMapping("/api/payments/bank-account")
+    public ApiResponse<UserBankAccountDto> saveBankAccount(
+            @RequestHeader("X-User-Id") Long userId,
+            @Valid @RequestBody SaveBankAccountRequest request) {
+        return ApiResponse.ok("BANK_ACCOUNT_SAVED", "Bank account saved", paymentService.saveUserBankAccount(userId, request));
+    }
+
+    @PostMapping("/api/payments/refund-request")
+    public ApiResponse<RefundResponse> requestRefund(
+            @RequestHeader("X-User-Id") Long userId,
+            @Valid @RequestBody CreateRefundRequest request) {
+        return ApiResponse.ok("REFUND_REQUESTED", "Refund requested", paymentService.requestRefund(userId, request));
+    }
+
     @GetMapping("/api/payments/order/{orderId}/refunds")
     public ApiResponse<List<RefundResponse>> refunds(@PathVariable Long orderId) {
         return ApiResponse.ok(paymentService.refundsByOrder(orderId));

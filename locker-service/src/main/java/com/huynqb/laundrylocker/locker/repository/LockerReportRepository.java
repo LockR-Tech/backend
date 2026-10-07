@@ -12,7 +12,18 @@ public interface LockerReportRepository extends JpaRepository<LockerReport, Long
 
     List<LockerReport> findByUserIdOrderByCreatedAtDesc(Long userId);
 
+    List<LockerReport> findByUserIdAndOrderIdOrderByCreatedAtDesc(Long userId, Long orderId);
+
+    List<LockerReport> findByUserIdAndOrderCodeOrderByCreatedAtDesc(Long userId, String orderCode);
+
+    List<LockerReport> findByOrderIdOrderByCreatedAtDesc(Long orderId);
+
+    List<LockerReport> findByOrderCodeOrderByCreatedAtDesc(String orderCode);
+
     List<LockerReport> findByStatusInOrderByCreatedAtDesc(List<String> statuses);
+
+    List<LockerReport> findByDroneUnitIdAndStatusInOrderByCreatedAtDesc(
+            Long droneUnitId, List<String> statuses);
 
     List<LockerReport> findByAssignedToUserIdOrderByCreatedAtDesc(Long assignedToUserId);
 

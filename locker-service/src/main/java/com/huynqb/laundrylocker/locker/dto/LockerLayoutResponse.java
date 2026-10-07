@@ -16,5 +16,33 @@ public record LockerLayoutResponse(
         int totalCells,
         long availableCells,
         long faultCells,
-        List<CellResponse> cells) {
+        List<CellResponse> cells,
+        Boolean online) {
+
+    public LockerLayoutResponse(
+            Long lockerId,
+            String code,
+            String name,
+            String status,
+            Boolean landingPad,
+            String landingMarkerId,
+            String landingPadStatus,
+            int totalCells,
+            long availableCells,
+            long faultCells,
+            List<CellResponse> cells) {
+        this(
+                lockerId,
+                code,
+                name,
+                status,
+                landingPad,
+                landingMarkerId,
+                landingPadStatus,
+                totalCells,
+                availableCells,
+                faultCells,
+                cells,
+                null);
+    }
 }

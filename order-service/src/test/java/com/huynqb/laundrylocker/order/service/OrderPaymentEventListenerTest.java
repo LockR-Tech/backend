@@ -26,9 +26,17 @@ class OrderPaymentEventListenerTest {
     @Mock
     private DroneLateRefundScheduler droneLateRefunds;
 
+    @Mock
+    private org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate;
+
+    @Mock
+    private com.huynqb.laundrylocker.order.client.NotificationClient notificationClient;
+
     @Test
     void paymentCompletedMarksDroneOrderPaidWithoutChangingDispatchStage() {
         OrderPaymentEventListener listener = new OrderPaymentEventListener(orderRepository, droneLateRefunds);
+        OrderPaymentEventListener listener =
+                new OrderPaymentEventListener(orderRepository, rabbitTemplate, notificationClient);
         LockerOrder order = new LockerOrder();
         order.setId(21L);
         order.setType("DRONE_DELIVERY");

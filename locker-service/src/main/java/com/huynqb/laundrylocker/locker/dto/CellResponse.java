@@ -23,6 +23,8 @@ import com.huynqb.laundrylocker.locker.model.CellType;
  *   <li>{@code status} — {@code AVAILABLE}, {@code OCCUPIED}, {@code RESERVED}, {@code FAULT},
  *       {@code CLEANING}, {@code OUT_OF_SERVICE}.</li>
  *   <li>{@code faultReason} — mô tả lỗi nếu status là {@code FAULT}, ngược lại {@code null}.</li>
+ *   <li>{@code doorOpen} — trạng thái mở cửa cảm biến (true: mở, false: đóng).</li>
+ *   <li>{@code hwState} — trạng thái phần cứng gateway (OPEN / CLOSED).</li>
  * </ul>
  */
 public record CellResponse(
@@ -33,5 +35,19 @@ public record CellResponse(
         Integer rowIndex,
         Integer colIndex,
         String status,
-        String faultReason) {
+        String faultReason,
+        Boolean doorOpen,
+        String hwState) {
+
+    public CellResponse(
+            Long id,
+            Integer boxNumber,
+            String size,
+            String cellType,
+            Integer rowIndex,
+            Integer colIndex,
+            String status,
+            String faultReason) {
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, null, null);
+    }
 }

@@ -144,6 +144,12 @@ public class GatewayProvisioningService {
         return repository.findAllByOrderByIdAsc().stream().map(this::toResponse).toList();
     }
 
+    @Transactional(readOnly = true)
+    public GatewayDeviceResponse getByLockerId(Long lockerId) {
+        if (lockerId == null) return null;
+        return repository.findByLockerId(lockerId).map(this::toResponse).orElse(null);
+    }
+
     @Transactional
     public GatewayDeviceResponse assign(Long id, AssignGatewayRequest request) {
         GatewayDevice device = repository.findById(id).orElseThrow(() -> new NotFoundException("Gateway", id));

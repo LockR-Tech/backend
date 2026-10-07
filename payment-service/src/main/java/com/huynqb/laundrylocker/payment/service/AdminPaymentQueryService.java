@@ -205,7 +205,9 @@ public class AdminPaymentQueryService {
             RefundRecord r, PaymentRecord payment, OrderRef order, PersonRef customer, Map<Long, UserSummary> users) {
         return new AdminRefundResponse(
                 r.getId(), r.getPaymentId(), r.getOrderId(), r.getAmount(), r.getStatus(), r.getReason(),
-                r.getTransactionId(), r.getProcessedByUserId(), r.getRequestedAt(), r.getProcessedAt(),
+                r.getTransactionId(), r.getBankName(), r.getBankCode(), r.getAccountNumber(), r.getAccountHolderName(),
+                r.getRejectionReason(), r.getBankTransferRef(),
+                r.getProcessedByUserId(), r.getRequestedAt(), r.getProcessedAt(),
                 payment == null ? null : payment.getUserId(),
                 payment == null ? null : payment.getMethod(),
                 payment == null ? null : payment.getAmount(),

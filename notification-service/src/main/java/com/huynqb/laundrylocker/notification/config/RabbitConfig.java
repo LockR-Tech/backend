@@ -73,6 +73,26 @@ public class RabbitConfig {
     }
 
     @Bean
+    Binding orderCreatedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.ORDER_CREATED);
+    }
+
+    @Bean
+    Binding orderRelocatedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.ORDER_BOX_RELOCATED);
+    }
+
+    @Bean
+    Binding lockerLayoutUpdatedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOCKER_LAYOUT_UPDATED);
+    }
+
+    @Bean
+    Binding lockerBoxFaultBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOCKER_BOX_FAULT);
+    }
+
+    @Bean
     MessageConverter domainEventMessageConverter() {
         SimpleMessageConverter converter = new SimpleMessageConverter();
         converter.setAllowedListPatterns(

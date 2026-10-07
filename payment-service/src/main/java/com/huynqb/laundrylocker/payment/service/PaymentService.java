@@ -7,11 +7,15 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.security.SecuritySecrets;
 import com.huynqb.laundrylocker.payment.client.OrderClient;
+import com.huynqb.laundrylocker.common.dto.NotificationRequest;
+import com.huynqb.laundrylocker.payment.client.NotificationClient;
 import com.huynqb.laundrylocker.payment.dto.*;
 import com.huynqb.laundrylocker.payment.model.PaymentRecord;
 import com.huynqb.laundrylocker.payment.model.RefundRecord;
+import com.huynqb.laundrylocker.payment.model.UserBankAccount;
 import com.huynqb.laundrylocker.payment.repository.PaymentRepository;
 import com.huynqb.laundrylocker.payment.repository.RefundRepository;
+import com.huynqb.laundrylocker.payment.repository.UserBankAccountRepository;
 import com.huynqb.laundrylocker.payment.settings.PaymentRules;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -46,10 +50,12 @@ public class PaymentService {
 
     private final PaymentRepository repository;
     private final RefundRepository refundRepository;
+    private final UserBankAccountRepository userBankAccountRepository;
     private final RabbitTemplate rabbitTemplate;
     private final Environment environment;
     private final WalletService walletService;
     private final OrderClient orderClient;
+    private final NotificationClient notificationClient;
     private final MomoService momoService;
     private final SepayService sepayService;
     /// Hạn mức nạp ví, phương thức đang bật, tự hoàn tất tiền mặt… admin cấu hình (ADR-0005).
@@ -436,6 +442,209 @@ public class PaymentService {
         return new TopupResponse(paymentUrl, txnRef);
     }
 
+    @Transactional(readOnly = true)
+    public UserBankAccountDto getUserBankAccount(Long userId) {
+        if (userId == null) return null;
+        return userBankAccountRepository.findByUserId(userId)
+                .map(this::toBankAccountDto)
+                .orElse(null);
+    }
+
+    @Transactional
+    public UserBankAccountDto saveUserBankAccount(Long userId, SaveBankAccountRequest request) {
+        if (userId == null) {
+            throw new BusinessException("USER_ID_REQUIRED", "User ID is required");
+        }
+        UserBankAccount account = userBankAccountRepository.findByUserId(userId)
+                .orElseGet(() -> {
+                    UserBankAccount a = new UserBankAccount();
+                    a.setUserId(userId);
+                    return a;
+                });
+        account.setBankName(request.bankName().trim());
+        account.setBankCode(request.bankCode().trim().toUpperCase());
+        account.setAccountNumber(request.accountNumber().trim());
+        account.setAccountHolderName(request.accountHolderName().trim().toUpperCase());
+        return toBankAccountDto(userBankAccountRepository.save(account));
+    }
+
+    private UserBankAccountDto toBankAccountDto(UserBankAccount a) {
+        return new UserBankAccountDto(
+                a.getUserId(),
+                a.getBankName(),
+                a.getBankCode(),
+                a.getAccountNumber(),
+                a.getAccountHolderName(),
+                a.getUpdatedAt());
+    }
+
+    @Transactional
+    public RefundResponse requestRefund(Long userId, CreateRefundRequest request) {
+        if (!rules.isRefundEnabled()) {
+            throw new BusinessException("REFUND_DISABLED", "Chức năng hoàn tiền hiện đang tạm khóa bởi quản trị viên");
+        }
+
+        List<PaymentRecord> payments = repository.findByOrderId(request.orderId());
+        PaymentRecord payment = payments.stream()
+                .filter(p -> "COMPLETED".equals(p.getStatus()) && p.getAmount() != null && p.getAmount().signum() > 0)
+                .findFirst()
+                .orElseThrow(() -> new BusinessException("ORDER_NOT_PAID", "Đơn hàng chưa có khoản thanh toán thành công để hoàn"));
+
+        // Kiểm tra thời hạn yêu cầu hoàn tiền theo cấu hình admin
+        if (payment.getCreatedAt() != null && payment.getCreatedAt().isBefore(LocalDateTime.now().minusDays(rules.refundMaxDays()))) {
+            throw new BusinessException("REFUND_EXPIRED",
+                    "Đã quá thời hạn " + rules.refundMaxDays() + " ngày kể từ khi thanh toán đơn hàng để yêu cầu hoàn tiền");
+        }
+
+        // Kiểm tra hạn mức hoàn tiền tối thiểu theo cấu hình admin
+        BigDecimal refundAmount = (request.amount() != null && request.amount().compareTo(BigDecimal.ZERO) > 0)
+                ? request.amount()
+                : payment.getAmount();
+        if (refundAmount.compareTo(rules.refundMinAmount()) < 0) {
+            throw new BusinessException("REFUND_AMOUNT_TOO_SMALL",
+                    "Số tiền hoàn tối thiểu theo quy định là " + rules.refundMinAmount().toBigInteger() + " đ");
+        }
+
+        List<RefundRecord> existing = refundRepository.findByOrderId(request.orderId());
+        boolean hasActive = existing.stream().anyMatch(r -> "PENDING".equals(r.getStatus()) || "COMPLETED".equals(r.getStatus()));
+        if (hasActive) {
+            throw new BusinessException("REFUND_ALREADY_REQUESTED", "Đơn hàng đã có yêu cầu hoàn tiền đang chờ hoặc đã hoàn tất");
+        }
+
+        String bankName = request.bankName();
+        String bankCode = request.bankCode();
+        String accountNumber = request.accountNumber();
+        String accountHolderName = request.accountHolderName();
+
+        if (!StringUtils.hasText(bankName) || !StringUtils.hasText(accountNumber)) {
+            UserBankAccount savedAcc = userId != null ? userBankAccountRepository.findByUserId(userId).orElse(null) : null;
+            if (savedAcc != null) {
+                bankName = savedAcc.getBankName();
+                bankCode = savedAcc.getBankCode();
+                accountNumber = savedAcc.getAccountNumber();
+                accountHolderName = savedAcc.getAccountHolderName();
+            } else {
+                throw new BusinessException("BANK_ACCOUNT_REQUIRED", "Vui lòng cung cấp thông tin tài khoản ngân hàng nhận tiền");
+            }
+        } else if (Boolean.TRUE.equals(request.saveAsDefault()) && userId != null) {
+            saveUserBankAccount(userId, new SaveBankAccountRequest(bankName, bankCode, accountNumber, accountHolderName));
+        }
+
+        RefundRecord refund = new RefundRecord();
+        refund.setPaymentId(payment.getId());
+        refund.setOrderId(payment.getOrderId());
+        refund.setAmount(refundAmount);
+        refund.setReason(request.reason());
+        refund.setStatus("PENDING");
+        refund.setBankName(bankName);
+        refund.setBankCode(bankCode);
+        refund.setAccountNumber(accountNumber);
+        refund.setAccountHolderName(accountHolderName);
+        refund.setTransactionId("RF-" + payment.getReferenceId());
+        RefundRecord saved = refundRepository.save(refund);
+
+        try {
+            orderClient.updatePaymentStatus(payment.getOrderId(), "REFUND_PENDING", "Khách hàng yêu cầu hoàn tiền", userId);
+        } catch (Exception ex) {
+            log.warn("Could not update order payment status to REFUND_PENDING: {}", ex.getMessage());
+        }
+
+        return toRefund(saved);
+    }
+
+    @Transactional
+    public RefundResponse adminApproveRefund(Long refundId, Long adminUserId, ProcessRefundRequest request) {
+        RefundRecord refund = refundRepository.findById(refundId)
+                .orElseThrow(() -> new NotFoundException("Refund", refundId));
+        if (!"PENDING".equalsIgnoreCase(refund.getStatus())) {
+            throw new BusinessException("REFUND_INVALID_STATUS", "Yêu cầu hoàn tiền không ở trạng thái Chờ xử lý");
+        }
+
+        // Kiểm tra quy định bắt buộc mã giao dịch chuyển khoản từ admin rules
+        if (rules.isRequireBankTransferRef() && (request == null || !StringUtils.hasText(request.bankTransferRef()))) {
+            throw new BusinessException("TRANSFER_REF_REQUIRED",
+                    "Quy định hệ thống yêu cầu phải nhập mã giao dịch ngân hàng / UNC khi xác nhận hoàn tiền");
+        }
+        refund.setStatus("COMPLETED");
+        refund.setProcessedByUserId(adminUserId);
+        refund.setProcessedAt(LocalDateTime.now());
+        if (request != null && StringUtils.hasText(request.bankTransferRef())) {
+            refund.setBankTransferRef(request.bankTransferRef().trim());
+        }
+        RefundRecord saved = refundRepository.save(refund);
+
+        try {
+            String note = "Admin đã chuyển khoản hoàn tiền"
+                    + (StringUtils.hasText(saved.getBankTransferRef()) ? " — Mã GD: " + saved.getBankTransferRef() : "");
+            orderClient.updatePaymentStatus(refund.getOrderId(), "REFUNDED", note, adminUserId);
+        } catch (Exception ex) {
+            log.warn("Could not update order payment status to REFUNDED: {}", ex.getMessage());
+        }
+
+        PaymentRecord payment = repository.findById(refund.getPaymentId()).orElse(null);
+        Long targetUserId = payment != null ? payment.getUserId() : null;
+        if (targetUserId != null) {
+            try {
+                notificationClient.requestNotification(new NotificationRequest(
+                        targetUserId,
+                        "Hoàn tiền thành công",
+                        "Yêu cầu hoàn tiền " + refund.getAmount().toBigInteger() + " đ cho đơn #" + refund.getOrderId()
+                                + " đã được chuyển khoản tới " + (refund.getBankName() != null ? refund.getBankName() : "")
+                                + " (" + (refund.getAccountNumber() != null ? refund.getAccountNumber() : "") + ").",
+                        "REFUND_COMPLETED",
+                        refund.getOrderId(),
+                        "ORDER"
+                ));
+            } catch (Exception ex) {
+                log.warn("Could not send notification for approved refund {}: {}", refundId, ex.getMessage());
+            }
+        }
+
+        return toRefund(saved);
+    }
+
+    @Transactional
+    public RefundResponse adminRejectRefund(Long refundId, Long adminUserId, ProcessRefundRequest request) {
+        RefundRecord refund = refundRepository.findById(refundId)
+                .orElseThrow(() -> new NotFoundException("Refund", refundId));
+        if (!"PENDING".equalsIgnoreCase(refund.getStatus())) {
+            throw new BusinessException("REFUND_INVALID_STATUS", "Yêu cầu hoàn tiền không ở trạng thái Chờ xử lý");
+        }
+        String reason = (request != null && StringUtils.hasText(request.rejectionReason()))
+                ? request.rejectionReason().trim()
+                : "Admin từ chối yêu cầu hoàn tiền";
+        refund.setStatus("REJECTED");
+        refund.setRejectionReason(reason);
+        refund.setProcessedByUserId(adminUserId);
+        refund.setProcessedAt(LocalDateTime.now());
+        RefundRecord saved = refundRepository.save(refund);
+
+        try {
+            orderClient.updatePaymentStatus(refund.getOrderId(), "PAID", "Từ chối hoàn tiền: " + reason, adminUserId);
+        } catch (Exception ex) {
+            log.warn("Could not restore order payment status: {}", ex.getMessage());
+        }
+
+        PaymentRecord payment = repository.findById(refund.getPaymentId()).orElse(null);
+        Long targetUserId = payment != null ? payment.getUserId() : null;
+        if (targetUserId != null) {
+            try {
+                notificationClient.requestNotification(new NotificationRequest(
+                        targetUserId,
+                        "Yêu cầu hoàn tiền bị từ chối",
+                        "Yêu cầu hoàn tiền cho đơn #" + refund.getOrderId() + " đã bị từ chối. Lý do: " + reason,
+                        "REFUND_REJECTED",
+                        refund.getOrderId(),
+                        "ORDER"
+                ));
+            } catch (Exception ex) {
+                log.warn("Could not send notification for rejected refund {}: {}", refundId, ex.getMessage());
+            }
+        }
+
+        return toRefund(saved);
+    }
+
     @Transactional
     public RefundResponse refund(Long paymentId, RefundRequest request, Long processedByUserId) {
         PaymentRecord payment = find(paymentId);
@@ -445,20 +654,18 @@ public class PaymentService {
         refund.setAmount(request.amount());
         refund.setReason(request.reason());
         refund.setProcessedByUserId(processedByUserId);
-        refund.setStatus("COMPLETED");
+        refund.setStatus("PENDING");
         refund.setProcessedAt(LocalDateTime.now());
         refund.setTransactionId("RF-" + payment.getReferenceId() + "-" + RANDOM.nextInt(1_000_000));
         return toRefund(refundRepository.save(refund));
     }
 
     /**
-     * Hoàn toàn bộ tiền đã thu của một đơn về ví Lock.R của người trả, khi đơn bị huỷ
-     * trước lúc dịch vụ được thực hiện (order-service gọi qua /internal).
+     * Tạo yêu cầu hoàn toàn bộ tiền đã thu của một đơn khi đơn bị huỷ (order-service gọi qua /internal).
      *
-     * <p>Mọi phương thức đều hoàn về ví: tiền từ cổng thanh toán không tự quay ngược
-     * được, còn ví thì khách dùng tiếp hoặc rút. Gọi lại nhiều lần an toàn — khoản đã
-     * có bản ghi hoàn thì bỏ qua, và ví chỉ cộng một lần cho mỗi khoản (khoá theo mã
-     * tham chiếu).
+     * <p>Không hoàn tiền tự động về ví. Yêu cầu hoàn tiền được tạo ở trạng thái PENDING kèm
+     * thông tin tài khoản ngân hàng đã lưu của khách hàng (nếu có), để Admin xem xét và
+     * thực hiện chuyển khoản thủ công.
      */
     @Transactional
     public com.huynqb.laundrylocker.payment.dto.internal.OrderRefundResult refundOrder(
@@ -472,7 +679,7 @@ public class PaymentService {
                 continue;
             }
             boolean alreadyRefunded = refundRepository.findByPaymentIdIn(List.of(payment.getId())).stream()
-                    .anyMatch(refund -> "COMPLETED".equals(refund.getStatus()));
+                    .anyMatch(refund -> "COMPLETED".equals(refund.getStatus()) || "PENDING".equals(refund.getStatus()));
             if (alreadyRefunded) {
                 continue;
             }
@@ -483,16 +690,20 @@ public class PaymentService {
             refund.setAmount(payment.getAmount());
             refund.setReason(reason);
             refund.setProcessedByUserId(processedByUserId);
-            refund.setStatus("COMPLETED");
-            refund.setProcessedAt(LocalDateTime.now());
+            refund.setStatus("PENDING");
             refund.setTransactionId(transactionId);
+
+            // Nạp thông tin ngân hàng đã lưu của khách nếu có
+            if (payment.getUserId() != null) {
+                userBankAccountRepository.findByUserId(payment.getUserId()).ifPresent(acc -> {
+                    refund.setBankName(acc.getBankName());
+                    refund.setBankCode(acc.getBankCode());
+                    refund.setAccountNumber(acc.getAccountNumber());
+                    refund.setAccountHolderName(acc.getAccountHolderName());
+                });
+            }
+
             refundRepository.save(refund);
-            walletService.credit(
-                    payment.getUserId(),
-                    payment.getAmount(),
-                    WalletService.SOURCE_REFUND,
-                    transactionId,
-                    "Hoàn tiền đơn #" + orderId + (reason == null || reason.isBlank() ? "" : ": " + reason));
             total = total.add(payment.getAmount());
             count++;
         }
@@ -578,6 +789,12 @@ public class PaymentService {
                 refund.getStatus(),
                 refund.getReason(),
                 refund.getTransactionId(),
+                refund.getBankName(),
+                refund.getBankCode(),
+                refund.getAccountNumber(),
+                refund.getAccountHolderName(),
+                refund.getRejectionReason(),
+                refund.getBankTransferRef(),
                 refund.getProcessedByUserId(),
                 refund.getRequestedAt(),
                 refund.getProcessedAt());

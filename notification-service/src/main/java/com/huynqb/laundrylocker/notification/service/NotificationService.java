@@ -65,9 +65,22 @@ public class NotificationService {
         }
 
         fcmPushNotificationService.sendToUser(saved.getUserId(), saved.getTitle(), saved.getMessage(), data);
-        webSocketNotificationService.sendToUser(saved.getUserId(), toResponse(saved));
+        NotificationResponse response = toResponse(saved);
+        webSocketNotificationService.sendToUser(saved.getUserId(), response);
         publishNotificationRequested(saved);
-        return toResponse(saved);
+
+        if (isOrderRelated(saved.getType(), saved.getReferenceType())) {
+            Map<String, Object> orderPayload = new HashMap<>(data);
+            orderPayload.put("orderId", saved.getReferenceId());
+            orderPayload.put("userId", saved.getUserId());
+            orderPayload.put("title", saved.getTitle());
+            orderPayload.put("message", saved.getMessage());
+            orderPayload.put("status", saved.getType());
+            orderPayload.put("timestamp", saved.getCreatedAt() != null ? saved.getCreatedAt().toString() : java.time.LocalDateTime.now().toString());
+            webSocketNotificationService.sendOrderUpdate(saved.getUserId(), orderPayload);
+        }
+
+        return response;
     }
 
     @Transactional
@@ -170,15 +183,30 @@ public class NotificationService {
         }
 
         Long userId = asLong(payload.get("userId"));
+        Long referenceId = asLong(payload.containsKey("referenceId") ? payload.get("referenceId") : payload.get("orderId"));
+
+        // Broadcast order events immediately to /topic/orders and user order queue
+        if (isOrderDomainEvent(event.type())) {
+            Map<String, Object> wsOrderMsg = new HashMap<>(payload);
+            wsOrderMsg.put("type", event.type());
+            if (referenceId != null) {
+                wsOrderMsg.put("orderId", referenceId);
+            }
+            wsOrderMsg.put("timestamp", java.time.LocalDateTime.now().toString());
+            webSocketNotificationService.sendOrderUpdate(userId, wsOrderMsg);
+        }
+
         if (userId == null) {
             log.debug("No userId in {} event, skipping direct user notification", event.type());
             return;
         }
         String title = switch (event.type()) {
-            case DomainEventNames.ORDER_STATUS_CHANGED -> "Order status changed";
+            case DomainEventNames.ORDER_CREATED -> "Đơn hàng mới";
+            case DomainEventNames.ORDER_STATUS_CHANGED -> "Trạng thái đơn hàng thay đổi";
             case DomainEventNames.ORDER_BOX_RELOCATED -> "Đơn hàng được chuyển sang ô mới";
-            case DomainEventNames.PAYMENT_COMPLETED -> "Payment completed";
-            case DomainEventNames.PAYMENT_FAILED -> "Payment failed";
+            case DomainEventNames.DELIVERY_STATUS_CHANGED -> "Trạng thái giao hàng thay đổi";
+            case DomainEventNames.PAYMENT_COMPLETED -> "Thanh toán thành công";
+            case DomainEventNames.PAYMENT_FAILED -> "Thanh toán thất bại";
             case DomainEventNames.LOCKER_REPORT_CLAIMED -> "Báo cáo đang được xử lý";
             case DomainEventNames.LOCKER_REPORT_RESOLVED -> "Báo cáo đã được xử lý xong";
             case DomainEventNames.LOCKER_REPORT_ROUTED -> "Phiếu sự cố mới cần xử lý";
@@ -187,9 +215,28 @@ public class NotificationService {
             default -> "Notification";
         };
         Object message = payload.getOrDefault("message", event.type() + " event received");
-        Long referenceId = asLong(payload.containsKey("referenceId") ? payload.get("referenceId") : payload.get("orderId"));
         String referenceType = String.valueOf(payload.getOrDefault("referenceType", "ORDER"));
         create(new NotificationRequest(userId, title, String.valueOf(message), event.type(), referenceId, referenceType));
+    }
+
+    private boolean isOrderRelated(String type, String referenceType) {
+        if ("ORDER".equalsIgnoreCase(referenceType) || "DELIVERY".equalsIgnoreCase(referenceType)) {
+            return true;
+        }
+        if (type != null) {
+            String upper = type.toUpperCase();
+            return upper.startsWith("ORDER") || upper.startsWith("DELIVERY") || upper.startsWith("PAYMENT");
+        }
+        return false;
+    }
+
+    private boolean isOrderDomainEvent(String eventType) {
+        return DomainEventNames.ORDER_CREATED.equals(eventType)
+                || DomainEventNames.ORDER_STATUS_CHANGED.equals(eventType)
+                || DomainEventNames.ORDER_BOX_RELOCATED.equals(eventType)
+                || DomainEventNames.DELIVERY_STATUS_CHANGED.equals(eventType)
+                || DomainEventNames.PAYMENT_COMPLETED.equals(eventType)
+                || DomainEventNames.PAYMENT_FAILED.equals(eventType);
     }
 
     private NotificationResponse toResponse(NotificationMessage notification) {

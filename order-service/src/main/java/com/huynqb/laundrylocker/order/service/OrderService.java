@@ -100,7 +100,14 @@ public class OrderService {
         applyPromotion(saved, request.promotionCode(), request.promotionCodes());
         saved = orderRepository.save(saved);
         addHistory(saved.getId(), null, saved.getStatus(), saved.getUserId(), "Order created");
-        publish(DomainEventNames.ORDER_CREATED, saved, Map.of("orderId", saved.getId(), "userId", saved.getUserId()));
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderId", saved.getId());
+        payload.put("orderCode", saved.getOrderCode());
+        payload.put("userId", saved.getUserId());
+        payload.put("status", saved.getStatus());
+        payload.put("type", saved.getType());
+        publish(DomainEventNames.ORDER_CREATED, saved, payload);
+        notifyQuietly(saved.getUserId(), "Đơn hàng mới", "Đơn hàng " + saved.getOrderCode() + " đã được tạo thành công", "ORDER_CREATED", saved.getId());
         return toResponse(saved);
     }
 
@@ -266,6 +273,14 @@ public class OrderService {
         addHistory(saved.getId(), null, "AWAITING_DISPATCH", userId,
                 "Đơn drone được tạo tại tủ nguồn #" + request.sourceLockerId()
                         + " và chờ điều phối tới tủ đích #" + request.destinationLockerId());
+        Map<String, Object> droneCreatedPayload = new HashMap<>();
+        droneCreatedPayload.put("orderId", saved.getId());
+        droneCreatedPayload.put("orderCode", saved.getOrderCode());
+        droneCreatedPayload.put("userId", saved.getUserId());
+        droneCreatedPayload.put("status", saved.getStatus());
+        droneCreatedPayload.put("type", saved.getType());
+        publish(DomainEventNames.ORDER_CREATED, saved, droneCreatedPayload);
+        notifyQuietly(saved.getUserId(), "Đơn hàng mới", "Đơn drone " + saved.getOrderCode() + " đã được tạo thành công", "ORDER_CREATED", saved.getId());
         notifyMaintenanceDroneOrderCreated(saved);
         return toDroneDeliveryResponse(saved);
     }
@@ -405,6 +420,7 @@ public class OrderService {
         notifyQuietly(saved.getUserId(), "Rental extended",
                 "Rental " + saved.getOrderCode() + " extended until " + saved.getPickupDeadline(),
                 "ORDER_RENTAL_EXTENDED", saved.getId());
+        publishStatusChanged(saved, saved.getStatus());
         return toResponse(saved);
     }
 
@@ -702,12 +718,16 @@ public class OrderService {
     public OrderResponse complete(Long id, Long userId) {
         LockerOrder order = find(id);
         assertOwnerOrReceiver(order, userId);
-        validateStatus(order, Set.of("STORING", "RETURNED"));
+        validateStatus(order, Set.of("STORING", "RETURNED", "EXPIRED"));
         assertPaidBeforePickup(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
-            order.setExtraFee(order.getExtraFee().add(overtime));
-            order.setTotalPrice(order.getTotalPrice().add(overtime));
+            BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+            if (currentExtra.compareTo(overtime) < 0) {
+                BigDecimal diff = overtime.subtract(currentExtra);
+                order.setExtraFee(overtime);
+                order.setTotalPrice(order.getTotalPrice().add(diff));
+            }
         }
         releaseBoxes(order);
         order.setCompletedAt(LocalDateTime.now());
@@ -792,13 +812,17 @@ public class OrderService {
         }
         validateStatus(order,
                 "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory())
-                        ? Set.of("STORING", "RETURNED")
-                        : Set.of("STORING", "INITIALIZED", "RETURNED"));
+                        ? Set.of("STORING", "RETURNED", "EXPIRED")
+                        : Set.of("STORING", "INITIALIZED", "RETURNED", "EXPIRED"));
         assertPaidBeforeStorageCompletion(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
-            order.setExtraFee(order.getExtraFee().add(overtime));
-            order.setTotalPrice(order.getTotalPrice().add(overtime));
+            BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+            if (currentExtra.compareTo(overtime) < 0) {
+                BigDecimal diff = overtime.subtract(currentExtra);
+                order.setExtraFee(overtime);
+                order.setTotalPrice(order.getTotalPrice().add(diff));
+            }
         }
         releaseBoxes(order);
         order.setCompletedAt(LocalDateTime.now());
@@ -829,6 +853,12 @@ public class OrderService {
             }
             if (attachments != null && !attachments.isEmpty()) {
                 body.put("attachments", attachments);
+            }
+            if (order.getId() != null) {
+                body.put("orderId", order.getId());
+            }
+            if (order.getOrderCode() != null && !order.getOrderCode().isBlank()) {
+                body.put("orderCode", order.getOrderCode());
             }
             lockerClient.reportFault(boxId, body, userId);
         } catch (Exception ex) {
@@ -1885,13 +1915,23 @@ public class OrderService {
         if (!rules.requirePaymentBeforeDrop()) {
             return;
         }
+        // Đơn EXPIRED: khách đã thanh toán qua app flow trước khi gọi endpoint này.
+        // paymentStatus có thể chưa kịp sync từ payment-service → bỏ qua check.
+        if ("EXPIRED".equalsIgnoreCase(order.getStatus())) {
+            return;
+        }
         BigDecimal total = order.getTotalPrice();
         boolean hasFee = total != null && total.compareTo(BigDecimal.ZERO) > 0;
         boolean paid = "PAID".equalsIgnoreCase(order.getPaymentStatus());
+        // Cũng chấp nhận nếu paidAmount >= totalPrice (payment đã xử lý nhưng status chưa sync)
         if (hasFee && !paid) {
-            throw new BusinessException(
-                    "ORDER_UNPAID",
-                    "Vui lòng thanh toán đơn trước khi kết thúc thuê/trả ô.");
+            BigDecimal pa = order.getPaidAmount();
+            boolean fullyCovered = pa != null && pa.compareTo(total) >= 0;
+            if (!fullyCovered) {
+                throw new BusinessException(
+                        "ORDER_UNPAID",
+                        "Vui lòng thanh toán đơn trước khi kết thúc thuê/trả ô.");
+            }
         }
     }
 
@@ -2088,9 +2128,13 @@ public class OrderService {
     private void publishStatusChanged(LockerOrder order, String oldStatus) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("orderId", order.getId());
+        payload.put("orderCode", order.getOrderCode());
         payload.put("userId", order.getUserId());
         payload.put("oldStatus", oldStatus);
         payload.put("newStatus", order.getStatus());
+        payload.put("status", order.getStatus());
+        payload.put("type", order.getType());
+        payload.put("paymentStatus", order.getPaymentStatus());
         publish(DomainEventNames.ORDER_STATUS_CHANGED, order, payload);
     }
 
@@ -2242,5 +2286,15 @@ public class OrderService {
     public void addIncidentHistory(Long orderId, String note) {
         LockerOrder order = find(orderId);
         addHistory(order.getId(), order.getStatus(), order.getStatus(), null, note);
+    }
+
+    @Transactional
+    public void updatePaymentStatus(Long orderId, String paymentStatus, String note, Long actorUserId) {
+        LockerOrder order = find(orderId);
+        order.setPaymentStatus(paymentStatus);
+        orderRepository.save(order);
+        if (StringUtils.hasText(note)) {
+            addHistory(order.getId(), order.getStatus(), order.getStatus(), actorUserId, note);
+        }
     }
 }

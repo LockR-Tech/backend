@@ -57,4 +57,31 @@ public class PaymentRules {
     public boolean cashAutoComplete() {
         return settings.getBoolean(CASH_AUTO_COMPLETE);
     }
+
+    public boolean isRefundEnabled() {
+        return settings.getBoolean(REFUND_ENABLED);
+    }
+
+    public BigDecimal refundMinAmount() {
+        return BigDecimal.valueOf(settings.getLong(REFUND_MIN_AMOUNT));
+    }
+
+    public int refundMaxDays() {
+        return settings.getInt(REFUND_MAX_DAYS);
+    }
+
+    public List<String> allowedRefundReasons() {
+        String raw = settings.getString(REFUND_ALLOWED_REASONS);
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    public boolean isRequireBankTransferRef() {
+        return settings.getBoolean(REFUND_REQUIRE_TRANSFER_REF);
+    }
 }

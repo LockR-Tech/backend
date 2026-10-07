@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.locker.client;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -34,5 +35,23 @@ public interface IotClient {
     ApiResponse<List<BoxHardwareStatus>> boxStatus(@RequestParam(value = "lockerId", required = false) Long lockerId);
 
     record BoxHardwareStatus(Long boxId, Long lockerId, String hwState, LocalDateTime lastReportedAt) {
+    }
+
+    @GetMapping("/gateways/{lockerId}")
+    ApiResponse<GatewayDeviceResponse> getGatewayByLockerId(@PathVariable("lockerId") Long lockerId);
+
+    record GatewayDeviceResponse(
+            Long id,
+            String macAddress,
+            String hardware,
+            String firmwareVersion,
+            Integer slaveId,
+            Integer availableSlots,
+            Long reportedLockerId,
+            Long lockerId,
+            boolean online,
+            String setupStatus,
+            String setupProgress,
+            LocalDateTime lastSeenAt) {
     }
 }

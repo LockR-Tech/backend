@@ -286,10 +286,17 @@ public class LockerService {
     @Transactional
     public CellResponse markFault(
             Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments, String rolesHeader) {
+        return markFault(boxId, reason, userId, attachments, rolesHeader, null, null);
+    }
+
+    @Transactional
+    public CellResponse markFault(
+            Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments, String rolesHeader,
+            Long orderId, String orderCode) {
         LockerBox box = findBox(boxId);
         // KTV tủ tự báo ⇒ tự nhận phiếu luôn.
         Long assigneeId = actorRoles(userId, rolesHeader).contains(LOCKER_TECHNICIAN) ? userId : null;
-        reportBoxFault(box, reason, userId, attachments, assigneeId, null);
+        reportBoxFault(box, reason, userId, attachments, assigneeId, null, orderId, orderCode);
         return toCell(box);
     }
 
@@ -298,7 +305,24 @@ public class LockerService {
     private LockerReport reportBoxFault(
             LockerBox box, String reason, Long userId, List<ReportAttachmentRequest> attachments,
             Long assigneeId, String title) {
+        return reportBoxFault(box, reason, userId, attachments, assigneeId, title, null, null);
+    }
+
+    private LockerReport reportBoxFault(
+            LockerBox box, String reason, Long userId, List<ReportAttachmentRequest> attachments,
+            Long assigneeId, String title, Long orderId, String orderCode) {
         Long boxId = box.getId();
+        if (orderId == null || !StringUtils.hasText(orderCode)) {
+            ActiveBoxOrderDto activeOrder = getActiveOrderByBox(boxId);
+            if (activeOrder != null) {
+                if (orderId == null) {
+                    orderId = activeOrder.orderId();
+                }
+                if (!StringUtils.hasText(orderCode)) {
+                    orderCode = activeOrder.orderCode();
+                }
+            }
+        }
         boolean newlyFaulted = !"FAULT".equalsIgnoreCase(box.getStatus());
         if (newlyFaulted) {
             // Nhớ trạng thái đơn đang giữ ô để sửa xong trả lại đúng, không để ô chứa hàng về AVAILABLE.
@@ -316,12 +340,19 @@ public class LockerService {
         if (open.isPresent()) {
             // Ô đã có phiếu mở ⇒ gộp vào phiếu đó thay vì mở phiếu trùng và báo KTV lần nữa.
             report = open.get();
+            if (report.getOrderId() == null && orderId != null) {
+                report.setOrderId(orderId);
+                report.setOrderCode(orderCode);
+                reportRepository.save(report);
+            }
             mergeIntoOpenReport(report, reason, userId, attachments);
         } else {
             LockerUnit locker = lockerRepository.findById(box.getLockerId()).orElse(null);
             LockerReport created = new LockerReport();
             created.setLockerId(box.getLockerId());
             created.setBoxId(boxId);
+            created.setOrderId(orderId);
+            created.setOrderCode(orderCode);
             created.setCategory(ReportCategory.BOX);
             created.setUserId(userId == null ? 0L : userId);
             // Tiêu đề/mô tả này hiện nguyên văn trên cả app khách, app KTV và web
@@ -429,13 +460,25 @@ public class LockerService {
         LockerUnit locker =
                 lockerRepository.findById(lockerId).orElseThrow(() -> new NotFoundException("Locker", lockerId));
         List<LockerBox> boxes = boxRepository.findByLockerIdOrderByRowIndexAscColIndexAsc(lockerId);
-        List<CellResponse> cells = boxes.stream().map(this::toCell).toList();
+        Map<Long, IotClient.BoxHardwareStatus> hwByBox = fetchHardwareStatuses(lockerId);
+        List<CellResponse> cells = boxes.stream().map(b -> toCell(b, hwByBox.get(b.getId()))).toList();
         long available = boxes.stream().filter(b -> "AVAILABLE".equalsIgnoreCase(b.getStatus())).count();
         long fault = boxes.stream().filter(b -> "FAULT".equalsIgnoreCase(b.getStatus())).count();
+
+        Boolean online = null;
+        try {
+            var gwResp = iotClient.getGatewayByLockerId(lockerId);
+            if (gwResp != null && gwResp.data() != null) {
+                online = gwResp.data().online();
+            }
+        } catch (Exception ex) {
+            log.debug("Could not fetch gateway online status for locker {}: {}", lockerId, ex.getMessage());
+        }
+
         return new LockerLayoutResponse(
                 locker.getId(), locker.getCode(), locker.getName(), locker.getStatus(),
                 locker.getLandingPad(), locker.getLandingMarkerId(), locker.getLandingPadStatus(),
-                cells.size(), available, fault, cells);
+                cells.size(), available, fault, cells, online);
     }
 
     @Transactional
@@ -612,6 +655,23 @@ public class LockerService {
         report.setUserId(userId);
         report.setTitle(request.title());
         report.setDescription(request.description());
+
+        Long orderId = request.orderId();
+        String orderCode = request.orderCode();
+        if ((orderId == null || !StringUtils.hasText(orderCode)) && request.boxId() != null) {
+            ActiveBoxOrderDto activeOrder = getActiveOrderByBox(request.boxId());
+            if (activeOrder != null) {
+                if (orderId == null) {
+                    orderId = activeOrder.orderId();
+                }
+                if (!StringUtils.hasText(orderCode)) {
+                    orderCode = activeOrder.orderCode();
+                }
+            }
+        }
+        report.setOrderId(orderId);
+        report.setOrderCode(orderCode);
+
         applyRouting(report, locker, technician ? userId : null);
         LockerReport saved = reportRepository.save(report);
         attachmentService.attach(
@@ -640,6 +700,17 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> myReports(Long userId) {
+        return myReports(userId, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> myReports(Long userId, Long orderId, String orderCode) {
+        if (orderId != null) {
+            return toReports(reportRepository.findByUserIdAndOrderIdOrderByCreatedAtDesc(userId, orderId));
+        }
+        if (StringUtils.hasText(orderCode)) {
+            return toReports(reportRepository.findByUserIdAndOrderCodeOrderByCreatedAtDesc(userId, orderCode));
+        }
         return toReports(reportRepository.findByUserIdOrderByCreatedAtDesc(userId));
     }
 
@@ -1396,6 +1467,21 @@ public class LockerService {
         return logs.stream().map(this::toInspectionLogResponse).toList();
     }
 
+    /// Lịch sử tổng hợp của đúng một Drone: biên bản kiểm tra định kỳ và phiếu sự cố đã đóng.
+    @Transactional(readOnly = true)
+    public DroneMaintenanceHistoryResponse droneMaintenanceHistory(Long droneUnitId) {
+        DroneUnit drone = findDroneUnit(droneUnitId);
+        List<MaintenanceInspectionLogResponse> completedMaintenance =
+                inspectionLogRepository.findByDroneUnitIdOrderByCreatedAtDesc(droneUnitId).stream()
+                        .map(this::toInspectionLogResponse)
+                        .toList();
+        List<LockerReportResponse> resolvedIncidents = toReports(
+                reportRepository.findByDroneUnitIdAndStatusInOrderByCreatedAtDesc(
+                        droneUnitId, List.of("RESOLVED")));
+        return new DroneMaintenanceHistoryResponse(
+                drone.getId(), drone.getCode(), completedMaintenance, resolvedIncidents);
+    }
+
     private MaintenanceInspectionLogResponse toInspectionLogResponse(MaintenanceInspectionLog log) {
         LockerUnit locker = log.getLockerId() == null ? null : lockerRepository.findById(log.getLockerId()).orElse(null);
         DroneUnit drone = log.getDroneUnitId() == null ? null : droneUnitRepository.findById(log.getDroneUnitId()).orElse(null);
@@ -1505,6 +1591,12 @@ public class LockerService {
                 s.getDroneUnitId() == null
                         ? null
                         : droneUnitRepository.findById(s.getDroneUnitId()).orElse(null);
+        // Drone luôn đóng tại một tủ/bãi đáp cố định. Trả kèm thông tin tủ liên kết
+        // để màn hình lịch Drone hiển thị vị trí thực tế, nhưng vẫn giữ droneUnitId
+        // để client phân biệt với lịch bảo trì Kiosk.
+        if (locker == null && drone != null && drone.getLockerId() != null) {
+            locker = lockerRepository.findById(drone.getLockerId()).orElse(null);
+        }
         boolean due =
                 Boolean.TRUE.equals(s.getActive())
                         && s.getNextDueAt() != null
@@ -1514,7 +1606,7 @@ public class LockerService {
                 : technicianNames.computeIfAbsent(s.getAssignedTechnicianId(), this::resolveUserName);
         return new MaintenanceScheduleResponse(
                 s.getId(),
-                s.getLockerId(),
+                locker == null ? s.getLockerId() : locker.getId(),
                 locker == null ? null : locker.getName(),
                 locker == null ? null : locker.getCode(),
                 s.getDroneUnitId(),
@@ -1933,6 +2025,12 @@ public class LockerService {
     }
 
     private CellResponse toCell(LockerBox box) {
+        return toCell(box, null);
+    }
+
+    private CellResponse toCell(LockerBox box, IotClient.BoxHardwareStatus hw) {
+        Boolean doorOpen = hw != null && "OPEN".equalsIgnoreCase(hw.hwState());
+        String hwState = hw != null ? hw.hwState() : null;
         return new CellResponse(
                 box.getId(),
                 box.getBoxNumber(),
@@ -1941,7 +2039,9 @@ public class LockerService {
                 box.getRowIndex(),
                 box.getColIndex(),
                 box.getStatus(),
-                box.getFaultReason());
+                box.getFaultReason(),
+                doorOpen,
+                hwState);
     }
 
     private void publishBoxFault(LockerBox box, String reason) {
@@ -2022,7 +2122,9 @@ public class LockerService {
                 report.getCategory(),
                 Boolean.TRUE.equals(report.getBlocksLocker()),
                 report.getRoutedToUserId(),
-                report.getScheduleId());
+                report.getScheduleId(),
+                report.getOrderId(),
+                report.getOrderCode());
     }
 
     // ---- Định tuyến phiếu cho KTV tủ ----
@@ -2410,6 +2512,10 @@ public class LockerService {
 
         String action = request.action() == null ? "LOCK_ONLY" : request.action().toUpperCase();
         ActiveBoxOrderDto activeOrder = getActiveOrderByBox(box.getId());
+        if (report.getOrderId() == null && activeOrder != null) {
+            report.setOrderId(activeOrder.orderId());
+            report.setOrderCode(activeOrder.orderCode());
+        }
         boolean isQuickFix = "QUICK_FIX".equalsIgnoreCase(action);
         boolean shouldLock = request.lockBox() != null ? request.lockBox() : !isQuickFix;
 

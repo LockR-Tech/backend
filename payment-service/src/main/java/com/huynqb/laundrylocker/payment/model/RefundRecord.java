@@ -35,6 +35,24 @@ public class RefundRecord {
     @Column(name = "transaction_id", length = 100)
     private String transactionId;
 
+    @Column(name = "bank_name", length = 100)
+    private String bankName;
+
+    @Column(name = "bank_code", length = 20)
+    private String bankCode;
+
+    @Column(name = "account_number", length = 50)
+    private String accountNumber;
+
+    @Column(name = "account_holder_name", length = 100)
+    private String accountHolderName;
+
+    @Column(name = "rejection_reason", length = 500)
+    private String rejectionReason;
+
+    @Column(name = "bank_transfer_ref", length = 100)
+    private String bankTransferRef;
+
     @Column(name = "processed_by_user_id")
     private Long processedByUserId;
 

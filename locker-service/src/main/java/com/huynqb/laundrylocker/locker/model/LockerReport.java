@@ -34,6 +34,13 @@ public class LockerReport {
     @Column(name = "box_id")
     private Long boxId;
 
+    /// Đơn hàng phát sinh sự cố (nếu sự cố xảy ra khi ô đang phục vụ đơn).
+    @Column(name = "order_id")
+    private Long orderId;
+
+    @Column(name = "order_code", length = 64)
+    private String orderCode;
+
     /// Khi phieu su co gan voi 1 drone vat ly (box_id se NULL).
     @Column(name = "drone_unit_id")
     private Long droneUnitId;

@@ -37,5 +37,8 @@ public record LockerReportResponse(
         // KTV được báo khi phiếu còn OPEN; null = đã báo mọi KTV tủ
         Long routedToUserId,
         // Lịch kiểm tra định kỳ sinh ra phiếu (lần kiểm tra KHÔNG ĐẠT)
-        Long scheduleId) {
+        Long scheduleId,
+        // Đơn hàng gắn với sự cố (nếu có)
+        Long orderId,
+        String orderCode) {
 }
