@@ -5,6 +5,7 @@ Bản ghi mới nhất nằm trên cùng.
 
 | Thời điểm (UTC) | Kết quả | Commit | Người đẩy | Nghiệm thu |
 |---|---|---|---|---|
+| 2026-10-07 10:29 | failure | [`85220d3`](https://github.com/LockR-Tech/backend/commit/85220d39b16d1a6a7104706e98f97a0a6e5d0b4a) | @TruongNguyenThaiBinh77 | **THẤT BẠI** — [run 37607189871](https://github.com/LockR-Tech/backend/actions/runs/37607189871); đã rollback |
 | 2026-10-07 09:55 | failure | [`e405cbc`](https://github.com/LockR-Tech/backend/commit/e405cbc7bbca1329121fe967f8155e64829ac4ee) | @LeThiYenVi | **THẤT BẠI** — [run 37603210011](https://github.com/LockR-Tech/backend/actions/runs/37603210011); đã rollback |
 | 2026-10-07 09:26 | failure | [`b912824`](https://github.com/LockR-Tech/backend/commit/b91282411184079b61369708f4d3bb10d27f5cd3) | @LeThiYenVi | **THẤT BẠI** — [run 37600312084](https://github.com/LockR-Tech/backend/actions/runs/37600312084); đã rollback |
 | 2026-10-07 08:27 | failure | [`109b991`](https://github.com/LockR-Tech/backend/commit/109b9913c191c80d6f5a6357caa1449b7a9509bf) | @TruongNguyenThaiBinh77 | **THẤT BẠI** — [run 37593705451](https://github.com/LockR-Tech/backend/actions/runs/37593705451); đã rollback |
