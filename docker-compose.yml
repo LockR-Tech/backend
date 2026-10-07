@@ -179,6 +179,14 @@ services:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
       CLOUDINARY_URL: ${CLOUDINARY_URL:-}
       MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
+      # Telemetry drone thật qua MQTT (docs/01-overview/drone-telemetry-contract.md). Tắt mặc định.
+      # Bật: APP_DRONE_TELEMETRY_ENABLED=true và DRONE_TELEMETRY_SECRET=<khoá gốc ký bản tin>.
+      # Broker mặc định trùng với iot-service (MQTT_BROKER_URL).
+      APP_DRONE_TELEMETRY_ENABLED: ${APP_DRONE_TELEMETRY_ENABLED:-false}
+      DRONE_TELEMETRY_SECRET: ${DRONE_TELEMETRY_SECRET:-}
+      DRONE_MQTT_BROKER_URL: ${DRONE_MQTT_BROKER_URL:-${MQTT_BROKER_URL:-tcp://broker.hivemq.com:1883}}
+      DRONE_MQTT_USERNAME: ${DRONE_MQTT_USERNAME:-}
+      DRONE_MQTT_PASSWORD: ${DRONE_MQTT_PASSWORD:-}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:

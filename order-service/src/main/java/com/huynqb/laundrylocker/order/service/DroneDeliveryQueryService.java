@@ -40,6 +40,7 @@ public class DroneDeliveryQueryService {
     private final DroneMissionRepository missionRepository;
     private final OrderStatusHistoryRepository historyRepository;
     private final AdminReferenceResolver references;
+    private final DroneTelemetryRegistry telemetry;
 
     @Transactional(readOnly = true)
     public DroneDeliveryOrderResponse get(Long orderId, Long userId) {
@@ -219,7 +220,15 @@ public class DroneDeliveryQueryService {
                 payment == null ? null : payment.lastPaidReference(),
                 payment == null ? null : payment.lastPaidTransactionId(),
                 mission == null ? null : mission.getWeightSurcharge(),
-                amountDue(order));
+                amountDue(order),
+                liveTracking(order, mission));
+    }
+
+    private boolean liveTracking(LockerOrder order, DroneMission mission) {
+        if (mission == null || !DroneMissionProgressService.IN_FLIGHT_STAGES.contains(mission.getStatus())) {
+            return false;
+        }
+        return "DEMO".equalsIgnoreCase(order.getFulfillmentMode()) || telemetry.isLive(mission.getDroneCode());
     }
 
     private static BigDecimal amountDue(LockerOrder order) {

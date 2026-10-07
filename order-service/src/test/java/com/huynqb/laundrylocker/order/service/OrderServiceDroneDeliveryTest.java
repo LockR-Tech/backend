@@ -273,6 +273,7 @@ class OrderServiceDroneDeliveryTest {
         LockerOrder order = droneOrder(21L, 44L, 5L, 9001L, "idem-3");
         order.setSourceBoxId(8001L);
         when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         DroneDeliveryOrderResponse response = orderService.getDroneDelivery(21L, 44L);

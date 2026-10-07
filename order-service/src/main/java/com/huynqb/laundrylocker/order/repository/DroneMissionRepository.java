@@ -13,4 +13,7 @@ public interface DroneMissionRepository extends JpaRepository<DroneMission, Long
     List<DroneMission> findByStatusIn(List<String> statuses);
 
     List<DroneMission> findByOrderIdIn(java.util.Collection<Long> orderIds);
+
+    /// Nhiệm vụ đang bay của một drone — telemetry chỉ biết mã drone, không biết đơn.
+    Optional<DroneMission> findFirstByDroneCodeAndStatusInOrderByIdDesc(String droneCode, List<String> statuses);
 }

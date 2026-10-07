@@ -414,6 +414,12 @@ public class LockerController {
                 id, request.expectedStatus(), request.status(), request.reason()));
     }
 
+    /// Pin drone tự báo qua telemetry. Không ghi nhật ký bảo trì: đây là số đo máy gửi liên tục.
+    @PostMapping("/internal/drones/telemetry")
+    public ApiResponse<DroneUnitResponse> internalDroneTelemetry(@Valid @RequestBody DroneTelemetryRequest request) {
+        return ApiResponse.ok(lockerService.recordDroneTelemetry(request.code(), request.batteryPercent()));
+    }
+
     @PostMapping("/api/drone-technician/drones/{id}/claim")
     public ApiResponse<DroneUnitResponse> maintenanceClaimDrone(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {

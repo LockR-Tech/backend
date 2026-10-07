@@ -201,7 +201,7 @@ class OrderServiceBoxFaultTest {
         LockerOrder order = customerOrder();
         order.setId(25L);
         order.setStatus("INITIALIZED");
-        when(orderRepository.findById(25L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(25L)).thenReturn(Optional.of(order));
 
         BusinessException error = assertThrows(
                 BusinessException.class,

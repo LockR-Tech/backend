@@ -107,6 +107,43 @@ class DroneRefundServiceTest {
         verify(paymentRefundClient, never()).refundOrder(any(), any(), any());
     }
 
+    @Test
+    void doesNotCallAnOrderRefundedWhenNothingCameBack() {
+        LockerOrder order = order("CANCELED", "PAID");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(paymentRefundClient.refundOrder(eq(21L), any(), any()))
+                .thenReturn(ApiResponse.ok(new OrderRefundResult(21L, BigDecimal.ZERO, 0)));
+
+        assertFalse(service.refundCanceledOrder(21L, 99L));
+
+        // Vẫn PAID để admin thấy đơn đã thu tiền mà chưa hoàn.
+        assertEquals("PAID", order.getPaymentStatus());
+        verify(orderRepository, never()).save(any());
+        verify(notificationClient, never()).requestNotification(any());
+    }
+
+    @Test
+    void refundsMoneyThatArrivedAfterTheOrderWasAlreadyRefunded() {
+        LockerOrder order = order("CANCELED", "REFUNDED");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(paymentRefundClient.refundOrder(eq(21L), any(), any()))
+                .thenReturn(ApiResponse.ok(new OrderRefundResult(21L, BigDecimal.valueOf(6000), 1)));
+
+        assertTrue(service.refundLatePayment(21L));
+
+        assertEquals("REFUNDED", order.getPaymentStatus());
+        verify(notificationClient).requestNotification(any());
+    }
+
+    @Test
+    void latePaymentRefundLeavesActiveOrdersAlone() {
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order("AWAITING_DISPATCH", "PAID")));
+
+        assertFalse(service.refundLatePayment(21L));
+
+        verify(paymentRefundClient, never()).refundOrder(any(), any(), any());
+    }
+
     private LockerOrder order(String status, String paymentStatus) {
         LockerOrder order = new LockerOrder();
         order.setId(21L);

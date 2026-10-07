@@ -16,6 +16,8 @@ public interface DroneUnitRepository extends JpaRepository<DroneUnit, Long> {
 
     boolean existsByCode(String code);
 
+    Optional<DroneUnit> findByCode(String code);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select d from DroneUnit d where d.id = :id")
     Optional<DroneUnit> findByIdForUpdate(@Param("id") Long id);

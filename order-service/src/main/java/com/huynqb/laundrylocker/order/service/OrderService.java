@@ -737,7 +737,9 @@ public class OrderService {
 
     @Transactional
     public OrderResponse cancel(Long id, Integer reason, Long userId) {
-        LockerOrder order = find(id);
+        // Khoá đơn: huỷ và đội bay tiếp nhận (accept cũng khoá) không được chạy xen, nếu
+        // không đơn thành CANCELED trong khi nhiệm vụ vừa tạo vẫn giữ drone.
+        LockerOrder order = orderRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Order", id));
         assertOwner(order, userId);
         if (!CANCELABLE.contains(order.getStatus())) {
             throw new BusinessException("ORDER_STATUS_INVALID", "Order cannot be canceled at this status");
