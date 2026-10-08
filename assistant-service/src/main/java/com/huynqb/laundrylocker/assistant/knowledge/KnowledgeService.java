@@ -19,9 +19,11 @@ public class KnowledgeService {
     static final long MAX_BYTES = 20L * 1024 * 1024;
 
     private final DocumentRepository documents;
+    private final ChunkRepository chunks;
 
-    public KnowledgeService(DocumentRepository documents) {
+    public KnowledgeService(DocumentRepository documents, ChunkRepository chunks) {
         this.documents = documents;
+        this.chunks = chunks;
     }
 
     public KnowledgeDocument upload(
@@ -58,6 +60,17 @@ public class KnowledgeService {
 
     public KnowledgeDocument get(long id) {
         return documents.findById(id).orElseThrow(() -> new NotFoundException("KnowledgeDocument", id));
+    }
+
+    /// Đoạn đã đánh chỉ mục; rỗng khi tài liệu chưa đánh chỉ mục xong lần nào.
+    public List<KnowledgeChunk> chunks(long id) {
+        get(id);
+        return chunks.findByDocument(id);
+    }
+
+    /// File gốc admin đã tải lên.
+    public KnowledgeDocument.Content content(long id) {
+        return documents.findContent(id).orElseThrow(() -> new NotFoundException("KnowledgeDocument", id));
     }
 
     /// Đánh chỉ mục lại (sau khi đổi model nhúng, hoặc tài liệu FAILED vì lỗi tạm thời).

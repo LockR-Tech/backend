@@ -36,6 +36,15 @@ public class ChunkRepository {
                 rows);
     }
 
+    /// Các đoạn của một tài liệu theo thứ tự trong tài liệu (admin xem trợ lý đọc được gì).
+    public List<KnowledgeChunk> findByDocument(long documentId) {
+        return jdbc.query(
+                "SELECT id, ordinal, heading, content FROM kb_chunks WHERE document_id = ? ORDER BY ordinal",
+                (rs, i) -> new KnowledgeChunk(
+                        rs.getLong("id"), rs.getInt("ordinal"), rs.getString("heading"), rs.getString("content")),
+                documentId);
+    }
+
     /// Top `limit` đoạn gần câu hỏi nhất trong các tài liệu người hỏi được đọc. Không lọc theo
     /// trạng thái: đoạn chỉ tồn tại khi đã đánh chỉ mục xong, và đánh chỉ mục lại thay đoạn trong một
     /// transaction ⇒ tài liệu đang (hoặc lỗi khi) đánh chỉ mục lại vẫn trả lời bằng đoạn cũ.
