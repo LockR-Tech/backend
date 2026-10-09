@@ -181,6 +181,52 @@ public class LockerOrder {
     @Column(name = "delivery_address")
     private String deliveryAddress;
 
+    /// Khai báo kiện của đơn drone (V20). Kích thước và giá trị khai báo là tuỳ chọn.
+    @Column(name = "parcel_length_cm")
+    private Integer parcelLengthCm;
+
+    @Column(name = "parcel_width_cm")
+    private Integer parcelWidthCm;
+
+    @Column(name = "parcel_height_cm")
+    private Integer parcelHeightCm;
+
+    @Column(name = "parcel_category", length = 30)
+    private String parcelCategory;
+
+    @Column(name = "parcel_declared_value", precision = 12, scale = 2)
+    private BigDecimal parcelDeclaredValue;
+
+    @Column(name = "parcel_fragile")
+    private Boolean parcelFragile;
+
+    /// Lúc người gửi cam kết kiện không chứa hàng cấm bay.
+    @Column(name = "prohibited_items_declared_at")
+    private LocalDateTime prohibitedItemsDeclaredAt;
+
+    /// Khoảng cách đường chim bay tủ gửi → tủ nhận lúc đặt đơn drone.
+    @Column(name = "route_distance_meters")
+    private Integer routeDistanceMeters;
+
+    /// Người gửi xác nhận đã bỏ kiện vào ô DRONE ở tủ gửi; đội bay chỉ tiếp nhận đơn đã có mốc này.
+    @Column(name = "parcel_dropped_at")
+    private LocalDateTime parcelDroppedAt;
+
+    /// Đơn drone không giao được: lúc đội bay/admin xác nhận đã trả kiện cho người gửi.
+    @Column(name = "parcel_returned_at")
+    private LocalDateTime parcelReturnedAt;
+
+    @Column(name = "parcel_returned_by_user_id")
+    private Long parcelReturnedByUserId;
+
+    @Column(name = "parcel_return_note", length = 500)
+    private String parcelReturnNote;
+
+    /// Lần thanh toán gần nhất đã cộng vào `paidAmount` của đơn drone — sự kiện lặp lại
+    /// của cùng một lần thanh toán không được cộng hai lần.
+    @Column(name = "last_payment_id")
+    private Long lastPaymentId;
+
     @Column(name = "idempotency_key", length = 120)
     private String idempotencyKey;
 

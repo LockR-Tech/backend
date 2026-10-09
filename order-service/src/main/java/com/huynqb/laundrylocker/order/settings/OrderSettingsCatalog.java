@@ -27,6 +27,18 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String SEND_PICKUP_HOURS = "app.order.send-pickup-hours-limit";
     public static final String DRONE_PICKUP_HOURS = "app.order.drone-pickup-hours-limit";
     public static final String AUTO_CANCEL_HOURS = "app.order.auto-cancel-hours";
+    public static final String DRONE_UNPAID_CANCEL_MINUTES = "app.order.drone-unpaid-cancel-minutes";
+    public static final String DRONE_DISPATCH_TIMEOUT_MINUTES = "app.order.drone-dispatch-timeout-minutes";
+    public static final String DRONE_SURCHARGE_TIMEOUT_MINUTES = "app.order.drone-surcharge-timeout-minutes";
+    public static final String DRONE_FLIGHTS_SUSPENDED = "app.order.drone-flights-suspended";
+    public static final String DRONE_FLIGHT_START_HOUR = "app.order.drone-flight-start-hour";
+    public static final String DRONE_FLIGHT_END_HOUR = "app.order.drone-flight-end-hour";
+    public static final String DRONE_MAX_ROUTE_METERS = "app.order.drone-max-route-meters";
+    public static final String DRONE_MAX_OPEN_ORDERS = "app.order.drone-max-open-orders-per-user";
+    public static final String DRONE_MAX_PARCEL_LENGTH = "app.order.drone-max-parcel-length-cm";
+    public static final String DRONE_MAX_PARCEL_WIDTH = "app.order.drone-max-parcel-width-cm";
+    public static final String DRONE_MAX_PARCEL_HEIGHT = "app.order.drone-max-parcel-height-cm";
+    public static final String DRONE_MAX_DECLARED_VALUE = "app.order.drone-max-declared-value";
     public static final String OVERDUE_RELEASE_HOURS = "app.order.overdue-release-hours";
     public static final String REMINDER_COOLDOWN_MINUTES = "app.order.reminder-cooldown-minutes";
     public static final String RENTAL_MIN_HOURS = "app.order.rental-min-hours";
@@ -88,6 +100,15 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Tính từ lúc drone thả hàng vào ô.", 24, 1, 720, "giờ").asPublic(),
                 integer(AUTO_CANCEL_HOURS, DEADLINES, "Tự huỷ đơn chưa bỏ hàng sau",
                         "Đơn INITIALIZED không xác nhận bỏ hàng sẽ bị huỷ và nhả ô. Nên ≤ thời gian giữ ô RESERVED bên locker.", 24, 1, 720, "giờ"),
+                integer(DRONE_UNPAID_CANCEL_MINUTES, DEADLINES, "Tự huỷ đơn drone chưa thanh toán sau",
+                        "Đơn drone chưa trả tiền giữ ô ở cả tủ gửi lẫn tủ nhận; quá thời gian này thì huỷ và nhả ô. "
+                                + "0 = không tự huỷ.", 30, 0, 10_080, "phút").asPublic(),
+                integer(DRONE_DISPATCH_TIMEOUT_MINUTES, DEADLINES, "Tự huỷ đơn drone đã trả tiền mà chưa được tiếp nhận sau",
+                        "Tính từ lúc người gửi bỏ kiện vào ô gửi (chưa bỏ kiện thì từ lúc thanh toán). Đơn bị huỷ và "
+                                + "tạo yêu cầu hoàn tiền. 0 = không tự huỷ.", 120, 0, 10_080, "phút").asPublic(),
+                integer(DRONE_SURCHARGE_TIMEOUT_MINUTES, DEADLINES, "Tự huỷ đơn drone nợ phụ thu cân lệch sau",
+                        "Tính từ lúc nạp hàng. Quá hạn thì huỷ, nhả drone, hoàn phần đã trả và trả kiện cho người gửi. "
+                                + "0 = không tự huỷ.", 60, 0, 10_080, "phút").asPublic(),
                 integer(OVERDUE_RELEASE_HOURS, DEADLINES, "Nhả ô quá hạn sau",
                         "Số giờ sau hạn lấy hàng thì đơn chuyển EXPIRED và nhả ô. 0 = không tự nhả.", 24, 0, 720, "giờ"),
                 integer(REMINDER_COOLDOWN_MINUTES, DEADLINES, "Khoảng cách nhắc quá hạn",
@@ -139,6 +160,25 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "500,750,1000,1500,2000,3000", 1, 100_000, "gram").asPublic(),
                 integer(DRONE_WEIGHT_TOLERANCE, DRONE, "Sai số cân cho phép khi nạp hàng drone",
                         "Cân thực tế vượt khối lượng khai báo không quá mức này thì không thu thêm.",
-                        50, 0, 10_000, "gram").asPublic());
+                        50, 0, 10_000, "gram").asPublic(),
+                bool(DRONE_FLIGHTS_SUSPENDED, DRONE, "Tạm dừng bay",
+                        "Bật khi thời tiết xấu hoặc có sự cố vận hành: không nhận đơn drone mới, đội bay không "
+                                + "tiếp nhận và không phóng được.", false).asPublic(),
+                integer(DRONE_FLIGHT_START_HOUR, DRONE, "Giờ bắt đầu được phóng drone",
+                        "Giờ Việt Nam. Đặt 0 và 24 để không giới hạn khung giờ bay.", 0, 0, 23, "giờ").asPublic(),
+                integer(DRONE_FLIGHT_END_HOUR, DRONE, "Giờ ngừng phóng drone",
+                        "Sau giờ này (giờ Việt Nam) đội bay không phóng được.", 24, 1, 24, "giờ").asPublic(),
+                integer(DRONE_MAX_ROUTE_METERS, DRONE, "Tầm bay tối đa giữa hai tủ",
+                        "Khoảng cách đường chim bay tủ gửi → tủ nhận vượt mức này thì không đặt được đơn. "
+                                + "0 = không giới hạn.", 5000, 0, 100_000, "mét").asPublic(),
+                integer(DRONE_MAX_OPEN_ORDERS, DRONE, "Số đơn drone đang mở tối đa mỗi khách",
+                        "Mỗi đơn drone chưa giao xong giữ ô ở hai tủ. 0 = không giới hạn.", 3, 0, 100, "đơn").asPublic(),
+                integer(DRONE_MAX_PARCEL_LENGTH, DRONE, "Chiều dài kiện tối đa", "Theo khoang hàng của drone.",
+                        30, 1, 500, "cm").asPublic(),
+                integer(DRONE_MAX_PARCEL_WIDTH, DRONE, "Chiều rộng kiện tối đa", "", 25, 1, 500, "cm").asPublic(),
+                integer(DRONE_MAX_PARCEL_HEIGHT, DRONE, "Chiều cao kiện tối đa", "", 20, 1, 500, "cm").asPublic(),
+                integer(DRONE_MAX_DECLARED_VALUE, DRONE, "Giá trị khai báo tối đa của kiện drone",
+                        "Kiện có giá trị khai báo cao hơn không được nhận.", 2_000_000, 0, 1_000_000_000, "VND")
+                        .asPublic());
     }
 }
