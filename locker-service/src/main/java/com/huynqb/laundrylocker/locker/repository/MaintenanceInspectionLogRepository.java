@@ -11,6 +11,8 @@ public interface MaintenanceInspectionLogRepository extends JpaRepository<Mainte
 
     List<MaintenanceInspectionLog> findByLockerIdOrderByCreatedAtDesc(Long lockerId);
 
+    List<MaintenanceInspectionLog> findByLockerIdAndTechnicianIdOrderByCreatedAtDesc(Long lockerId, Long technicianId);
+
     List<MaintenanceInspectionLog> findByDroneUnitIdOrderByCreatedAtDesc(Long droneUnitId);
 
     List<MaintenanceInspectionLog> findByTechnicianIdOrderByCreatedAtDesc(Long technicianId);

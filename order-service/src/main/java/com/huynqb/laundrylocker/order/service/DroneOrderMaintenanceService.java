@@ -38,6 +38,7 @@ public class DroneOrderMaintenanceService {
     private final OrderRules rules;
 
     private static final java.security.SecureRandom SEAL_RANDOM = new java.security.SecureRandom();
+    private static final java.time.ZoneId FLIGHT_ZONE = java.time.ZoneId.of("Asia/Ho_Chi_Minh");
 
     @Transactional(readOnly = true)
     public List<DroneMissionResponse> queue(String deliveryStage) {
@@ -57,6 +58,12 @@ public class DroneOrderMaintenanceService {
         if (!"AWAITING_DISPATCH".equals(order.getStatus())) {
             throw new BusinessException("DRONE_ORDER_STATUS_INVALID", "Drone order is not awaiting dispatch");
         }
+        // Không gán drone cho một đơn mà ô gửi còn rỗng.
+        if (order.getParcelDroppedAt() == null) {
+            throw new BusinessException(
+                    "DRONE_PARCEL_NOT_DROPPED", "Sender has not confirmed dropping the parcel at the source locker");
+        }
+        assertFlightsNotSuspended();
 
         DroneMission existingMission = missionRepository.findByOrderId(orderId).orElse(null);
         if (existingMission != null
@@ -194,6 +201,13 @@ public class DroneOrderMaintenanceService {
             throw new BusinessException(
                     "DRONE_SURCHARGE_UNPAID", "Customer must pay the weight surcharge before launch");
         }
+        assertFlightsNotSuspended();
+        int hourNow = java.time.ZonedDateTime.now(FLIGHT_ZONE).getHour();
+        if (!rules.droneFlightAllowedAt(hourNow)) {
+            throw new BusinessException(
+                    "DRONE_OUTSIDE_FLIGHT_HOURS",
+                    "Drones may only launch between " + rules.droneFlightWindowLabel());
+        }
 
         DroneUnitDto drone = fetchDrone(mission.getDroneUnitId());
         validateReservedDroneForLaunch(drone);
@@ -202,6 +216,9 @@ public class DroneOrderMaintenanceService {
         DroneUnitDto updatedDrone = transitionDroneStatus(
                 mission.getDroneUnitId(), "RESERVED", "IN_FLIGHT", null);
         mission.setStatus("LAUNCHING");
+        mission.setBatteryPercentAtLaunch(updatedDrone.batteryPercent() != null
+                ? updatedDrone.batteryPercent()
+                : drone.batteryPercent());
         mission.setLastLaunchIdempotencyKey(idempotencyKey);
         mission.setLaunchingAt(LocalDateTime.now());
         missionRepository.save(mission);
@@ -233,18 +250,18 @@ public class DroneOrderMaintenanceService {
                     "DRONE_MISSION_STATUS_INVALID", "Drone mission can only be canceled before launch");
         }
 
-        String note = StringUtils.hasText(request.note()) ? request.note().trim() : null;
-        if (Integer.valueOf(5).equals(request.reasonCode()) && !StringUtils.hasText(note)) {
-            throw new BusinessException(
-                    "DRONE_CANCEL_NOTE_REQUIRED", "A note is required when reason is OTHER");
-        }
+        String note = requireReasonNote(request);
 
         String oldStatus = order.getStatus();
         releaseReservationIfHeld(mission.getDroneUnitId());
         if (order.getReservedBoxId() != null) {
             lockerClient.releaseBox(order.getReservedBoxId());
         }
-        releaseSourceBoxQuietly(order);
+        // Kiện đã bỏ vào ô gửi mà chưa nạp lên drone thì vẫn nằm trong ô: giữ ô tới khi trả kiện
+        // (DroneParcelService.confirmReturn). Đã nạp thì ô đã được nhả lúc nạp.
+        if (!DroneParcelCustody.inSourceBox(order, mission)) {
+            releaseSourceBoxQuietly(order);
+        }
 
         order.setCancelReason(request.reasonCode());
         order.setStaffNote(note);
@@ -261,7 +278,8 @@ public class DroneOrderMaintenanceService {
         history.setNote(cancelReasonLabel(request.reasonCode()) + (note == null ? "" : " · " + note));
         historyRepository.save(history);
 
-        missionRepository.delete(mission);
+        // Giữ hồ sơ nhiệm vụ (cân nặng, niêm phong, người nạp) để đối chứng sau khi huỷ.
+        closeMission(mission, "CANCELED", userId, request.reasonCode(), note);
 
         try {
             notificationClient.requestNotification(
@@ -297,6 +315,195 @@ public class DroneOrderMaintenanceService {
                 mission.getReadyToLaunchAt(),
                 mission.getWeightSurcharge(),
                 order.getPaymentStatus());
+    }
+
+    /**
+     * Chuyến bay không giao được hàng sau khi đã phóng (drone lỗi, mất tín hiệu, thời tiết, bãi
+     * đáp/ô nhận hỏng…). Trước khi có thao tác này đơn kẹt mãi ở chặng bay: đội bay chỉ huỷ được
+     * trước khi phóng, còn hoàn tiền chỉ chạy cho đơn `CANCELED`.
+     *
+     * <p>Đơn sang `CANCELED` với chặng `FAILED`, ô nhận được nhả, drone chuyển `FAULT` để phải
+     * kiểm tra (và lấy kiện ra) trước khi nhận nhiệm vụ khác. Nơi gọi tạo yêu cầu hoàn tiền sau
+     * khi giao dịch này commit. Chỉ điều phối viên đã nhận nhiệm vụ hoặc admin được báo.
+     */
+    @Transactional
+    public DroneMissionResponse reportFlightFailure(
+            Long orderId, Long userId, boolean admin, CancelDroneOrderRequest request) {
+        LockerOrder order = findDroneOrder(orderId);
+        DroneMission mission =
+                missionRepository
+                        .findByOrderId(orderId)
+                        .orElseThrow(() -> new NotFoundException("DroneMission", orderId));
+        if (!admin) {
+            validateAssignedOperator(mission, userId);
+        }
+        if (!DroneMissionProgressService.IN_FLIGHT_STAGES.contains(mission.getStatus())) {
+            throw new BusinessException(
+                    "DRONE_MISSION_STATUS_INVALID", "Only an in-flight drone mission can be reported as failed");
+        }
+        String note = requireReasonNote(request);
+        String failedStage = mission.getStatus();
+        String reason = cancelReasonLabel(request.reasonCode()) + (note == null ? "" : " · " + note);
+
+        groundDroneQuietly(
+                mission.getDroneUnitId(), "Flight of order " + order.getOrderCode() + " failed: " + reason);
+        releaseDestinationBoxQuietly(order);
+
+        order.setCancelReason(request.reasonCode());
+        order.setStaffNote(note);
+        order.setPinCode(null);
+        order.setStatus("CANCELED");
+        order.setDeliveryStage("FAILED");
+        orderRepository.save(order);
+        addJourneyEvent(order.getId(), failedStage, "FAILED", userId,
+                "Chuyến bay không thành công ở chặng " + failedStage + ": " + reason);
+
+        mission.setFailedStage(failedStage);
+        closeMission(mission, "FAILED", userId, request.reasonCode(), note);
+
+        notifyFlightFailureQuietly(order.getUserId(), order);
+        if (order.getReceiverUserId() != null && !order.getReceiverUserId().equals(order.getUserId())) {
+            notifyFlightFailureQuietly(order.getReceiverUserId(), order);
+        }
+        return toResponse(order, mission, null);
+    }
+
+    /**
+     * Đóng đơn đang nợ phụ thu cân lệch mà không được trả: khách chủ động từ chối
+     * ({@code customerUserId} khác null), hoặc quá hạn ({@code cutoff} khác null, do
+     * {@link DroneOrderTimeoutSweeper} gọi). Trước đây khách không tự thoát được và drone bị giữ
+     * `RESERVED` vô hạn. Kiện đã nạp lên drone nên chờ đội bay trả lại; nơi gọi tạo yêu cầu
+     * hoàn phần đã trả sau khi giao dịch này commit.
+     *
+     * @return false khi đơn không (còn) nợ phụ thu quá hạn — chỉ với lượt quét tự động;
+     *     khách gọi mà đơn không nợ phụ thu thì ném lỗi.
+     */
+    @Transactional
+    public boolean cancelUnpaidSurcharge(Long orderId, Long customerUserId, LocalDateTime cutoff) {
+        LockerOrder order = findDroneOrder(orderId);
+        boolean byCustomer = customerUserId != null;
+        if (byCustomer && !customerUserId.equals(order.getUserId())) {
+            throw new BusinessException("ORDER_FORBIDDEN", "Order does not belong to user");
+        }
+        DroneMission mission = missionRepository.findByOrderId(orderId).orElse(null);
+        boolean owesSurcharge = mission != null
+                && "ACCEPTED".equals(order.getDeliveryStage())
+                && "READY_TO_LAUNCH".equals(mission.getStatus())
+                && mission.getWeightSurcharge() != null
+                && "UNPAID".equalsIgnoreCase(order.getPaymentStatus());
+        if (!owesSurcharge) {
+            if (byCustomer) {
+                throw new BusinessException(
+                        "DRONE_SURCHARGE_NOT_OWED", "This drone order has no unpaid weight surcharge to decline");
+            }
+            return false;
+        }
+        if (!byCustomer && (mission.getLoadedAt() == null || mission.getLoadedAt().isAfter(cutoff))) {
+            return false;
+        }
+
+        String note = byCustomer
+                ? "Khách từ chối trả phụ thu cân lệch"
+                : "Quá hạn trả phụ thu cân lệch";
+        releaseReservationIfHeld(mission.getDroneUnitId());
+        releaseDestinationBoxQuietly(order);
+        order.setStaffNote(note);
+        order.setPinCode(null);
+        order.setStatus("CANCELED");
+        order.setDeliveryStage("CANCELED");
+        orderRepository.save(order);
+        addJourneyEvent(order.getId(), "ACCEPTED", "CANCELED", customerUserId,
+                note + " — đội bay dỡ kiện khỏi drone và trả lại người gửi");
+        closeMission(mission, "CANCELED", customerUserId, null, note);
+
+        notifyQuietly(
+                mission.getAssignedByUserId(),
+                "Đơn drone đã huỷ — cần trả kiện",
+                "Đơn " + order.getOrderCode() + ": " + note.toLowerCase()
+                        + ". Dỡ kiện khỏi drone và trả lại người gửi.",
+                order);
+        if (!byCustomer) {
+            notifyQuietly(
+                    order.getUserId(),
+                    "Đơn drone đã tự huỷ",
+                    "Đơn " + order.getOrderCode() + " chưa trả phụ thu cân lệch đúng hạn nên đã huỷ. "
+                            + "Phần đã trả sẽ được hoàn và đội bay sẽ trả lại kiện cho bạn.",
+                    order);
+        }
+        return true;
+    }
+
+    private void notifyQuietly(Long userId, String title, String message, LockerOrder order) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            notificationClient.requestNotification(
+                    new NotificationRequest(
+                            userId, title, message, "DRONE_DELIVERY_STATUS_CHANGED", order.getId(), "ORDER"));
+        } catch (RuntimeException ignored) {
+            // Trạng thái đơn là nguồn sự thật; thông báo chỉ là kênh báo nhanh.
+        }
+    }
+
+    private String requireReasonNote(CancelDroneOrderRequest request) {
+        String note = StringUtils.hasText(request.note()) ? request.note().trim() : null;
+        if (Integer.valueOf(5).equals(request.reasonCode()) && note == null) {
+            throw new BusinessException(
+                    "DRONE_CANCEL_NOTE_REQUIRED", "A note is required when reason is OTHER");
+        }
+        return note;
+    }
+
+    private void closeMission(DroneMission mission, String status, Long userId, Integer reasonCode, String note) {
+        mission.setStatus(status);
+        mission.setEndedAt(LocalDateTime.now());
+        mission.setEndedByUserId(userId);
+        mission.setEndReason(reasonCode);
+        mission.setEndNote(note);
+        missionRepository.save(mission);
+    }
+
+    /// Drone vừa hỏng chuyến phải được kiểm tra trước khi bay lại. Trạng thái đội bay có thể
+    /// đã bị đổi (kỹ thuật viên tự báo FAULT) hoặc locker-service lỗi: không được chặn việc
+    /// đóng đơn và hoàn tiền cho khách.
+    private void groundDroneQuietly(Long droneUnitId, String reason) {
+        if (droneUnitId == null) {
+            return;
+        }
+        try {
+            transitionDroneStatus(droneUnitId, "IN_FLIGHT", "FAULT", reason);
+        } catch (RuntimeException ignored) {
+            // Xem chú thích trên.
+        }
+    }
+
+    /// Ô nhận chưa có hàng. Lỗi nhả ô không được chặn việc đóng đơn; job đối soát nhả ô mồ côi sau.
+    private void releaseDestinationBoxQuietly(LockerOrder order) {
+        if (order.getReservedBoxId() == null) {
+            return;
+        }
+        try {
+            lockerClient.releaseBox(order.getReservedBoxId());
+        } catch (RuntimeException ignored) {
+            // Xem chú thích trên.
+        }
+    }
+
+    private void notifyFlightFailureQuietly(Long userId, LockerOrder order) {
+        try {
+            notificationClient.requestNotification(
+                    new NotificationRequest(
+                            userId,
+                            "Giao hàng bằng drone không thành công",
+                            "Chuyến bay của đơn " + order.getOrderCode()
+                                    + " không hoàn thành. Đội bay sẽ liên hệ người gửi để trả lại kiện hàng.",
+                            "DRONE_DELIVERY_STATUS_CHANGED",
+                            order.getId(),
+                            "ORDER"));
+        } catch (RuntimeException ignored) {
+            // Trạng thái đơn là nguồn sự thật; thông báo chỉ là kênh báo nhanh.
+        }
     }
 
     /// Cân thực tế vượt khối lượng khai báo quá sai số cho phép thì tính lại phí theo cân
@@ -402,16 +609,29 @@ public class DroneOrderMaintenanceService {
         if (!"IDLE".equals(drone.status())) {
             throw new BusinessException("DRONE_NOT_IDLE", "Drone must be IDLE before acceptance");
         }
-        if (drone.batteryPercent() != null && drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
+        requireFlightBattery(drone);
+    }
+
+    /// Không biết mức pin thì không được coi là đủ pin.
+    private void requireFlightBattery(DroneUnitDto drone) {
+        if (drone.batteryPercent() == null) {
+            throw new BusinessException(
+                    "DRONE_BATTERY_UNKNOWN", "Drone battery level is unknown; update it before the flight");
+        }
+        if (drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
             throw new BusinessException("DRONE_BATTERY_TOO_LOW", "Drone battery is too low for launch");
+        }
+    }
+
+    private void assertFlightsNotSuspended() {
+        if (rules.droneFlightsSuspended()) {
+            throw new BusinessException("DRONE_FLIGHTS_SUSPENDED", "Drone flights are temporarily suspended");
         }
     }
 
     private void validateReservedDroneForLaunch(DroneUnitDto drone) {
         validateDroneReservation(drone);
-        if (drone.batteryPercent() != null && drone.batteryPercent() <= rules.droneMinPreflightBatteryPercent()) {
-            throw new BusinessException("DRONE_BATTERY_TOO_LOW", "Drone battery is too low for launch");
-        }
+        requireFlightBattery(drone);
     }
 
     private void validateDroneReservation(DroneUnitDto drone) {

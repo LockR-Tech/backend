@@ -81,6 +81,39 @@ public class DroneMission {
     @Column(name = "launching_at")
     private LocalDateTime launchingAt;
 
+    @Column(name = "battery_percent_at_launch")
+    private Integer batteryPercentAtLaunch;
+
+    /// Drone tới tủ nhận (chặng ARRIVED).
+    @Column(name = "landed_at")
+    private LocalDateTime landedAt;
+
+    /// Hàng vào ô nhận, và người xác nhận (null khi bộ giả lập/telemetry tự đẩy).
+    @Column(name = "deposited_at")
+    private LocalDateTime depositedAt;
+
+    @Column(name = "deposited_by_user_id")
+    private Long depositedByUserId;
+
+    /// Kết thúc mà không giao được hàng: đội bay huỷ trước khi phóng (status CANCELED) hoặc
+    /// chuyến bay thất bại (status FAILED). Null khi nhiệm vụ còn chạy hoặc đã giao xong.
+    @Column(name = "ended_at")
+    private LocalDateTime endedAt;
+
+    @Column(name = "ended_by_user_id")
+    private Long endedByUserId;
+
+    /// Cùng bảng mã với `orders.cancel_reason` của đơn drone (1 thời tiết … 5 khác).
+    @Column(name = "end_reason")
+    private Integer endReason;
+
+    @Column(name = "end_note", length = 500)
+    private String endNote;
+
+    /// Chặng bay lúc chuyến bay thất bại; null với nhiệm vụ huỷ trước khi phóng.
+    @Column(name = "failed_stage", length = 40)
+    private String failedStage;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

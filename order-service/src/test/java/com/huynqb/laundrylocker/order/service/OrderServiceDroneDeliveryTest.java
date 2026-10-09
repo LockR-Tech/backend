@@ -218,6 +218,67 @@ class OrderServiceDroneDeliveryTest {
     }
 
     @Test
+    void createDroneDeliveryRequiresTheProhibitedItemsDeclaration() {
+        assertCreateRejected(parcel(null, null, null, null, null, null), "DRONE_PROHIBITED_ITEMS_NOT_DECLARED");
+        assertCreateRejected(parcel(null, null, null, null, null, false), "DRONE_PROHIBITED_ITEMS_NOT_DECLARED");
+    }
+
+    @Test
+    void createDroneDeliveryRejectsParcelsThatDoNotFitTheCargoBay() {
+        // Khoang mặc định 30 x 25 x 20 cm; kiện xoay được nên 20 x 30 x 25 vẫn lọt.
+        assertCreateRejected(parcel(40, 10, 10, null, null, true), "DRONE_PARCEL_TOO_LARGE");
+        assertCreateRejected(parcel(26, 26, 10, null, null, true), "DRONE_PARCEL_TOO_LARGE");
+        assertCreateRejected(parcel(20, null, 10, null, null, true), "DRONE_PARCEL_SIZE_INVALID");
+        assertCreateRejected(parcel(null, null, null, "WEAPON", null, true), "DRONE_PARCEL_CATEGORY_INVALID");
+        assertCreateRejected(
+                parcel(null, null, null, null, new java.math.BigDecimal("2000001"), true),
+                "DRONE_DECLARED_VALUE_TOO_HIGH");
+    }
+
+    @Test
+    void createDroneDeliveryRejectsRoutesBeyondTheDroneRange() {
+        var near = new com.huynqb.laundrylocker.order.dto.admin.LockerInfo(
+                3L, 1L, "LK-3", "Locker 3", "ACTIVE", "A", 10.70, 106.70, true, null, 8, 4);
+        // Cách ~11 km về phía bắc, vượt tầm mặc định 5 km.
+        var far = new com.huynqb.laundrylocker.order.dto.admin.LockerInfo(
+                5L, 1L, "LK-5", "Locker 5", "ACTIVE", "B", 10.80, 106.70, true, null, 8, 4);
+        when(lockerLookupClient.getLockers(any())).thenReturn(ApiResponse.ok(List.of(near, far)));
+
+        assertCreateRejected(parcel(20, 30, 25, "food", null, true), "DRONE_ROUTE_TOO_FAR");
+    }
+
+    @Test
+    void createDroneDeliveryIsBlockedWhileFlightsAreSuspendedOrTheCustomerHasTooManyOpenOrders() {
+        when(orderRepository.countByUserIdAndTypeAndStatus(44L, "DRONE_DELIVERY", "AWAITING_DISPATCH"))
+                .thenReturn(3L);
+        assertCreateRejected(parcel(null, null, null, null, null, true), "DRONE_OPEN_ORDER_LIMIT");
+
+        settings.update(java.util.Map.of("app.order.drone-flights-suspended", true), null);
+        assertCreateRejected(parcel(null, null, null, null, null, true), "DRONE_FLIGHTS_SUSPENDED");
+    }
+
+    private void assertCreateRejected(CreateDroneDeliveryOrderRequest request, String expectedCode) {
+        BusinessException error = assertThrows(
+                BusinessException.class, () -> orderService.createDroneDelivery(request, 44L, "idem-rule"));
+
+        assertEquals(expectedCode, error.getCode());
+        verify(lockerClient, never()).reserveBox(any(), any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    private static CreateDroneDeliveryOrderRequest parcel(
+            Integer length,
+            Integer width,
+            Integer height,
+            String category,
+            java.math.BigDecimal declaredValue,
+            Boolean prohibitedItemsDeclared) {
+        return new CreateDroneDeliveryOrderRequest(
+                3L, 5L, null, "Tai lieu", 1200, null, null, 8001L, null, null, null,
+                length, width, height, category, declaredValue, false, prohibitedItemsDeclared);
+    }
+
+    @Test
     void explicitDemoIsRejectedForUserOutsideConfiguredAllowlistBeforeBoxReservation() {
         settings.update(java.util.Map.of("app.drone.demo.allowed-user-ids", "91,92"), null);
 
@@ -285,6 +346,24 @@ class OrderServiceDroneDeliveryTest {
         verify(lockerClient).releaseBox(8001L);
         assertEquals("CANCELED", order.getStatus());
         assertEquals("CANCELED", order.getDeliveryStage());
+    }
+
+    @Test
+    void customerCancelAfterDropOffKeepsTheSourceCellHoldingTheParcel() {
+        LockerOrder order = droneOrder(21L, 44L, 5L, 9001L, "idem-8");
+        order.setSourceBoxId(8001L);
+        order.setPaymentStatus("PAID");
+        order.setParcelDroppedAt(java.time.LocalDateTime.now());
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderService.cancel(21L, null, 44L);
+
+        assertEquals("CANCELED", order.getStatus());
+        verify(lockerClient).releaseBox(9001L);
+        // Kiện còn trong ô gửi: ô chỉ được nhả khi đội bay xác nhận đã trả kiện.
+        verify(lockerClient, never()).releaseBox(8001L);
+        assertEquals(8001L, order.getSourceBoxId());
     }
 
     private com.huynqb.laundrylocker.order.dto.admin.LockerInfo droneLocker(Long id) {

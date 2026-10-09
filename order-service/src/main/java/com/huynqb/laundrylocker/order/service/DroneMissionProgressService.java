@@ -118,6 +118,8 @@ public class DroneMissionProgressService {
         boolean deposited = "READY_FOR_PICKUP".equals(nextStage);
         if (deposited) {
             mission.setStatus("DEPOSITED");
+            mission.setDepositedAt(LocalDateTime.now());
+            mission.setDepositedByUserId(actorUserId);
             order.setStatus("STORING");
             order.setDeliveryStage(nextStage);
             order.setPinCode(String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000)));
@@ -125,6 +127,9 @@ public class DroneMissionProgressService {
             order.setPickupDeadline(LocalDateTime.now().plusHours(rules.dronePickupHours()));
         } else {
             mission.setStatus(nextStage);
+            if ("ARRIVED".equals(nextStage)) {
+                mission.setLandedAt(LocalDateTime.now());
+            }
             order.setDeliveryStage(nextStage);
         }
         missionRepository.save(mission);
