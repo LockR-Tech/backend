@@ -1072,6 +1072,11 @@ public class LockerService {
     /// thái trước khi hỏng, bãi đáp về OK, tủ do phiếu chặn về ACTIVE, lịch kiểm tra đang chờ
     /// phiếu này thì dời hạn.
     private void restoreAssetsAfterClose(LockerReport report) {
+        if (report.getDroneUnitId() != null
+                && !reportRepository.existsByDroneUnitIdAndStatusInAndIdNot(
+                        report.getDroneUnitId(), OPEN_REPORT_STATUSES, report.getId())) {
+            synchronizeDroneOperationalStatus(report.getDroneUnitId(), report.getResolvedByUserId());
+        }
         if (report.getBoxId() != null
                 && !reportRepository.existsByBoxIdAndStatusInAndIdNot(
                         report.getBoxId(), OPEN_REPORT_STATUSES, report.getId())) {
@@ -1240,7 +1245,12 @@ public class LockerService {
                 : LocalDateTime.now().plusDays(request.intervalDays());
         schedule.setNextDueAt(dueAt);
         schedule.setActive(true);
-        return toSchedule(scheduleRepository.save(schedule));
+        MaintenanceSchedule saved = scheduleRepository.save(schedule);
+        // Lịch Drone mới được xem là đang chờ nghiệm thu lần đầu, nên phải tạm dừng nhận chuyến bay.
+        if (saved.getDroneUnitId() != null) {
+            markDroneMaintenancePending(saved.getDroneUnitId(), null, saved.getTitle());
+        }
+        return toSchedule(saved);
     }
 
     @Transactional(readOnly = true)
@@ -1345,6 +1355,13 @@ public class LockerService {
         }
         MaintenanceSchedule saved = scheduleRepository.save(schedule);
         inspectionLogRepository.save(inspectionLog);
+        if (saved.getDroneUnitId() != null) {
+            if (outcome.failed()) {
+                markDroneMaintenanceFailure(saved.getDroneUnitId(), req, outcome, techId, saved.getTitle());
+            } else {
+                synchronizeDroneOperationalStatus(saved.getDroneUnitId(), techId);
+            }
+        }
         return toSchedule(saved);
     }
 
@@ -1630,6 +1647,9 @@ public class LockerService {
                         .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
         schedule.setActive(false);
         scheduleRepository.save(schedule);
+        if (schedule.getDroneUnitId() != null) {
+            synchronizeDroneOperationalStatus(schedule.getDroneUnitId(), null);
+        }
     }
 
     private MaintenanceScheduleResponse toSchedule(MaintenanceSchedule s) {
@@ -1686,6 +1706,57 @@ public class LockerService {
     }
 
     // ---- Drone fleet (thiết bị bay vật lý, khác ô tủ cellType=DRONE) ----
+
+    /** Đồng bộ trạng thái vận hành từ các công việc kỹ thuật đang mở của đúng Drone này. */
+    private void synchronizeDroneOperationalStatus(Long droneUnitId, Long actorUserId) {
+        DroneUnit unit = findDroneUnit(droneUnitId);
+        LockerReport openReport = reportRepository
+                .findFirstByDroneUnitIdAndStatusInOrderByCreatedAtDesc(droneUnitId, OPEN_REPORT_STATUSES)
+                .orElse(null);
+        String targetStatus;
+        String reason = null;
+        if (openReport != null) {
+            targetStatus = DroneStatus.FAULT;
+            reason = normalizeText(openReport.getDescription());
+        } else if (scheduleRepository.existsByDroneUnitIdAndActiveTrueAndLastDoneAtIsNull(droneUnitId)) {
+            targetStatus = DroneStatus.MAINTENANCE;
+        } else {
+            targetStatus = DroneStatus.IDLE;
+        }
+        if (targetStatus.equals(unit.getStatus())
+                && java.util.Objects.equals(reason, unit.getFaultReason())) {
+            return;
+        }
+        String previous = unit.getStatus();
+        unit.setStatus(targetStatus);
+        unit.setFaultReason(reason);
+        DroneUnit saved = droneUnitRepository.save(unit);
+        appendDroneLog(saved.getId(), "Đồng bộ trạng thái " + previous + " → " + targetStatus, actorUserId);
+    }
+
+    private void markDroneMaintenancePending(Long droneUnitId, Long actorUserId, String scheduleTitle) {
+        DroneUnit unit = findDroneUnit(droneUnitId);
+        requireDroneWithoutActiveMission(unit, "schedule maintenance");
+        synchronizeDroneOperationalStatus(droneUnitId, actorUserId);
+        appendDroneLog(unit.getId(), "Chờ nghiệm thu bảo trì: " + scheduleTitle, actorUserId);
+    }
+
+    private void markDroneMaintenanceFailure(
+            Long droneUnitId, CompleteScheduleRequest request, InspectionOutcome outcome,
+            Long actorUserId, String scheduleTitle) {
+        DroneUnit unit = findDroneUnit(droneUnitId);
+        String reason = request != null && StringUtils.hasText(request.faultReason())
+                ? request.faultReason().trim()
+                : !outcome.failedItems().isEmpty()
+                        ? "Mục không đạt: " + String.join("; ", outcome.failedItems())
+                        : "Không đạt bảo trì: " + scheduleTitle;
+        String previous = unit.getStatus();
+        unit.setStatus(DroneStatus.FAULT);
+        unit.setFaultReason(reason);
+        DroneUnit saved = droneUnitRepository.save(unit);
+        appendDroneLog(saved.getId(), "Bảo trì không đạt, chuyển " + previous + " → FAULT: " + reason, actorUserId);
+        openDroneFaultReport(saved, reason, actorUserId);
+    }
 
     @Transactional
     public DroneUnitResponse createDroneUnit(DroneUnitRequest request) {
