@@ -29,6 +29,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -97,6 +98,7 @@ class LockerServiceDroneFleetTest {
         when(droneMaintenanceLogRepository.save(any(DroneMaintenanceLog.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0, DroneMaintenanceLog.class));
         when(lockerRepository.findById(10L)).thenReturn(Optional.of(locker(10L, "CAB-DEMO-01")));
+        when(lockerRepository.findById(11L)).thenReturn(Optional.of(locker(11L, "CAB-DEMO-02")));
         when(userClient.getUser(42L))
                 .thenReturn(ApiResponse.ok(new UserSummary(42L, "tech@test", "0909", "Tech A", "ACTIVE")));
     }
@@ -252,6 +254,31 @@ class LockerServiceDroneFleetTest {
         assertEquals("DRONE_ACTIVE_MISSION", editError.getCode());
         assertEquals("DRONE_ACTIVE_MISSION", decommissionError.getCode());
         verify(droneUnitRepository, never()).save(any());
+    }
+
+    @Test
+    void changingDroneTechnicianDoesNotRewriteExistingReportsOrdersOrSchedules() {
+        DroneUnit unit = droneUnit(1L, 42L, DroneStatus.IDLE, 80);
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(unit));
+        when(userClient.getUser(84L))
+                .thenReturn(ApiResponse.ok(new UserSummary(
+                        84L, "drone-tech@test", "0908", "Drone Tech", "ACTIVE", Set.of("DRONE_TECHNICIAN"))));
+
+        DroneUnitResponse response = service.assignDroneTechnician(1L, 84L, 7L);
+
+        assertEquals(84L, response.assignedTechnicianId());
+        verifyNoInteractions(reportRepository, scheduleRepository, orderClient);
+    }
+
+    @Test
+    void changingDroneStationDoesNotRewriteExistingReportsOrdersOrSchedules() {
+        DroneUnit unit = droneUnit(1L, 42L, DroneStatus.IDLE, 80);
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(unit));
+
+        DroneUnitResponse response = service.updateDroneUnit(1L, new DroneUpdateRequest(11L, null), 7L);
+
+        assertEquals(11L, response.lockerId());
+        verifyNoInteractions(reportRepository, scheduleRepository, orderClient);
     }
 
     @Test
