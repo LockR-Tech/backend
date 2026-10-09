@@ -719,7 +719,6 @@ public class OrderService {
         LockerOrder order = find(id);
         assertOwnerOrReceiver(order, userId);
         validateStatus(order, Set.of("STORING", "RETURNED", "EXPIRED"));
-        assertPaidBeforePickup(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -727,8 +726,14 @@ public class OrderService {
                 BigDecimal diff = overtime.subtract(currentExtra);
                 order.setExtraFee(overtime);
                 order.setTotalPrice(order.getTotalPrice().add(diff));
+                if (order.getOriginalPrice() != null) {
+                    order.setOriginalPrice(order.getOriginalPrice().add(diff));
+                }
+                order.setPaymentStatus("UNPAID");
+                order.setPaidAt(null);
             }
         }
+        assertPaidBeforePickup(order);
         releaseBoxes(order);
         order.setCompletedAt(LocalDateTime.now());
         order.setPinCode(null);
@@ -814,7 +819,6 @@ public class OrderService {
                 "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory())
                         ? Set.of("STORING", "RETURNED", "EXPIRED")
                         : Set.of("STORING", "INITIALIZED", "RETURNED", "EXPIRED"));
-        assertPaidBeforeStorageCompletion(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -822,8 +826,14 @@ public class OrderService {
                 BigDecimal diff = overtime.subtract(currentExtra);
                 order.setExtraFee(overtime);
                 order.setTotalPrice(order.getTotalPrice().add(diff));
+                if (order.getOriginalPrice() != null) {
+                    order.setOriginalPrice(order.getOriginalPrice().add(diff));
+                }
+                order.setPaymentStatus("UNPAID");
+                order.setPaidAt(null);
             }
         }
+        assertPaidBeforeStorageCompletion(order);
         releaseBoxes(order);
         order.setCompletedAt(LocalDateTime.now());
         order.setPinCode(null);
@@ -1052,9 +1062,33 @@ public class OrderService {
         return sent;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<OrderResponse> listByUser(Long userId) {
-        return orderRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().map(this::toResponse).toList();
+        int autoCancelUnpaidMinutes = rules.autoCancelUnpaidMinutes();
+        LocalDateTime cutoffUnpaid = LocalDateTime.now().minusMinutes(autoCancelUnpaidMinutes);
+        List<LockerOrder> orders = orderRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        boolean dirty = false;
+        for (LockerOrder order : orders) {
+            if ("INITIALIZED".equalsIgnoreCase(order.getStatus())
+                    && !isOrderPaid(order)
+                    && order.getCreatedAt() != null
+                    && order.getCreatedAt().isBefore(cutoffUnpaid)) {
+                order.setPinCode(null);
+                releaseBoxes(order);
+                refundPromotionUsages(order);
+                transition(
+                        order,
+                        "CANCELED",
+                        null,
+                        null,
+                        "Tự hủy: chưa thanh toán trong " + autoCancelUnpaidMinutes + " phút; đã nhả ô");
+                dirty = true;
+            }
+        }
+        if (dirty) {
+            orders = orderRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        }
+        return orders.stream().map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)
@@ -1400,20 +1434,32 @@ public class OrderService {
     @Transactional
     public Map<String, Object> autoCancelUnconfirmedOrders() {
         int autoCancelHours = rules.autoCancelHours();
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(autoCancelHours);
+        int autoCancelUnpaidMinutes = rules.autoCancelUnpaidMinutes();
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime cutoffPaid = now.minusHours(autoCancelHours);
+        LocalDateTime cutoffUnpaid = now.minusMinutes(autoCancelUnpaidMinutes);
         int canceled = 0;
         for (LockerOrder order : orderRepository.findByStatusOrderByCreatedAtDesc("INITIALIZED")) {
-            if (order.getCreatedAt() == null || order.getCreatedAt().isAfter(cutoff)) {
+            if (order.getCreatedAt() == null) {
+                continue;
+            }
+            boolean paid = isOrderPaid(order);
+            LocalDateTime cutoff = paid ? cutoffPaid : cutoffUnpaid;
+            if (order.getCreatedAt().isAfter(cutoff)) {
                 continue;
             }
             order.setPinCode(null);
             releaseBoxes(order);
+            refundPromotionUsages(order);
+            String reason = paid
+                    ? "Tự hủy: không xác nhận bỏ đồ trong " + autoCancelHours + " giờ; đã nhả ô"
+                    : "Tự hủy: chưa thanh toán trong " + autoCancelUnpaidMinutes + " phút; đã nhả ô";
             transition(
                     order,
                     "CANCELED",
                     null,
                     null,
-                    "Tự hủy: không xác nhận bỏ đồ trong " + autoCancelHours + " giờ; đã nhả ô");
+                    reason);
             canceled++;
         }
         if (canceled > 0) {
@@ -1449,8 +1495,17 @@ public class OrderService {
             }
             BigDecimal overtime = calculatePickupOvertimeFee(order);
             if (overtime.compareTo(BigDecimal.ZERO) > 0) {
-                order.setExtraFee(order.getExtraFee().add(overtime));
-                order.setTotalPrice(order.getTotalPrice().add(overtime));
+                BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+                if (currentExtra.compareTo(overtime) < 0) {
+                    BigDecimal diff = overtime.subtract(currentExtra);
+                    order.setExtraFee(overtime);
+                    order.setTotalPrice(order.getTotalPrice().add(diff));
+                    if (order.getOriginalPrice() != null) {
+                        order.setOriginalPrice(order.getOriginalPrice().add(diff));
+                    }
+                    order.setPaymentStatus("UNPAID");
+                    order.setPaidAt(null);
+                }
             }
             releaseBoxes(order);
             // Ô đã trả về pool nên tham chiếu box phải cắt — tránh double-release
@@ -1911,6 +1966,18 @@ public class OrderService {
         }
     }
 
+    private boolean isOrderPaid(LockerOrder order) {
+        if ("PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+            return true;
+        }
+        BigDecimal total = order.getTotalPrice();
+        if (total == null || total.compareTo(BigDecimal.ZERO) <= 0) {
+            return true;
+        }
+        BigDecimal pa = order.getPaidAmount();
+        return pa != null && pa.compareTo(total) >= 0;
+    }
+
     private void assertPaidBeforeStorageCompletion(LockerOrder order) {
         if (!rules.requirePaymentBeforeDrop()) {
             return;
@@ -1920,32 +1987,32 @@ public class OrderService {
         if ("EXPIRED".equalsIgnoreCase(order.getStatus())) {
             return;
         }
-        BigDecimal total = order.getTotalPrice();
-        boolean hasFee = total != null && total.compareTo(BigDecimal.ZERO) > 0;
-        boolean paid = "PAID".equalsIgnoreCase(order.getPaymentStatus());
-        // Cũng chấp nhận nếu paidAmount >= totalPrice (payment đã xử lý nhưng status chưa sync)
-        if (hasFee && !paid) {
-            BigDecimal pa = order.getPaidAmount();
-            boolean fullyCovered = pa != null && pa.compareTo(total) >= 0;
-            if (!fullyCovered) {
-                throw new BusinessException(
-                        "ORDER_UNPAID",
-                        "Vui lòng thanh toán đơn trước khi kết thúc thuê/trả ô.");
-            }
+        if (!isOrderPaid(order)) {
+            throw new BusinessException(
+                    "ORDER_UNPAID",
+                    "Vui lòng thanh toán đơn trước khi kết thúc thuê/trả ô.");
         }
     }
 
     private void assertPaidBeforePickup(LockerOrder order) {
-        if (!"DRONE_DELIVERY".equalsIgnoreCase(order.getType())) {
+        if ("EXPIRED".equalsIgnoreCase(order.getStatus())) {
             return;
         }
-        if (!"READY_FOR_PICKUP".equalsIgnoreCase(order.getDeliveryStage())) {
+        if ("DRONE_DELIVERY".equalsIgnoreCase(order.getType())) {
+            if (!"READY_FOR_PICKUP".equalsIgnoreCase(order.getDeliveryStage())) {
+                return;
+            }
+            if (!"PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+                throw new BusinessException(
+                        "DRONE_PAYMENT_REQUIRED_BEFORE_PICKUP",
+                        "Vui lòng thanh toán đơn drone trước khi mở tủ nhận hàng.");
+            }
             return;
         }
-        if (!"PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+        if (!isOrderPaid(order)) {
             throw new BusinessException(
-                    "DRONE_PAYMENT_REQUIRED_BEFORE_PICKUP",
-                    "Vui lòng thanh toán đơn drone trước khi mở tủ nhận hàng.");
+                    "ORDER_UNPAID",
+                    "Vui lòng thanh toán phụ phí quá hạn trước khi nhận hàng.");
         }
     }
 

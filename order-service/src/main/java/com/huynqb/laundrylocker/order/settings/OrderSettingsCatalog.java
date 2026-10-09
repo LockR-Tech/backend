@@ -27,6 +27,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String SEND_PICKUP_HOURS = "app.order.send-pickup-hours-limit";
     public static final String DRONE_PICKUP_HOURS = "app.order.drone-pickup-hours-limit";
     public static final String AUTO_CANCEL_HOURS = "app.order.auto-cancel-hours";
+    public static final String AUTO_CANCEL_UNPAID_MINUTES = "app.order.auto-cancel-unpaid-minutes";
     public static final String OVERDUE_RELEASE_HOURS = "app.order.overdue-release-hours";
     public static final String REMINDER_COOLDOWN_MINUTES = "app.order.reminder-cooldown-minutes";
     public static final String RENTAL_MIN_HOURS = "app.order.rental-min-hours";
@@ -88,6 +89,9 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Tính từ lúc drone thả hàng vào ô.", 24, 1, 720, "giờ").asPublic(),
                 integer(AUTO_CANCEL_HOURS, DEADLINES, "Tự huỷ đơn chưa bỏ hàng sau",
                         "Đơn INITIALIZED không xác nhận bỏ hàng sẽ bị huỷ và nhả ô. Nên ≤ thời gian giữ ô RESERVED bên locker.", 24, 1, 720, "giờ"),
+                integer(AUTO_CANCEL_UNPAID_MINUTES, DEADLINES, "Tự huỷ đơn chưa thanh toán sau",
+                        "Đơn INITIALIZED chưa thanh toán sẽ tự động bị huỷ và giải phóng ô tủ sau số phút này nếu khách không hoàn tất thanh toán.",
+                        15, 1, 180, "phút").asPublic(),
                 integer(OVERDUE_RELEASE_HOURS, DEADLINES, "Nhả ô quá hạn sau",
                         "Số giờ sau hạn lấy hàng thì đơn chuyển EXPIRED và nhả ô. 0 = không tự nhả.", 24, 0, 720, "giờ"),
                 integer(REMINDER_COOLDOWN_MINUTES, DEADLINES, "Khoảng cách nhắc quá hạn",
