@@ -1743,6 +1743,55 @@ public class LockerService {
         return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
     }
 
+    /// Admin chủ động mở phiếu cho drone. Khác với đổi trạng thái đơn thuần, API này
+    /// luôn trả phiếu OPEN hiện hành để giao diện có thể đưa ngay vào hàng đợi điều phối.
+    @Transactional
+    public LockerReportResponse createDroneIncidentReport(
+            Long droneId, CreateDroneIncidentReportRequest request, Long actorUserId) {
+        DroneUnit unit = findDroneUnit(droneId);
+        String title = normalizeText(request.title());
+        String description = normalizeText(request.description());
+
+        LockerReport openReport = reportRepository
+                .findFirstByDroneUnitIdAndStatusInOrderByCreatedAtDesc(unit.getId(), OPEN_REPORT_STATUSES)
+                .orElse(null);
+        if (openReport != null) {
+            attachmentService.attach(
+                    openReport,
+                    AttachmentStage.REPORT,
+                    request.attachments(),
+                    actorUserId,
+                    null,
+                    rules.reportPhotosPerRequestReporter());
+            return toReport(openReport);
+        }
+
+        String previousStatus = unit.getStatus();
+        unit.setStatus(DroneStatus.FAULT);
+        unit.setFaultReason(description);
+        DroneUnit savedUnit = droneUnitRepository.save(unit);
+        if (!DroneStatus.FAULT.equals(previousStatus)) {
+            appendDroneLog(savedUnit.getId(), "Admin mở phiếu sự cố: " + title, actorUserId);
+        }
+
+        LockerReport report = new LockerReport();
+        report.setLockerId(savedUnit.getLockerId());
+        report.setDroneUnitId(savedUnit.getId());
+        report.setCategory(ReportCategory.DRONE);
+        report.setUserId(actorUserId == null ? 0L : actorUserId);
+        report.setTitle(title);
+        report.setDescription(description);
+        LockerReport savedReport = reportRepository.save(report);
+        attachmentService.attach(
+                savedReport,
+                AttachmentStage.REPORT,
+                request.attachments(),
+                actorUserId,
+                null,
+                rules.reportPhotosPerRequestReporter());
+        return toReport(savedReport);
+    }
+
     private void validateManualDroneStatusChange(DroneUnit unit, String status) {
         if (DroneStatus.RESERVED.equals(status) || DroneStatus.IN_FLIGHT.equals(status)) {
             throw new BusinessException(
@@ -2170,7 +2219,11 @@ public class LockerService {
                 report.getRoutedToUserId(),
                 report.getScheduleId(),
                 report.getOrderId(),
-                report.getOrderCode());
+                report.getOrderCode(),
+                report.getDroneUnitId(),
+                report.getDroneUnitId() == null
+                        ? null
+                        : droneUnitRepository.findById(report.getDroneUnitId()).map(DroneUnit::getCode).orElse(null));
     }
 
     // ---- Định tuyến phiếu cho KTV tủ ----
