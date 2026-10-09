@@ -357,6 +357,16 @@ public class LockerController {
         return ApiResponse.ok(lockerService.droneMaintenanceHistory(id));
     }
 
+    @GetMapping("/api/admin/drones/{id}")
+    public ApiResponse<DroneUnitResponse> adminDrone(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.getDroneUnit(id));
+    }
+
+    @GetMapping("/api/admin/drones/{id}/logs")
+    public ApiResponse<List<DroneMaintenanceLogResponse>> adminDroneLogs(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.droneLogs(id));
+    }
+
     @PostMapping("/api/admin/lockers/schedules")
     public ApiResponse<MaintenanceScheduleResponse> adminCreateSchedule(
             @Valid @RequestBody MaintenanceScheduleRequest request) {
