@@ -15,6 +15,9 @@ public interface MaintenanceScheduleRepository extends JpaRepository<Maintenance
 
     List<MaintenanceSchedule> findByPendingReportId(Long pendingReportId);
 
+    /** Lịch Drone vừa được tạo nhưng chưa có biên bản nghiệm thu lần đầu. */
+    boolean existsByDroneUnitIdAndActiveTrueAndLastDoneAtIsNull(Long droneUnitId);
+
     /// Lịch sắp/đã tới hạn mà kỳ hiện tại chưa được nhắc.
     List<MaintenanceSchedule> findByActiveTrueAndLastDueNotifiedAtIsNullAndNextDueAtBefore(LocalDateTime cutoff);
 
