@@ -330,6 +330,8 @@ class DroneOrderMaintenanceServiceTest {
         mission.setDestinationLockerId(5L);
         mission.setStatus("READY_TO_LAUNCH");
         mission.setAssignedByUserId(99L);
+        // Đã nạp lên drone: kiện không còn trong ô gửi nên ô gửi (nếu còn giữ) được nhả.
+        mission.setLoadedAt(java.time.LocalDateTime.now());
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
         when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -353,9 +355,298 @@ class DroneOrderMaintenanceServiceTest {
         verify(lockerClient).releaseBox(8001L);
         verify(lockerDroneClient).transitionDroneStatus(
                 9L, new DroneStatusTransitionRequest("RESERVED", "IDLE", null));
-        verify(missionRepository).delete(mission);
+        // Hồ sơ nhiệm vụ được giữ lại để đối chứng, không xoá.
+        verify(missionRepository, never()).delete(any());
+        verify(missionRepository).save(mission);
+        assertEquals("CANCELED", mission.getStatus());
+        assertEquals(5, mission.getEndReason());
+        assertEquals("Gio giat manh", mission.getEndNote());
+        assertEquals(99L, mission.getEndedByUserId());
+        assertNotNull(mission.getEndedAt());
+        assertNull(mission.getFailedStage());
         verify(historyRepository).save(any());
         verify(notificationClient).requestNotification(any());
+    }
+
+    @Test
+    void flightFailureClosesOrderReleasesDestinationBoxAndGroundsDrone() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "EN_ROUTE");
+        order.setReceiverUserId(55L);
+        DroneMission mission = inFlightMission("EN_ROUTE");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        DroneMissionResponse response =
+                service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(2, " Mat tin hieu "));
+
+        assertEquals("FAILED", response.missionStatus());
+        assertEquals("FAILED", response.deliveryStage());
+        // CANCELED là điều kiện để DroneRefundService tạo yêu cầu hoàn tiền.
+        assertEquals("CANCELED", order.getStatus());
+        assertEquals("FAILED", order.getDeliveryStage());
+        assertEquals(2, order.getCancelReason());
+        assertEquals("Mat tin hieu", order.getStaffNote());
+        assertEquals("FAILED", mission.getStatus());
+        assertEquals("EN_ROUTE", mission.getFailedStage());
+        assertEquals(2, mission.getEndReason());
+        assertNotNull(mission.getEndedAt());
+        verify(lockerClient).releaseBox(9001L);
+        verify(lockerDroneClient).transitionDroneStatus(
+                9L,
+                new DroneStatusTransitionRequest(
+                        "IN_FLIGHT", "FAULT", "Flight of order ORD-21 failed: Drone fault · Mat tin hieu"));
+        verify(missionRepository, never()).delete(any());
+        // Báo cả người gửi lẫn người nhận có tài khoản.
+        verify(notificationClient, times(2)).requestNotification(any());
+    }
+
+    @Test
+    void flightFailureStillClosesOrderWhenFleetAndLockerSyncFail() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "ARRIVED");
+        DroneMission mission = inFlightMission("ARRIVED");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(lockerDroneClient.transitionDroneStatus(any(), any()))
+                .thenThrow(new IllegalStateException("drone already FAULT"));
+        doThrow(new IllegalStateException("locker-service down")).when(lockerClient).releaseBox(9001L);
+
+        service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(3, null));
+
+        assertEquals("CANCELED", order.getStatus());
+        assertEquals("FAILED", mission.getStatus());
+    }
+
+    @Test
+    void flightFailureIsRejectedBeforeLaunchAndForOtherTechnicians() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = inFlightMission("READY_TO_LAUNCH");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException notInFlight = assertThrows(
+                BusinessException.class,
+                () -> service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(2, null)));
+        assertEquals("DRONE_MISSION_STATUS_INVALID", notInFlight.getCode());
+
+        mission.setStatus("EN_ROUTE");
+        BusinessException notAssigned = assertThrows(
+                BusinessException.class,
+                () -> service.reportFlightFailure(21L, 7L, false, new CancelDroneOrderRequest(2, null)));
+        assertEquals("DRONE_MISSION_NOT_ASSIGNED_TO_USER", notAssigned.getCode());
+
+        BusinessException noteRequired = assertThrows(
+                BusinessException.class,
+                () -> service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(5, " ")));
+        assertEquals("DRONE_CANCEL_NOTE_REQUIRED", noteRequired.getCode());
+
+        assertEquals("AWAITING_DISPATCH", order.getStatus());
+        verify(lockerClient, never()).releaseBox(any());
+        verify(missionRepository, never()).save(any());
+    }
+
+    @Test
+    void adminMayReportFlightFailureOfAnyMission() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "DEPARTED");
+        DroneMission mission = inFlightMission("DEPARTED");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        service.reportFlightFailure(21L, 1L, true, new CancelDroneOrderRequest(1, null));
+
+        assertEquals("FAILED", mission.getStatus());
+        assertEquals(1L, mission.getEndedByUserId());
+    }
+
+    @Test
+    void acceptIsRejectedUntilTheSenderConfirmsTheParcelIsInTheSourceCell() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
+        order.setParcelDroppedAt(null);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> service.accept(21L, 99L, "accept-1", new AcceptDroneOrderRequest(9L)));
+
+        assertEquals("DRONE_PARCEL_NOT_DROPPED", error.getCode());
+        verify(lockerDroneClient, never()).transitionDroneStatus(any(), any());
+    }
+
+    @Test
+    void acceptIsRejectedWhenTheDroneBatteryIsUnknown() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", null, true)));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> service.accept(21L, 99L, "accept-1", new AcceptDroneOrderRequest(9L)));
+
+        assertEquals("DRONE_BATTERY_UNKNOWN", error.getCode());
+        verify(lockerDroneClient, never()).transitionDroneStatus(any(), any());
+    }
+
+    @Test
+    void acceptAndLaunchAreRejectedWhileFlightsAreSuspended() {
+        DroneOrderMaintenanceService service = new DroneOrderMaintenanceService(
+                orderRepository,
+                missionRepository,
+                lockerDroneClient,
+                lockerClient,
+                historyRepository,
+                notificationClient,
+                TestOrderRules.of(java.util.Map.of("app.order.drone-flights-suspended", true)));
+        LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+
+        BusinessException accept = assertThrows(
+                BusinessException.class,
+                () -> service.accept(21L, 99L, "accept-1", new AcceptDroneOrderRequest(9L)));
+        assertEquals("DRONE_FLIGHTS_SUSPENDED", accept.getCode());
+
+        order.setDeliveryStage("ACCEPTED");
+        DroneMission mission = inFlightMission("READY_TO_LAUNCH");
+        markLoadingConfirmed(mission);
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException launch =
+                assertThrows(BusinessException.class, () -> service.launch(21L, 99L, "launch-1"));
+        assertEquals("DRONE_FLIGHTS_SUSPENDED", launch.getCode());
+        verify(lockerDroneClient, never()).transitionDroneStatus(any(), any());
+    }
+
+    @Test
+    void cancelBeforeLoadingKeepsTheSourceCellThatStillHoldsTheParcel() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        order.setSourceBoxId(8001L);
+        DroneMission mission = inFlightMission("AWAITING_LOADING");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
+
+        service.cancel(21L, 99L, new CancelDroneOrderRequest(1, null));
+
+        assertEquals("CANCELED", order.getStatus());
+        // Ô nhận được nhả; ô gửi còn kiện nên giữ lại tới khi trả kiện.
+        verify(lockerClient).releaseBox(9001L);
+        verify(lockerClient, never()).releaseBox(8001L);
+        assertEquals(8001L, order.getSourceBoxId());
+        assertTrue(DroneParcelCustody.returnPending(order, mission));
+        assertEquals(DroneParcelCustody.SOURCE_BOX, DroneParcelCustody.heldAt(order, mission));
+    }
+
+    @Test
+    void customerDecliningTheWeightSurchargeCancelsAndFreesTheDrone() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = surchargeOrder();
+        DroneMission mission = surchargeMission(java.time.LocalDateTime.now());
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)));
+        when(lockerDroneClient.transitionDroneStatus(
+                        9L, new DroneStatusTransitionRequest("RESERVED", "IDLE", null)))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
+
+        assertTrue(service.cancelUnpaidSurcharge(21L, 44L, null));
+
+        assertEquals("CANCELED", order.getStatus());
+        assertEquals("CANCELED", order.getDeliveryStage());
+        assertEquals("CANCELED", mission.getStatus());
+        verify(lockerDroneClient).transitionDroneStatus(
+                9L, new DroneStatusTransitionRequest("RESERVED", "IDLE", null));
+        verify(lockerClient).releaseBox(9001L);
+        // Kiện đã nạp lên drone ⇒ đội bay giữ, chờ trả.
+        assertEquals(DroneParcelCustody.FLIGHT_TEAM, DroneParcelCustody.heldAt(order, mission));
+        assertTrue(DroneParcelCustody.returnPending(order, mission));
+        // Báo điều phối viên đã nhận nhiệm vụ để dỡ kiện.
+        verify(notificationClient).requestNotification(any());
+    }
+
+    @Test
+    void decliningIsOnlyForTheOwnerOfAnOrderThatOwesASurcharge() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = surchargeOrder();
+        DroneMission mission = surchargeMission(java.time.LocalDateTime.now());
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException notOwner = assertThrows(
+                BusinessException.class, () -> service.cancelUnpaidSurcharge(21L, 7L, null));
+        assertEquals("ORDER_FORBIDDEN", notOwner.getCode());
+
+        order.setPaymentStatus("PAID");
+        BusinessException notOwed = assertThrows(
+                BusinessException.class, () -> service.cancelUnpaidSurcharge(21L, 44L, null));
+        assertEquals("DRONE_SURCHARGE_NOT_OWED", notOwed.getCode());
+        assertEquals("AWAITING_DISPATCH", order.getStatus());
+    }
+
+    @Test
+    void surchargeTimeoutOnlyCancelsOncePastTheDeadline() {
+        DroneOrderMaintenanceService service = newService();
+        java.time.LocalDateTime now = java.time.LocalDateTime.of(2026, 10, 9, 12, 0);
+        LockerOrder order = surchargeOrder();
+        DroneMission mission = surchargeMission(now.minusMinutes(30));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        assertFalse(service.cancelUnpaidSurcharge(21L, null, now.minusMinutes(60)));
+        assertEquals("AWAITING_DISPATCH", order.getStatus());
+
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
+        assertTrue(service.cancelUnpaidSurcharge(21L, null, now.minusMinutes(20)));
+        assertEquals("CANCELED", order.getStatus());
+        // Báo cả điều phối viên lẫn khách.
+        verify(notificationClient, times(2)).requestNotification(any());
+    }
+
+    private LockerOrder surchargeOrder() {
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        order.setPaymentStatus("UNPAID");
+        order.setPaidAmount(new java.math.BigDecimal("15000"));
+        return order;
+    }
+
+    private DroneMission surchargeMission(java.time.LocalDateTime loadedAt) {
+        DroneMission mission = inFlightMission("READY_TO_LAUNCH");
+        markLoadingConfirmed(mission);
+        mission.setLoadedAt(loadedAt);
+        mission.setWeightSurcharge(new java.math.BigDecimal("3000"));
+        return mission;
+    }
+
+    private DroneOrderMaintenanceService newService() {
+        return new DroneOrderMaintenanceService(
+                orderRepository,
+                missionRepository,
+                lockerDroneClient,
+                lockerClient,
+                historyRepository,
+                notificationClient,
+                TestOrderRules.defaults());
+    }
+
+    private DroneMission inFlightMission(String status) {
+        DroneMission mission = new DroneMission();
+        mission.setId(301L);
+        mission.setOrderId(21L);
+        mission.setDroneUnitId(9L);
+        mission.setSourceLockerId(3L);
+        mission.setDestinationLockerId(5L);
+        mission.setStatus(status);
+        mission.setAssignedByUserId(99L);
+        return mission;
     }
 
     @Test
@@ -554,6 +845,7 @@ class DroneOrderMaintenanceServiceTest {
         order.setDestinationLockerId(5L);
         order.setReservedBoxId(9001L);
         order.setParcelWeightGrams(1200);
+        order.setParcelDroppedAt(java.time.LocalDateTime.now());
         return order;
     }
 

@@ -67,6 +67,63 @@ public class OrderRules {
         return settings.getInt(DRONE_PICKUP_HOURS);
     }
 
+    /// 0 = không tự huỷ đơn drone chưa thanh toán.
+    public int droneUnpaidCancelMinutes() {
+        return settings.getInt(DRONE_UNPAID_CANCEL_MINUTES);
+    }
+
+    /// 0 = không tự huỷ đơn drone đã trả tiền mà chưa được tiếp nhận.
+    public int droneDispatchTimeoutMinutes() {
+        return settings.getInt(DRONE_DISPATCH_TIMEOUT_MINUTES);
+    }
+
+    /// 0 = không tự huỷ đơn drone nợ phụ thu cân lệch.
+    public int droneSurchargeTimeoutMinutes() {
+        return settings.getInt(DRONE_SURCHARGE_TIMEOUT_MINUTES);
+    }
+
+    public boolean droneFlightsSuspended() {
+        return settings.getBoolean(DRONE_FLIGHTS_SUSPENDED);
+    }
+
+    /// Được phóng trong khung [giờ bắt đầu, giờ kết thúc) theo giờ Việt Nam. Khung 0–24,
+    /// hoặc cấu hình ngược (bắt đầu ≥ kết thúc), coi như không giới hạn.
+    public boolean droneFlightAllowedAt(int hourOfDay) {
+        int start = settings.getInt(DRONE_FLIGHT_START_HOUR);
+        int end = settings.getInt(DRONE_FLIGHT_END_HOUR);
+        if (start >= end) {
+            return true;
+        }
+        return hourOfDay >= start && hourOfDay < end;
+    }
+
+    public String droneFlightWindowLabel() {
+        return settings.getInt(DRONE_FLIGHT_START_HOUR) + ":00–" + settings.getInt(DRONE_FLIGHT_END_HOUR) + ":00";
+    }
+
+    /// 0 = không giới hạn tầm bay.
+    public int droneMaxRouteMeters() {
+        return settings.getInt(DRONE_MAX_ROUTE_METERS);
+    }
+
+    /// 0 = không giới hạn số đơn drone đang mở của một khách.
+    public int droneMaxOpenOrdersPerUser() {
+        return settings.getInt(DRONE_MAX_OPEN_ORDERS);
+    }
+
+    /// Kích thước khoang hàng {dài, rộng, cao} cm.
+    public int[] droneMaxParcelSizeCm() {
+        return new int[] {
+            settings.getInt(DRONE_MAX_PARCEL_LENGTH),
+            settings.getInt(DRONE_MAX_PARCEL_WIDTH),
+            settings.getInt(DRONE_MAX_PARCEL_HEIGHT)
+        };
+    }
+
+    public BigDecimal droneMaxDeclaredValue() {
+        return BigDecimal.valueOf(settings.getLong(DRONE_MAX_DECLARED_VALUE));
+    }
+
     public int autoCancelHours() {
         return settings.getInt(AUTO_CANCEL_HOURS);
     }

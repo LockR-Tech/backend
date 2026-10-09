@@ -31,6 +31,12 @@ public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long>,
 
     List<LockerOrder> findByTypeOrderByUpdatedAtDesc(String type);
 
+    long countByUserIdAndTypeAndStatus(Long userId, String type, String status);
+
+    /// Đơn drone đã đóng mà kiện (người gửi đã bỏ vào hệ thống) chưa được trả lại.
+    List<LockerOrder> findByTypeAndStatusAndParcelDroppedAtIsNotNullAndParcelReturnedAtIsNull(
+            String type, String status);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from LockerOrder o where o.id = :id")
     Optional<LockerOrder> findByIdForUpdate(@Param("id") Long id);

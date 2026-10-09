@@ -83,6 +83,13 @@ public class DroneDeliveryQueryService {
         List<LockerOrder> orders = includeFinished
                 ? orderRepository.findByTypeOrderByUpdatedAtDesc("DRONE_DELIVERY")
                 : orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc("DRONE_DELIVERY", TERMINAL_ORDER_STATUSES);
+        if (!includeFinished) {
+            // Đơn đã đóng nhưng kiện còn chờ trả cho người gửi vẫn là việc phải làm của đội bay.
+            orders = new ArrayList<>(orders);
+            orders.addAll(orderRepository
+                    .findByTypeAndStatusAndParcelDroppedAtIsNotNullAndParcelReturnedAtIsNull(
+                            "DRONE_DELIVERY", "CANCELED"));
+        }
         List<Row> rows = orders.stream()
                 .filter(order -> !StringUtils.hasText(deliveryStage)
                         || deliveryStage.equalsIgnoreCase(order.getDeliveryStage()))
@@ -134,6 +141,7 @@ public class DroneDeliveryQueryService {
             if (mission != null) {
                 userIds.add(mission.getAssignedByUserId());
                 userIds.add(mission.getLoadedByUserId());
+                userIds.add(mission.getDepositedByUserId());
             }
             List<OrderStatusHistory> history =
                     historyRepository.findByOrderIdOrderByCreatedAtDescIdDesc(order.getId());
@@ -221,7 +229,20 @@ public class DroneDeliveryQueryService {
                 payment == null ? null : payment.lastPaidTransactionId(),
                 mission == null ? null : mission.getWeightSurcharge(),
                 amountDue(order),
-                liveTracking(order, mission));
+                liveTracking(order, mission),
+                order.getParcelLengthCm(), order.getParcelWidthCm(), order.getParcelHeightCm(),
+                order.getParcelCategory(), order.getParcelDeclaredValue(), order.getParcelFragile(),
+                order.getRouteDistanceMeters(),
+                order.getParcelDroppedAt(),
+                DroneParcelCustody.returnPending(order, mission),
+                DroneParcelCustody.returnPending(order, mission) ? DroneParcelCustody.heldAt(order, mission) : null,
+                order.getParcelReturnedAt(), order.getParcelReturnNote(),
+                mission == null ? null : mission.getBatteryPercentAtLaunch(),
+                mission == null ? null : mission.getLandedAt(),
+                mission == null ? null : mission.getDepositedAt(),
+                mission == null ? null : name(users.get(mission.getDepositedByUserId())),
+                mission == null ? null : mission.getEndedAt(),
+                mission == null ? null : mission.getFailedStage());
     }
 
     private boolean liveTracking(LockerOrder order, DroneMission mission) {

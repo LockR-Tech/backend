@@ -29,8 +29,17 @@ class OrderNextActionsDroneTest {
     @Test
     void paidDroneOrderJustWaitsForTheFlightTeam() {
         LockerOrder order = drone("AWAITING_DISPATCH", "AWAITING_DISPATCH", "PAID");
+        order.setParcelDroppedAt(java.time.LocalDateTime.now());
 
         assertEquals("WAIT_FOR_DRONE", OrderNextActions.nextAction(order));
+        assertFalse(OrderNextActions.paymentRequired(order));
+    }
+
+    @Test
+    void paidDroneOrderFirstNeedsTheParcelInTheSourceCell() {
+        LockerOrder order = drone("AWAITING_DISPATCH", "AWAITING_DISPATCH", "PAID");
+
+        assertEquals("DROP_PARCEL_FOR_DRONE", OrderNextActions.nextAction(order));
         assertFalse(OrderNextActions.paymentRequired(order));
     }
 
