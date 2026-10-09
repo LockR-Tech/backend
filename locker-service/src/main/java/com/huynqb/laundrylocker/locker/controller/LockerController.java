@@ -488,6 +488,17 @@ public class LockerController {
                 lockerService.updateDroneStatusAsAdmin(id, request.status(), request.reason(), userId));
     }
 
+    @PostMapping("/api/admin/drones/{id}/reports")
+    public ApiResponse<LockerReportResponse> adminCreateDroneIncidentReport(
+            @PathVariable Long id,
+            @Valid @RequestBody CreateDroneIncidentReportRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok(
+                "DRONE_INCIDENT_CREATED",
+                "Drone incident report created",
+                lockerService.createDroneIncidentReport(id, request, userId));
+    }
+
     @PostMapping("/api/admin/drones/{id}/battery")
     public ApiResponse<DroneUnitResponse> adminDroneBattery(
             @PathVariable Long id,
