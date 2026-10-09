@@ -5,6 +5,7 @@ import com.huynqb.laundrylocker.assistant.chat.ChatDtos.ConversationDetail;
 import com.huynqb.laundrylocker.assistant.chat.ChatDtos.ConversationView;
 import com.huynqb.laundrylocker.assistant.eval.EvalService;
 import com.huynqb.laundrylocker.assistant.eval.EvalService.EvalCaseRequest;
+import com.huynqb.laundrylocker.assistant.knowledge.KnowledgeChunk;
 import com.huynqb.laundrylocker.assistant.knowledge.KnowledgeDocument;
 import com.huynqb.laundrylocker.assistant.knowledge.KnowledgeService;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
@@ -12,11 +13,15 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /// Quản lý kho tri thức của trợ lý. Gateway chỉ cho ADMIN vào /api/admin/**.
@@ -59,6 +64,29 @@ public class KnowledgeAdminController {
     @GetMapping("/documents/{id}")
     public ApiResponse<KnowledgeDocument> document(@PathVariable long id) {
         return ApiResponse.ok(knowledgeService.get(id));
+    }
+
+    /// Các đoạn đã đánh chỉ mục — đúng phần trợ lý đọc khi trả lời.
+    @GetMapping("/documents/{id}/chunks")
+    public ApiResponse<List<KnowledgeChunk>> chunks(@PathVariable long id) {
+        return ApiResponse.ok(knowledgeService.chunks(id));
+    }
+
+    /// Tải file gốc. Luôn là attachment + nosniff: HTML tải lên không được chạy như một trang của API.
+    @GetMapping("/documents/{id}/file")
+    public ResponseEntity<byte[]> file(@PathVariable long id) {
+        KnowledgeDocument.Content content = knowledgeService.content(id);
+        String fileName = content.fileName() == null ? "" : content.fileName().replace('\\', '/');
+        fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
+        if (fileName.isBlank()) {
+            fileName = "tai-lieu-" + id;
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(content.mimeType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build().toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .body(content.bytes());
     }
 
     @PutMapping("/documents/{id}")

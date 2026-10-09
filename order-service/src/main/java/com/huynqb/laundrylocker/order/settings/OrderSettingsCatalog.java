@@ -39,6 +39,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_MAX_PARCEL_WIDTH = "app.order.drone-max-parcel-width-cm";
     public static final String DRONE_MAX_PARCEL_HEIGHT = "app.order.drone-max-parcel-height-cm";
     public static final String DRONE_MAX_DECLARED_VALUE = "app.order.drone-max-declared-value";
+    public static final String AUTO_CANCEL_UNPAID_MINUTES = "app.order.auto-cancel-unpaid-minutes";
     public static final String OVERDUE_RELEASE_HOURS = "app.order.overdue-release-hours";
     public static final String REMINDER_COOLDOWN_MINUTES = "app.order.reminder-cooldown-minutes";
     public static final String RENTAL_MIN_HOURS = "app.order.rental-min-hours";
@@ -109,6 +110,9 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_SURCHARGE_TIMEOUT_MINUTES, DEADLINES, "Tự huỷ đơn drone nợ phụ thu cân lệch sau",
                         "Tính từ lúc nạp hàng. Quá hạn thì huỷ, nhả drone, hoàn phần đã trả và trả kiện cho người gửi. "
                                 + "0 = không tự huỷ.", 60, 0, 10_080, "phút").asPublic(),
+                integer(AUTO_CANCEL_UNPAID_MINUTES, DEADLINES, "Tự huỷ đơn chưa thanh toán sau",
+                        "Đơn INITIALIZED chưa thanh toán sẽ tự động bị huỷ và giải phóng ô tủ sau số phút này nếu khách không hoàn tất thanh toán.",
+                        15, 1, 180, "phút").asPublic(),
                 integer(OVERDUE_RELEASE_HOURS, DEADLINES, "Nhả ô quá hạn sau",
                         "Số giờ sau hạn lấy hàng thì đơn chuyển EXPIRED và nhả ô. 0 = không tự nhả.", 24, 0, 720, "giờ"),
                 integer(REMINDER_COOLDOWN_MINUTES, DEADLINES, "Khoảng cách nhắc quá hạn",

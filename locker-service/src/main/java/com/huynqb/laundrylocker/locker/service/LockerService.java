@@ -175,6 +175,52 @@ public class LockerService {
     }
 
     @Transactional
+    public LockerBoxSummary updateBox(Long boxId, UpdateBoxRequest request) {
+        LockerBox box = findBox(boxId);
+        if (request.boxNumber() != null) {
+            box.setBoxNumber(request.boxNumber());
+        }
+        if (StringUtils.hasText(request.size())) {
+            box.setSize(request.size().toUpperCase());
+        }
+        if (StringUtils.hasText(request.cellType())) {
+            box.setCellType(request.cellType().toUpperCase());
+        }
+        if (request.rowIndex() != null) {
+            box.setRowIndex(request.rowIndex());
+        }
+        if (request.colIndex() != null) {
+            box.setColIndex(request.colIndex());
+        }
+        if (request.description() != null) {
+            box.setDescription(request.description());
+        }
+        if (StringUtils.hasText(request.status())) {
+            box.setStatus(request.status().toUpperCase());
+        }
+        LockerBox saved = boxRepository.save(box);
+        publishLockerLayoutUpdated(
+                saved.getLockerId(),
+                saved.getId(),
+                saved.getBoxNumber(),
+                saved.getStatus(),
+                "Cập nhật công năng ô #" + saved.getBoxNumber() + " (" + saved.getCellType() + ")");
+        return toSummary(saved);
+    }
+
+    @Transactional
+    public void deleteBox(Long boxId) {
+        LockerBox box = findBox(boxId);
+        if ("OCCUPIED".equalsIgnoreCase(box.getStatus()) || "RESERVED".equalsIgnoreCase(box.getStatus())) {
+            throw new BusinessException("BOX_IN_USE", "Không thể xóa ô đang chứa hàng hoặc đã được giữ chỗ");
+        }
+        Long lockerId = box.getLockerId();
+        Integer boxNumber = box.getBoxNumber();
+        boxRepository.delete(box);
+        publishLockerLayoutUpdated(lockerId, boxId, boxNumber, "DELETED", "Đã xóa ô #" + boxNumber);
+    }
+
+    @Transactional
     public LockerBoxSummary openBox(Long boxId) {
         LockerBox box = findBox(boxId);
         publishBoxOpened(box);
@@ -227,7 +273,8 @@ public class LockerService {
         for (LockerBox box : expired) {
             box.setStatus("AVAILABLE");
             box.setReservedUntil(null);
-            boxRepository.save(box);
+            LockerBox saved = boxRepository.save(box);
+            syncBoxStateQuietly(saved, "AVAILABLE");
             log.warn("Released box {} stuck RESERVED past TTL (backstop sweep)", box.getId());
         }
         return expired.size();
@@ -1457,6 +1504,8 @@ public class LockerService {
         List<MaintenanceInspectionLog> logs;
         if (scheduleId != null) {
             logs = inspectionLogRepository.findByScheduleIdOrderByCreatedAtDesc(scheduleId);
+        } else if (lockerId != null && technicianId != null) {
+            logs = inspectionLogRepository.findByLockerIdAndTechnicianIdOrderByCreatedAtDesc(lockerId, technicianId);
         } else if (lockerId != null) {
             logs = inspectionLogRepository.findByLockerIdOrderByCreatedAtDesc(lockerId);
         } else if (technicianId != null) {
@@ -1486,7 +1535,10 @@ public class LockerService {
         LockerUnit locker = log.getLockerId() == null ? null : lockerRepository.findById(log.getLockerId()).orElse(null);
         DroneUnit drone = log.getDroneUnitId() == null ? null : droneUnitRepository.findById(log.getDroneUnitId()).orElse(null);
         List<String> photos = StringUtils.hasText(log.getPhotoUrls())
-                ? java.util.Arrays.asList(log.getPhotoUrls().split(","))
+                ? java.util.Arrays.stream(log.getPhotoUrls().split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .toList()
                 : List.of();
         return new MaintenanceInspectionLogResponse(
                 log.getId(),
@@ -1695,6 +1747,55 @@ public class LockerService {
         DroneUnit unit = findDroneUnit(id);
         validateManualDroneStatusChange(unit, status);
         return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
+    }
+
+    /// Admin chủ động mở phiếu cho drone. Khác với đổi trạng thái đơn thuần, API này
+    /// luôn trả phiếu OPEN hiện hành để giao diện có thể đưa ngay vào hàng đợi điều phối.
+    @Transactional
+    public LockerReportResponse createDroneIncidentReport(
+            Long droneId, CreateDroneIncidentReportRequest request, Long actorUserId) {
+        DroneUnit unit = findDroneUnit(droneId);
+        String title = normalizeText(request.title());
+        String description = normalizeText(request.description());
+
+        LockerReport openReport = reportRepository
+                .findFirstByDroneUnitIdAndStatusInOrderByCreatedAtDesc(unit.getId(), OPEN_REPORT_STATUSES)
+                .orElse(null);
+        if (openReport != null) {
+            attachmentService.attach(
+                    openReport,
+                    AttachmentStage.REPORT,
+                    request.attachments(),
+                    actorUserId,
+                    null,
+                    rules.reportPhotosPerRequestReporter());
+            return toReport(openReport);
+        }
+
+        String previousStatus = unit.getStatus();
+        unit.setStatus(DroneStatus.FAULT);
+        unit.setFaultReason(description);
+        DroneUnit savedUnit = droneUnitRepository.save(unit);
+        if (!DroneStatus.FAULT.equals(previousStatus)) {
+            appendDroneLog(savedUnit.getId(), "Admin mở phiếu sự cố: " + title, actorUserId);
+        }
+
+        LockerReport report = new LockerReport();
+        report.setLockerId(savedUnit.getLockerId());
+        report.setDroneUnitId(savedUnit.getId());
+        report.setCategory(ReportCategory.DRONE);
+        report.setUserId(actorUserId == null ? 0L : actorUserId);
+        report.setTitle(title);
+        report.setDescription(description);
+        LockerReport savedReport = reportRepository.save(report);
+        attachmentService.attach(
+                savedReport,
+                AttachmentStage.REPORT,
+                request.attachments(),
+                actorUserId,
+                null,
+                rules.reportPhotosPerRequestReporter());
+        return toReport(savedReport);
     }
 
     private void validateManualDroneStatusChange(DroneUnit unit, String status) {
@@ -2124,7 +2225,11 @@ public class LockerService {
                 report.getRoutedToUserId(),
                 report.getScheduleId(),
                 report.getOrderId(),
-                report.getOrderCode());
+                report.getOrderCode(),
+                report.getDroneUnitId(),
+                report.getDroneUnitId() == null
+                        ? null
+                        : droneUnitRepository.findById(report.getDroneUnitId()).map(DroneUnit::getCode).orElse(null));
     }
 
     // ---- Định tuyến phiếu cho KTV tủ ----

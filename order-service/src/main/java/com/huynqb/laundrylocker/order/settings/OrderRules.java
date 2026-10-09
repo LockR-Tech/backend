@@ -128,6 +128,10 @@ public class OrderRules {
         return settings.getInt(AUTO_CANCEL_HOURS);
     }
 
+    public int autoCancelUnpaidMinutes() {
+        return settings.getInt(AUTO_CANCEL_UNPAID_MINUTES);
+    }
+
     public int overdueReleaseHours() {
         return settings.getInt(OVERDUE_RELEASE_HOURS);
     }

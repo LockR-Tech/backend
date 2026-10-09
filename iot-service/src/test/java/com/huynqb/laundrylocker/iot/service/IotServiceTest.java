@@ -55,6 +55,8 @@ class IotServiceTest {
     LockerClient lockerClient;
     @Mock
     LockerMqttService lockerMqttService;
+    @Mock
+    com.huynqb.laundrylocker.iot.repository.GatewayDeviceRepository gatewayDeviceRepository;
 
     IotService iotService;
 
@@ -69,7 +71,8 @@ class IotServiceTest {
                 orderClient,
                 lockerClient,
                 lockerMqttService,
-                TestIotRules.of(Map.of("app.iot.lockout.max-attempts", 5, "app.iot.lockout.minutes", 15)));
+                TestIotRules.of(Map.of("app.iot.lockout.max-attempts", 5, "app.iot.lockout.minutes", 15)),
+                gatewayDeviceRepository);
     }
 
     @Test
@@ -92,7 +95,8 @@ class IotServiceTest {
         IotService strict = new IotService(
                 repository, accessLogRepository, boxHardwareStatusRepository, accessAttemptRepository,
                 rabbitTemplate, orderClient, lockerClient, lockerMqttService,
-                TestIotRules.of(Map.of("app.iot.lockout.max-attempts", 2, "app.iot.lockout.minutes", 60)));
+                TestIotRules.of(Map.of("app.iot.lockout.max-attempts", 2, "app.iot.lockout.minutes", 60)),
+                gatewayDeviceRepository);
         AccessAttempt previous = new AccessAttempt();
         previous.setBoxId(9002L);
         previous.setFailedCount(1);

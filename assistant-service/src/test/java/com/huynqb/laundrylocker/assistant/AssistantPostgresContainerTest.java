@@ -4,6 +4,7 @@ import com.huynqb.laundrylocker.assistant.chat.AssistantService;
 import com.huynqb.laundrylocker.assistant.chat.ChatDtos.AskRequest;
 import com.huynqb.laundrylocker.assistant.chat.ChatDtos.AskResponse;
 import com.huynqb.laundrylocker.assistant.eval.EvalService;
+import com.huynqb.laundrylocker.assistant.knowledge.KnowledgeChunk;
 import com.huynqb.laundrylocker.assistant.knowledge.KnowledgeDocument;
 import com.huynqb.laundrylocker.assistant.knowledge.KnowledgeIndexer;
 import com.huynqb.laundrylocker.assistant.knowledge.KnowledgeService;
@@ -11,6 +12,7 @@ import com.huynqb.laundrylocker.assistant.knowledge.RetrievedChunk;
 import com.huynqb.laundrylocker.assistant.provider.AnswerGenerator;
 import com.huynqb.laundrylocker.assistant.provider.EmbeddingProvider;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.settings.BusinessSettings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -227,6 +229,23 @@ class AssistantPostgresContainerTest {
 
         assertFalse(answer.refused());
         assertEquals("Chính sách hoàn tiền", answer.sources().get(0).documentTitle());
+    }
+
+    @Test
+    void adminSeesTheOriginalFileAndTheIndexedChunks() {
+        String markdown = "# Hoàn tiền\nHoàn tiền trong 7 ngày làm việc.\n\n# Liên hệ\nGọi tổng đài hỗ trợ.";
+        KnowledgeDocument refund = upload("refund.md", "Chính sách hoàn tiền", List.of("ALL"), markdown);
+
+        assertTrue(knowledge.chunks(refund.id()).isEmpty());
+        indexer.indexPending();
+
+        List<KnowledgeChunk> chunks = knowledge.chunks(refund.id());
+        assertEquals(List.of(0, 1), chunks.stream().map(KnowledgeChunk::ordinal).toList());
+        assertEquals("Hoàn tiền", chunks.get(0).heading());
+        assertTrue(chunks.get(0).content().contains("7 ngày làm việc"));
+        assertArrayEquals(markdown.getBytes(StandardCharsets.UTF_8), knowledge.content(refund.id()).bytes());
+        assertThrows(NotFoundException.class, () -> knowledge.chunks(refund.id() + 1000));
+        assertThrows(NotFoundException.class, () -> knowledge.content(refund.id() + 1000));
     }
 
     @Test

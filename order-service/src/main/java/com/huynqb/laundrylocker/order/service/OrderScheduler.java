@@ -34,7 +34,7 @@ public class OrderScheduler {
 
     // Reservation TTL: cancel unconfirmed orders past the hold window and release
     // the cells they were holding, so abandoned reservations don't stick RESERVED.
-    @Scheduled(cron = "${app.order.auto-cancel-cron:0 */15 * * * *}")
+    @Scheduled(cron = "${app.order.auto-cancel-cron:0 */2 * * * *}")
     public void sweepUnconfirmedReservations() {
         try {
             orderService.autoCancelUnconfirmedOrders();
