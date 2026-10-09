@@ -32,4 +32,12 @@ public interface LockerBoxRepository extends JpaRepository<LockerBox, Long> {
     long countByLockerId(Long lockerId);
 
     long countByLockerIdAndStatusAndActiveTrue(Long lockerId, String status);
+
+    boolean existsByLockerIdAndBoxNumber(Long lockerId, Integer boxNumber);
+
+    Optional<LockerBox> findByLockerIdAndBoxNumber(Long lockerId, Integer boxNumber);
+
+    List<LockerBox> findByLockerIdAndIdIn(Long lockerId, java.util.Collection<Long> ids);
+
+    List<LockerBox> findByLockerIdAndBoxNumberIn(Long lockerId, java.util.Collection<Integer> boxNumbers);
 }
