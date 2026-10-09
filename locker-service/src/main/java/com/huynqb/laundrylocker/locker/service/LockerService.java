@@ -273,7 +273,8 @@ public class LockerService {
         for (LockerBox box : expired) {
             box.setStatus("AVAILABLE");
             box.setReservedUntil(null);
-            boxRepository.save(box);
+            LockerBox saved = boxRepository.save(box);
+            syncBoxStateQuietly(saved, "AVAILABLE");
             log.warn("Released box {} stuck RESERVED past TTL (backstop sweep)", box.getId());
         }
         return expired.size();
@@ -1503,6 +1504,8 @@ public class LockerService {
         List<MaintenanceInspectionLog> logs;
         if (scheduleId != null) {
             logs = inspectionLogRepository.findByScheduleIdOrderByCreatedAtDesc(scheduleId);
+        } else if (lockerId != null && technicianId != null) {
+            logs = inspectionLogRepository.findByLockerIdAndTechnicianIdOrderByCreatedAtDesc(lockerId, technicianId);
         } else if (lockerId != null) {
             logs = inspectionLogRepository.findByLockerIdOrderByCreatedAtDesc(lockerId);
         } else if (technicianId != null) {
@@ -1532,7 +1535,10 @@ public class LockerService {
         LockerUnit locker = log.getLockerId() == null ? null : lockerRepository.findById(log.getLockerId()).orElse(null);
         DroneUnit drone = log.getDroneUnitId() == null ? null : droneUnitRepository.findById(log.getDroneUnitId()).orElse(null);
         List<String> photos = StringUtils.hasText(log.getPhotoUrls())
-                ? java.util.Arrays.asList(log.getPhotoUrls().split(","))
+                ? java.util.Arrays.stream(log.getPhotoUrls().split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .toList()
                 : List.of();
         return new MaintenanceInspectionLogResponse(
                 log.getId(),
