@@ -761,6 +761,12 @@ public class LockerController {
                 request.cellType(), request.rowIndex(), request.colIndex()));
     }
 
+    @PostMapping("/api/admin/lockers/{id}/boxes/batch")
+    public ApiResponse<List<CellResponse>> adminAddBoxesBatch(
+            @PathVariable Long id, @RequestBody BatchCreateBoxesRequest request) {
+        return ApiResponse.ok("BOXES_CREATED", "Boxes created successfully", lockerService.createBoxesBatch(id, request));
+    }
+
     @PutMapping("/api/admin/lockers/boxes/{boxId}/status")
     public ApiResponse<LockerBoxSummary> adminBoxStatus(@PathVariable Long boxId, @RequestBody Map<String, Object> request) {
         return ApiResponse.ok("BOX_STATUS_UPDATED", "Box status updated", lockerService.updateBoxStatus(boxId, String.valueOf(request.get("status"))));
@@ -776,5 +782,26 @@ public class LockerController {
     public ApiResponse<Void> adminDeleteBox(@PathVariable Long boxId) {
         lockerService.deleteBox(boxId);
         return ApiResponse.ok("BOX_DELETED", "Box deleted");
+    }
+
+    @DeleteMapping("/api/admin/lockers/{id}/boxes/by-number/{boxNumber}")
+    public ApiResponse<Void> adminDeleteBoxByNumber(
+            @PathVariable Long id, @PathVariable Integer boxNumber) {
+        lockerService.deleteBoxByNumber(id, boxNumber);
+        return ApiResponse.ok("BOX_DELETED", "Box deleted");
+    }
+
+    @PostMapping("/api/admin/lockers/{id}/boxes/batch-delete")
+    public ApiResponse<Map<String, Object>> adminDeleteBoxesBatch(
+            @PathVariable Long id, @RequestBody BatchDeleteBoxesRequest request) {
+        int count = lockerService.deleteBoxesBatch(id, request);
+        return ApiResponse.ok("BOXES_DELETED", "Deleted " + count + " boxes successfully", Map.of("deletedCount", count));
+    }
+
+    @DeleteMapping("/api/admin/lockers/{id}/boxes")
+    public ApiResponse<Map<String, Object>> adminDeleteBoxesBatchWithDelete(
+            @PathVariable Long id, @RequestBody BatchDeleteBoxesRequest request) {
+        int count = lockerService.deleteBoxesBatch(id, request);
+        return ApiResponse.ok("BOXES_DELETED", "Deleted " + count + " boxes successfully", Map.of("deletedCount", count));
     }
 }
