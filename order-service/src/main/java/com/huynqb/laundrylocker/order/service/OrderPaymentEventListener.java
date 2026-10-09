@@ -63,6 +63,11 @@ public class OrderPaymentEventListener {
                             if (canceledDrone) {
                                 droneLateRefunds.schedule(orderId);
                             }
+                            if ("DRONE_DELIVERY".equals(order.getType())
+                                    && !canceledDrone
+                                    && applyDronePayment(order, event.payload())) {
+                                return;
+                            }
                             // Sự kiện thanh toán tới trễ không được lật đơn đang chờ hoàn / đã hoàn về PAID.
                             if (!"PAID".equals(order.getPaymentStatus())
                                     && !"REFUND_PENDING".equals(order.getPaymentStatus())
@@ -83,6 +88,62 @@ public class OrderPaymentEventListener {
                                 }
                             }
                         });
+    }
+
+    /**
+     * Đơn drone đang chạy: cộng ĐÚNG số tiền của lần thanh toán này vào `paidAmount` và chỉ
+     * lật `PAID` khi đã đủ tổng đơn. Trước đây mọi sự kiện đều gán `paidAmount = totalPrice`,
+     * nên sự kiện lặp lại của lần trả đầu (VNPay return + IPN) tới sau khi đã cộng phụ thu cân
+     * lệch lật đơn về `PAID` dù chưa thu phần chênh.
+     *
+     * @return false khi sự kiện không mang số tiền/mã thanh toán (nguồn phát cũ) — nơi gọi
+     *     dùng cách ghi nhận cũ.
+     */
+    private boolean applyDronePayment(LockerOrder order, Map<String, Object> payload) {
+        java.math.BigDecimal amount = decimal(payload.get("amount"));
+        Long paymentId = payload.get("paymentId") == null ? null : longValue(payload.get("paymentId"));
+        if (amount == null || paymentId == null) {
+            return false;
+        }
+        if (paymentId.equals(order.getLastPaymentId()) || !"UNPAID".equals(order.getPaymentStatus())) {
+            return true; // lần thanh toán này đã được cộng, hoặc đơn không còn chờ tiền
+        }
+        java.math.BigDecimal total =
+                order.getTotalPrice() == null ? java.math.BigDecimal.ZERO : order.getTotalPrice();
+        java.math.BigDecimal paid =
+                (order.getPaidAmount() == null ? java.math.BigDecimal.ZERO : order.getPaidAmount()).add(amount);
+        order.setLastPaymentId(paymentId);
+        order.setPaidAmount(paid);
+        if (paid.compareTo(total) < 0) {
+            orderRepository.save(order);
+            log.info("Drone order {} received {} but still owes {}", order.getId(), amount, total.subtract(paid));
+            return true;
+        }
+        order.setPaymentStatus("PAID");
+        order.setPaidAt(LocalDateTime.now());
+        LockerOrder saved = orderRepository.save(order);
+        log.info("Drone order {} marked PAID via payment {}", order.getId(), paymentId);
+        publishPaymentCompleted(saved);
+        return true;
+    }
+
+    private static java.math.BigDecimal decimal(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return new java.math.BigDecimal(value.toString());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private static Long longValue(Object value) {
+        try {
+            return Long.parseLong(value.toString());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private void publishPaymentCompleted(LockerOrder order) {

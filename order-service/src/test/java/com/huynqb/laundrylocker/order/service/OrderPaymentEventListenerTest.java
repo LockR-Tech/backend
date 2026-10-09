@@ -100,6 +100,41 @@ class OrderPaymentEventListenerTest {
         verify(droneLateRefunds).schedule(21L);
     }
 
+    @Test
+    void dronePaymentAddsItsOwnAmountAndOnlyMarksPaidOnceTheTotalIsCovered() {
+        OrderPaymentEventListener listener = listener();
+        LockerOrder order = droneOrder("AWAITING_DISPATCH", "UNPAID");
+        // Đã trả 15.000 đ phí ban đầu, sau đó cân lệch cộng thêm 3.000 đ.
+        order.setTotalPrice(new java.math.BigDecimal("18000"));
+        order.setPaidAmount(new java.math.BigDecimal("15000"));
+        order.setLastPaymentId(501L);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // Sự kiện lặp lại của lần trả đầu (VNPay return + IPN) không được lật đơn về PAID.
+        listener.onPaymentEvent(paid(501L, "15000"));
+        assertEquals("UNPAID", order.getPaymentStatus());
+        assertEquals(0, new java.math.BigDecimal("15000").compareTo(order.getPaidAmount()));
+
+        // Trả thiếu vẫn còn nợ.
+        listener.onPaymentEvent(paid(502L, "1000"));
+        assertEquals("UNPAID", order.getPaymentStatus());
+        assertEquals(0, new java.math.BigDecimal("16000").compareTo(order.getPaidAmount()));
+
+        listener.onPaymentEvent(paid(503L, "2000"));
+        assertEquals("PAID", order.getPaymentStatus());
+        assertEquals(0, new java.math.BigDecimal("18000").compareTo(order.getPaidAmount()));
+        assertEquals(503L, order.getLastPaymentId());
+        verify(notificationClient).requestNotification(any());
+    }
+
+    private static DomainEvent paid(long paymentId, String amount) {
+        return DomainEvent.of(
+                DomainEventNames.PAYMENT_COMPLETED,
+                "payment-service",
+                Map.of("orderId", 21L, "paymentId", paymentId, "amount", new java.math.BigDecimal(amount)));
+    }
+
     private OrderPaymentEventListener listener() {
         return new OrderPaymentEventListener(orderRepository, droneLateRefunds, rabbitTemplate, notificationClient);
     }
