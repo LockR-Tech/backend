@@ -1805,6 +1805,25 @@ public class LockerService {
         return toDroneUnit(droneUnitRepository.save(unit));
     }
 
+    /** Admin giao Drone cho đúng KTV Drone hoặc bỏ phân công để hàng đợi chung xử lý. */
+    @Transactional
+    public DroneUnitResponse assignDroneTechnician(Long id, Long technicianId, Long actorUserId) {
+        DroneUnit unit = findDroneUnit(id);
+        if (technicianId != null) {
+            requireTechnician(technicianId, DRONE_TECHNICIAN);
+        }
+        Long previousTechnicianId = unit.getAssignedTechnicianId();
+        unit.setAssignedTechnicianId(technicianId);
+        DroneUnit saved = droneUnitRepository.save(unit);
+        appendDroneLog(
+                saved.getId(),
+                "Đổi KTV phụ trách: " + technicianLabel(previousTechnicianId) + " → " + technicianLabel(technicianId),
+                actorUserId);
+        // Chỉ đổi cấu hình phụ trách hiện tại của Drone. Phiếu/lịch cũ giữ nguyên người đã
+        // được giao hoặc được định tuyến tại thời điểm chúng được tạo.
+        return toDroneUnit(saved);
+    }
+
     @Transactional
     public DroneUnitResponse updateDroneStatus(Long id, String status, String reason, Long actorUserId) {
         DroneUnit unit = findDroneUnit(id);
@@ -1844,6 +1863,9 @@ public class LockerService {
         report.setUserId(actorUserId == null ? 0L : actorUserId);
         report.setTitle(title);
         report.setDescription(description);
+        // Snapshot tuyến xử lý tại thời điểm tạo. Đổi KTV phụ trách Drone về sau không được
+        // phép kéo các phiếu cũ sang KTV mới.
+        report.setRoutedToUserId(savedUnit.getAssignedTechnicianId());
         LockerReport savedReport = reportRepository.save(report);
         attachmentService.attach(
                 savedReport,
@@ -1865,7 +1887,9 @@ public class LockerService {
                 && !DroneStatus.FAULT.equals(status)) {
             throw new BusinessException(
                     "DRONE_ACTIVE_MISSION",
-                    "Only FAULT can be reported manually while a drone has an active mission");
+                    DroneStatus.MAINTENANCE.equals(status)
+                            ? "Drone đang thực hiện đơn giao hàng. Vui lòng hoàn tất đơn hiện tại trước khi chuyển sang bảo trì"
+                            : "Không thể đổi trạng thái khi Drone đang thực hiện đơn giao hàng");
         }
     }
 
@@ -1951,8 +1975,14 @@ public class LockerService {
     /// #4 Admin chinh sua drone: doi tu goc va/hoac doi ma.
     @Transactional
     public DroneUnitResponse updateDroneUnit(Long id, DroneUpdateRequest request) {
+        return updateDroneUnit(id, request, null);
+    }
+
+    @Transactional
+    public DroneUnitResponse updateDroneUnit(Long id, DroneUpdateRequest request, Long actorUserId) {
         DroneUnit unit = findDroneUnit(id);
         requireDroneWithoutActiveMission(unit, "edit");
+        Long previousLockerId = unit.getLockerId();
         if (request.lockerId() != null && !request.lockerId().equals(unit.getLockerId())) {
             lockerRepository
                     .findById(request.lockerId())
@@ -1965,7 +1995,16 @@ public class LockerService {
             }
             unit.setCode(request.code());
         }
-        return toDroneUnit(droneUnitRepository.save(unit));
+        DroneUnit saved = droneUnitRepository.save(unit);
+        if (!Objects.equals(previousLockerId, saved.getLockerId())) {
+            appendDroneLog(
+                    saved.getId(),
+                    "Đổi trạm hoạt động: " + lockerLabel(previousLockerId) + " → " + lockerLabel(saved.getLockerId()),
+                    actorUserId);
+        }
+        // Không cập nhật các bảng report/order/mission/schedule: các bản ghi này là lịch sử
+        // và phải tiếp tục trỏ tới trạm đã được chốt tại thời điểm phát sinh.
+        return toDroneUnit(saved);
     }
 
     /// #4 Ngung hoat dong drone (xoa mem) — an khoi danh sach van hanh, giu lich su log.
@@ -1997,7 +2036,12 @@ public class LockerService {
         report.setUserId(actorUserId == null ? 0L : actorUserId);
         report.setTitle("Drone " + unit.getCode() + " lỗi");
         report.setDescription(StringUtils.hasText(reason) ? reason : "Drone reported faulty");
+        report.setRoutedToUserId(unit.getAssignedTechnicianId());
         reportRepository.save(report);
+    }
+
+    private static String technicianLabel(Long technicianId) {
+        return technicianId == null ? "chưa phân công" : "KTV #" + technicianId;
     }
 
     /// #2 Khi drone tro lai binh thuong, dong phieu su co dang mo cua no.
