@@ -232,8 +232,10 @@ public class OrderService {
 
         String fulfillmentMode = resolveDroneFulfillmentMode(request.fulfillmentMode(), userId);
         userClient.getUser(userId);
+        assertDroneOrderingOpen(userId);
         int parcelWeightGrams = validateDroneParcelWeight(request.parcelWeightGrams());
-        validateDroneRoute(request.sourceLockerId(), request.destinationLockerId());
+        validateDroneParcelDeclaration(request);
+        Integer routeDistanceMeters = validateDroneRoute(request.sourceLockerId(), request.destinationLockerId());
         Long sourceBoxId = resolveAndReserveDroneSourceBox(request);
         Long reservedBoxId;
         try {
@@ -262,6 +264,14 @@ public class OrderService {
         order.setFulfillmentMode(fulfillmentMode);
         order.setParcelWeightGrams(request.parcelWeightGrams());
         order.setDescription(request.description());
+        order.setParcelLengthCm(request.parcelLengthCm());
+        order.setParcelWidthCm(request.parcelWidthCm());
+        order.setParcelHeightCm(request.parcelHeightCm());
+        order.setParcelCategory(normalizeDroneParcelCategory(request.parcelCategory()));
+        order.setParcelDeclaredValue(request.declaredValue());
+        order.setParcelFragile(Boolean.TRUE.equals(request.fragile()));
+        order.setProhibitedItemsDeclaredAt(LocalDateTime.now());
+        order.setRouteDistanceMeters(routeDistanceMeters);
         order.setIdempotencyKey(idempotencyKey);
         // Phí theo khối lượng khách khai báo; đội bay cân lại lúc nạp hàng, nặng hơn thì
         // thu thêm phần chênh (DroneOrderMaintenanceService.confirmLoading).
@@ -334,7 +344,76 @@ public class OrderService {
         return parcelWeightGrams;
     }
 
-    private void validateDroneRoute(Long sourceLockerId, Long destinationLockerId) {
+    private static final Set<String> DRONE_PARCEL_CATEGORIES =
+            Set.of("DOCUMENT", "FOOD", "CLOTHING", "ELECTRONICS", "COSMETICS", "OTHER");
+
+    /// Không nhận đơn mới khi admin tạm dừng bay (thời tiết, sự cố), và giới hạn số đơn đang
+    /// mở của một khách — mỗi đơn chưa giao xong giữ ô DRONE ở cả hai tủ.
+    private void assertDroneOrderingOpen(Long userId) {
+        if (rules.droneFlightsSuspended()) {
+            throw new BusinessException(
+                    "DRONE_FLIGHTS_SUSPENDED", "Drone delivery is temporarily suspended");
+        }
+        int maxOpen = rules.droneMaxOpenOrdersPerUser();
+        if (maxOpen > 0
+                && orderRepository.countByUserIdAndTypeAndStatus(userId, "DRONE_DELIVERY", "AWAITING_DISPATCH")
+                        >= maxOpen) {
+            throw new BusinessException(
+                    "DRONE_OPEN_ORDER_LIMIT",
+                    "You already have " + maxOpen + " drone orders in progress");
+        }
+    }
+
+    private void validateDroneParcelDeclaration(CreateDroneDeliveryOrderRequest request) {
+        if (!Boolean.TRUE.equals(request.prohibitedItemsDeclared())) {
+            throw new BusinessException(
+                    "DRONE_PROHIBITED_ITEMS_NOT_DECLARED",
+                    "Sender must confirm the parcel contains no prohibited items");
+        }
+        normalizeDroneParcelCategory(request.parcelCategory());
+        Integer length = request.parcelLengthCm();
+        Integer width = request.parcelWidthCm();
+        Integer height = request.parcelHeightCm();
+        if (length != null || width != null || height != null) {
+            if (length == null || width == null || height == null || length <= 0 || width <= 0 || height <= 0) {
+                throw new BusinessException(
+                        "DRONE_PARCEL_SIZE_INVALID", "Parcel length, width and height must all be provided");
+            }
+            // Kiện xoay được: so cạnh dài nhất với cạnh dài nhất của khoang, v.v.
+            int[] parcel = {length, width, height};
+            int[] bay = rules.droneMaxParcelSizeCm();
+            java.util.Arrays.sort(parcel);
+            java.util.Arrays.sort(bay);
+            for (int i = 0; i < 3; i++) {
+                if (parcel[i] > bay[i]) {
+                    throw new BusinessException(
+                            "DRONE_PARCEL_TOO_LARGE",
+                            "Parcel does not fit the drone cargo bay of "
+                                    + bay[2] + " x " + bay[1] + " x " + bay[0] + " cm");
+                }
+            }
+        }
+        BigDecimal declared = request.declaredValue();
+        if (declared != null && (declared.signum() < 0 || declared.compareTo(rules.droneMaxDeclaredValue()) > 0)) {
+            throw new BusinessException(
+                    "DRONE_DECLARED_VALUE_TOO_HIGH",
+                    "Declared value exceeds the limit of " + rules.droneMaxDeclaredValue().toBigInteger() + " VND");
+        }
+    }
+
+    private String normalizeDroneParcelCategory(String category) {
+        if (!StringUtils.hasText(category)) {
+            return "OTHER";
+        }
+        String normalized = category.trim().toUpperCase();
+        if (!DRONE_PARCEL_CATEGORIES.contains(normalized)) {
+            throw new BusinessException("DRONE_PARCEL_CATEGORY_INVALID", "Unknown parcel category: " + category);
+        }
+        return normalized;
+    }
+
+    /// Trả về khoảng cách đường chim bay tủ gửi → tủ nhận (mét); null khi một tủ chưa có toạ độ.
+    private Integer validateDroneRoute(Long sourceLockerId, Long destinationLockerId) {
         if (sourceLockerId == null || destinationLockerId == null) {
             throw new BusinessException("DRONE_ROUTE_REQUIRED", "Source and destination lockers are required");
         }
@@ -349,6 +428,20 @@ public class OrderService {
                 .orElseThrow(() -> new BusinessException("DRONE_DESTINATION_NOT_FOUND", "Destination locker was not found"));
         validateDroneLocker(source, "source");
         validateDroneLocker(destination, "destination");
+        if (source.latitude() == null || source.longitude() == null
+                || destination.latitude() == null || destination.longitude() == null) {
+            return null;
+        }
+        int distanceMeters = (int) Math.round(DroneTelemetryService.distanceM(
+                new double[] {source.latitude(), source.longitude()},
+                destination.latitude(), destination.longitude()));
+        int maxMeters = rules.droneMaxRouteMeters();
+        if (maxMeters > 0 && distanceMeters > maxMeters) {
+            throw new BusinessException(
+                    "DRONE_ROUTE_TOO_FAR",
+                    "Lockers are " + distanceMeters + " m apart, beyond the drone range of " + maxMeters + " m");
+        }
+        return distanceMeters;
     }
 
     private void validateDroneLocker(com.huynqb.laundrylocker.order.dto.admin.LockerInfo locker, String role) {
@@ -747,7 +840,14 @@ public class OrderService {
         assertDroneCancelable(order);
         order.setCancelReason(reason);
         order.setPinCode(null);
+        // Đơn drone đã bỏ kiện vào ô gửi: giữ ô đó tới khi đội bay xác nhận đã trả kiện
+        // (DroneParcelService.confirmReturn), nếu không ô được cấp lại khi kiện còn bên trong.
+        Long heldSourceBoxId = order.getParcelDroppedAt() != null ? order.getSourceBoxId() : null;
+        order.setSourceBoxId(heldSourceBoxId == null ? order.getSourceBoxId() : null);
         releaseBoxes(order);
+        if (heldSourceBoxId != null) {
+            order.setSourceBoxId(heldSourceBoxId);
+        }
         refundPromotionUsages(order);
         return transition(order, "CANCELED", userId, null, "Order canceled");
     }
@@ -1518,6 +1618,14 @@ public class OrderService {
             if (order.getReservedBoxId() != null) {
                 heldBoxIds.add(order.getReservedBoxId());
             }
+            if (order.getSourceBoxId() != null) {
+                heldBoxIds.add(order.getSourceBoxId());
+            }
+        }
+
+        // Đơn drone đã huỷ nhưng kiện còn nằm trong ô gửi chờ trả cho người gửi.
+        for (LockerOrder order : orderRepository
+                .findByTypeAndStatusAndParcelDroppedAtIsNotNullAndParcelReturnedAtIsNull("DRONE_DELIVERY", "CANCELED")) {
             if (order.getSourceBoxId() != null) {
                 heldBoxIds.add(order.getSourceBoxId());
             }
