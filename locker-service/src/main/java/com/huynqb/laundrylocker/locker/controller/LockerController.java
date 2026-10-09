@@ -362,6 +362,16 @@ public class LockerController {
         return ApiResponse.ok(lockerService.getDroneUnit(id));
     }
 
+    @PutMapping("/api/admin/drones/{id}/assign")
+    public ApiResponse<DroneUnitResponse> adminAssignDroneTechnician(
+            @PathVariable Long id,
+            @RequestBody AssignTechnicianScheduleRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok(
+                "DRONE_TECHNICIAN_ASSIGNED", "Drone technician assigned",
+                lockerService.assignDroneTechnician(id, request.technicianId(), userId));
+    }
+
     @GetMapping("/api/admin/drones/{id}/logs")
     public ApiResponse<List<DroneMaintenanceLogResponse>> adminDroneLogs(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.droneLogs(id));
@@ -484,8 +494,10 @@ public class LockerController {
 
     @PutMapping("/api/admin/drones/{id}")
     public ApiResponse<DroneUnitResponse> adminUpdateDrone(
-            @PathVariable Long id, @RequestBody DroneUpdateRequest request) {
-        return ApiResponse.ok("DRONE_UPDATED", "Drone updated", lockerService.updateDroneUnit(id, request));
+            @PathVariable Long id,
+            @RequestBody DroneUpdateRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok("DRONE_UPDATED", "Drone updated", lockerService.updateDroneUnit(id, request, userId));
     }
 
     @PostMapping("/api/admin/drones/{id}/status")
