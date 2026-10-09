@@ -71,7 +71,31 @@ public record DroneDeliveryOrderResponse(
         BigDecimal amountDue,
         /// Đang có nguồn vị trí trực tiếp cho bản đồ: đơn DEMO đang bay (vị trí nội suy), hoặc
         /// drone thật còn gửi telemetry. false ⇒ mở bản đồ sẽ không có tín hiệu.
-        Boolean liveTracking) {
+        Boolean liveTracking,
+        /// Khai báo kiện hàng lúc đặt đơn; kích thước và giá trị khai báo có thể null.
+        Integer parcelLengthCm,
+        Integer parcelWidthCm,
+        Integer parcelHeightCm,
+        String parcelCategory,
+        BigDecimal declaredValue,
+        Boolean fragile,
+        /// Khoảng cách đường chim bay tủ gửi → tủ nhận, mét; null khi tủ chưa có toạ độ.
+        Integer routeDistanceMeters,
+        /// Người gửi xác nhận đã bỏ kiện vào ô gửi; null ⇒ đội bay chưa tiếp nhận được.
+        LocalDateTime parcelDroppedAt,
+        /// Đơn đã đóng mà không giao được và kiện chưa được trả cho người gửi.
+        Boolean parcelReturnPending,
+        /// Kiện chờ trả đang ở đâu: SOURCE_BOX (ô gửi) | FLIGHT_TEAM (đội bay giữ); null khi không chờ trả.
+        String parcelHeldAt,
+        LocalDateTime parcelReturnedAt,
+        String parcelReturnNote,
+        Integer batteryPercentAtLaunch,
+        LocalDateTime landedAt,
+        LocalDateTime depositedAt,
+        String depositedByName,
+        /// Nhiệm vụ kết thúc không giao được (huỷ trước khi phóng / chuyến bay thất bại).
+        LocalDateTime missionEndedAt,
+        String failedStage) {
 
     /** Constructor tương thích cho response ngay sau khi tạo đơn/chưa có mission. */
     public DroneDeliveryOrderResponse(
@@ -89,6 +113,8 @@ public record DroneDeliveryOrderResponse(
                 sourceLockerId, etaMinutes, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, List.of(),
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, false);
+                null, null, null, null, null, false,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null);
     }
 }

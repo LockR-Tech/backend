@@ -9,6 +9,7 @@ import com.huynqb.laundrylocker.order.model.Promotion;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
 import com.huynqb.laundrylocker.order.service.DroneDeliveryQueryService;
 import com.huynqb.laundrylocker.order.service.DroneMissionProgressService;
+import com.huynqb.laundrylocker.order.service.DroneParcelService;
 import com.huynqb.laundrylocker.order.service.DroneRefundService;
 import com.huynqb.laundrylocker.order.service.OrderService;
 import com.huynqb.laundrylocker.order.service.PromotionImageService;
@@ -28,6 +29,7 @@ public class OrderController {
     private final DroneDeliveryQueryService droneDeliveryQueryService;
     private final DroneMissionProgressService droneMissionProgressService;
     private final DroneRefundService droneRefundService;
+    private final DroneParcelService droneParcelService;
     private final OrderService orderService;
     private final PromotionImageService promotionImageService;
 
@@ -238,6 +240,50 @@ public class OrderController {
         return ApiResponse.ok(droneDeliveryQueryService.get(orderId, userId));
     }
 
+    /// Người gửi xác nhận đã bỏ kiện vào ô DRONE ở tủ gửi — điều kiện để đội bay tiếp nhận.
+    @PostMapping("/api/orders/{orderId}/drone-delivery/drop-confirmation")
+    public ApiResponse<DroneDeliveryOrderResponse> confirmDroneParcelDrop(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        droneParcelService.confirmDrop(orderId, userId);
+        return ApiResponse.ok(
+                "DRONE_PARCEL_DROPPED", "Parcel drop-off confirmed", droneDeliveryQueryService.get(orderId, userId));
+    }
+
+    /// Khách từ chối trả phụ thu cân lệch: huỷ đơn, hoàn phần đã trả, đội bay trả lại kiện.
+    @PostMapping("/api/orders/{orderId}/drone-delivery/decline-surcharge")
+    public ApiResponse<DroneDeliveryOrderResponse> declineDroneSurcharge(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        droneOrderMaintenanceService.cancelUnpaidSurcharge(orderId, userId, null);
+        droneRefundService.refundCanceledOrder(orderId, userId);
+        return ApiResponse.ok(
+                "DRONE_SURCHARGE_DECLINED",
+                "Drone order canceled after declining the weight surcharge",
+                droneDeliveryQueryService.get(orderId, userId));
+    }
+
+    /// Đơn không giao được: đội bay xác nhận đã trả kiện cho người gửi.
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/parcel-return")
+    public ApiResponse<DroneDeliveryOrderResponse> confirmDroneParcelReturn(
+            @PathVariable Long orderId,
+            @Valid @RequestBody(required = false) DroneParcelReturnRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        droneParcelService.confirmReturn(orderId, userId, false, request == null ? null : request.note());
+        return ApiResponse.ok(
+                "DRONE_PARCEL_RETURNED",
+                "Parcel returned to the sender",
+                droneDeliveryQueryService.getForTechnician(orderId, userId));
+    }
+
+    @PostMapping("/api/admin/drone-orders/{orderId}/parcel-return")
+    public ApiResponse<DroneDeliveryOrderResponse> adminConfirmDroneParcelReturn(
+            @PathVariable Long orderId,
+            @Valid @RequestBody(required = false) DroneParcelReturnRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        droneParcelService.confirmReturn(orderId, userId, true, request == null ? null : request.note());
+        return ApiResponse.ok(
+                "DRONE_PARCEL_RETURNED", "Parcel returned to the sender", droneDeliveryQueryService.getForAdmin(orderId));
+    }
+
     @GetMapping("/api/drone-technician/drone-orders")
     public ApiResponse<List<DroneDeliveryOrderResponse>> maintenanceDroneOrders(
             @RequestParam(required = false) String deliveryStage,
@@ -310,6 +356,31 @@ public class OrderController {
         DroneMissionResponse canceled = droneOrderMaintenanceService.cancel(orderId, userId, request);
         droneRefundService.refundCanceledOrder(orderId, userId);
         return ApiResponse.ok("DRONE_ORDER_CANCELED", "Drone order canceled", canceled);
+    }
+
+    /// Chuyến bay không giao được hàng sau khi đã phóng: đóng đơn, nhả ô nhận, cho drone nghỉ
+    /// và tạo yêu cầu hoàn tiền (chạy sau khi việc đóng đơn đã commit).
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/fail")
+    public ApiResponse<DroneMissionResponse> failDroneOrder(
+            @PathVariable Long orderId,
+            @Valid @RequestBody CancelDroneOrderRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        DroneMissionResponse failed =
+                droneOrderMaintenanceService.reportFlightFailure(orderId, userId, false, request);
+        droneRefundService.refundCanceledOrder(orderId, userId);
+        return ApiResponse.ok("DRONE_FLIGHT_FAILED", "Drone flight reported as failed", failed);
+    }
+
+    /// Như trên cho admin, khi điều phối viên đã nhận nhiệm vụ không còn thao tác được.
+    @PostMapping("/api/admin/drone-orders/{orderId}/fail")
+    public ApiResponse<DroneMissionResponse> adminFailDroneOrder(
+            @PathVariable Long orderId,
+            @Valid @RequestBody CancelDroneOrderRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        DroneMissionResponse failed =
+                droneOrderMaintenanceService.reportFlightFailure(orderId, userId, true, request);
+        droneRefundService.refundCanceledOrder(orderId, userId);
+        return ApiResponse.ok("DRONE_FLIGHT_FAILED", "Drone flight reported as failed", failed);
     }
 
     /// Đơn STANDARD chưa có telemetry tự báo chặng: điều phối viên đã tiếp nhận xác nhận
