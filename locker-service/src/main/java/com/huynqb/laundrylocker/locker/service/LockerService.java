@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -89,15 +90,103 @@ public class LockerService {
 
     @Transactional
     public LockerBoxSummary createBox(BoxRequest request) {
+        if (request.boxNumber() == null) {
+            throw new BusinessException("INVALID_BOX_NUMBER", "Số ô không được để trống");
+        }
+        if (boxRepository.existsByLockerIdAndBoxNumber(request.lockerId(), request.boxNumber())) {
+            throw new BusinessException("BOX_ALREADY_EXISTS", "Ô số " + request.boxNumber() + " đã tồn tại trong tủ này");
+        }
         LockerBox box = new LockerBox();
         box.setLockerId(request.lockerId());
         box.setBoxNumber(request.boxNumber());
-        box.setSize(StringUtils.hasText(request.size()) ? request.size() : "MEDIUM");
-        box.setStatus(StringUtils.hasText(request.status()) ? request.status() : "AVAILABLE");
-        box.setCellType(StringUtils.hasText(request.cellType()) ? request.cellType().toUpperCase() : "STANDARD");
+        box.setSize(StringUtils.hasText(request.size()) ? request.size().toUpperCase() : "MEDIUM");
+        box.setStatus(StringUtils.hasText(request.status()) ? request.status().toUpperCase() : "AVAILABLE");
+        box.setCellType(StringUtils.hasText(request.cellType()) ? request.cellType().toUpperCase() : CellType.STANDARD);
         box.setRowIndex(request.rowIndex());
         box.setColIndex(request.colIndex());
-        return toSummary(boxRepository.save(box));
+        LockerBox saved = boxRepository.save(box);
+        publishLockerLayoutUpdated(
+                saved.getLockerId(),
+                saved.getId(),
+                saved.getBoxNumber(),
+                saved.getStatus(),
+                "Thêm mới ô #" + saved.getBoxNumber() + " (" + saved.getCellType() + ")");
+        return toSummary(saved);
+    }
+
+    @Transactional
+    public List<CellResponse> createBoxesBatch(Long lockerId, BatchCreateBoxesRequest request) {
+        if (!lockerRepository.existsById(lockerId)) {
+            throw new NotFoundException("Locker", lockerId);
+        }
+
+        List<BoxItemRequest> items = new ArrayList<>();
+        if (request.boxes() != null && !request.boxes().isEmpty()) {
+            items.addAll(request.boxes());
+        } else if (request.startBoxNumber() != null && request.count() != null && request.count() > 0) {
+            int start = request.startBoxNumber();
+            int count = request.count();
+            int row = request.startRowIndex() != null ? request.startRowIndex() : 1;
+            int col = request.startColIndex() != null ? request.startColIndex() : 0;
+            String size = request.size();
+            String cellType = request.cellType();
+            String status = request.status();
+
+            for (int i = 0; i < count; i++) {
+                items.add(new BoxItemRequest(
+                        start + i,
+                        size,
+                        status,
+                        cellType,
+                        row,
+                        col + i));
+            }
+        } else {
+            throw new BusinessException("INVALID_REQUEST", "Danh sách ô tủ hoặc (startBoxNumber, count) không được để trống");
+        }
+
+        Set<Integer> numbersInRequest = new HashSet<>();
+        for (BoxItemRequest item : items) {
+            if (item.boxNumber() == null) {
+                throw new BusinessException("INVALID_BOX_NUMBER", "Số ô không được để trống");
+            }
+            if (!numbersInRequest.add(item.boxNumber())) {
+                throw new BusinessException("DUPLICATE_BOX_NUMBER", "Trùng số ô " + item.boxNumber() + " trong yêu cầu tạo");
+            }
+        }
+
+        List<Integer> duplicateInDb = items.stream()
+                .map(BoxItemRequest::boxNumber)
+                .filter(num -> boxRepository.existsByLockerIdAndBoxNumber(lockerId, num))
+                .toList();
+        if (!duplicateInDb.isEmpty()) {
+            throw new BusinessException("BOX_ALREADY_EXISTS", "Các ô số sau đã tồn tại trong tủ: " + duplicateInDb);
+        }
+
+        List<LockerBox> toSave = items.stream().map(item -> {
+            LockerBox box = new LockerBox();
+            box.setLockerId(lockerId);
+            box.setBoxNumber(item.boxNumber());
+            box.setSize(StringUtils.hasText(item.size()) ? item.size().toUpperCase() : "MEDIUM");
+            box.setStatus(StringUtils.hasText(item.status()) ? item.status().toUpperCase() : "AVAILABLE");
+            box.setCellType(StringUtils.hasText(item.cellType()) ? item.cellType().toUpperCase() : CellType.STANDARD);
+            box.setRowIndex(item.rowIndex());
+            box.setColIndex(item.colIndex());
+            return box;
+        }).toList();
+
+        List<LockerBox> saved = boxRepository.saveAll(toSave);
+
+        for (LockerBox box : saved) {
+            publishLockerLayoutUpdated(
+                    lockerId,
+                    box.getId(),
+                    box.getBoxNumber(),
+                    box.getStatus(),
+                    "Thêm mới ô #" + box.getBoxNumber());
+        }
+
+        return saved.stream().map(this::toCell).toList();
     }
 
     @Transactional
@@ -212,12 +301,65 @@ public class LockerService {
     public void deleteBox(Long boxId) {
         LockerBox box = findBox(boxId);
         if ("OCCUPIED".equalsIgnoreCase(box.getStatus()) || "RESERVED".equalsIgnoreCase(box.getStatus())) {
-            throw new BusinessException("BOX_IN_USE", "Không thể xóa ô đang chứa hàng hoặc đã được giữ chỗ");
+            throw new BusinessException("BOX_IN_USE", "Không thể xóa ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ");
         }
         Long lockerId = box.getLockerId();
         Integer boxNumber = box.getBoxNumber();
         boxRepository.delete(box);
         publishLockerLayoutUpdated(lockerId, boxId, boxNumber, "DELETED", "Đã xóa ô #" + boxNumber);
+    }
+
+    @Transactional
+    public void deleteBoxByNumber(Long lockerId, Integer boxNumber) {
+        LockerBox box = boxRepository.findByLockerIdAndBoxNumber(lockerId, boxNumber)
+                .orElseThrow(() -> new NotFoundException("Box #" + boxNumber + " in locker", lockerId));
+        if ("OCCUPIED".equalsIgnoreCase(box.getStatus()) || "RESERVED".equalsIgnoreCase(box.getStatus())) {
+            throw new BusinessException("BOX_IN_USE", "Không thể xóa ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ");
+        }
+        Long boxId = box.getId();
+        boxRepository.delete(box);
+        publishLockerLayoutUpdated(lockerId, boxId, boxNumber, "DELETED", "Đã xóa ô #" + boxNumber);
+    }
+
+    @Transactional
+    public int deleteBoxesBatch(Long lockerId, BatchDeleteBoxesRequest request) {
+        if (!lockerRepository.existsById(lockerId)) {
+            throw new NotFoundException("Locker", lockerId);
+        }
+
+        List<LockerBox> targetBoxes = new ArrayList<>();
+        if (request.boxIds() != null && !request.boxIds().isEmpty()) {
+            targetBoxes.addAll(boxRepository.findByLockerIdAndIdIn(lockerId, request.boxIds()));
+        }
+        if (request.boxNumbers() != null && !request.boxNumbers().isEmpty()) {
+            List<LockerBox> byNumbers = boxRepository.findByLockerIdAndBoxNumberIn(lockerId, request.boxNumbers());
+            for (LockerBox b : byNumbers) {
+                if (targetBoxes.stream().noneMatch(existing -> existing.getId().equals(b.getId()))) {
+                    targetBoxes.add(b);
+                }
+            }
+        }
+
+        if (targetBoxes.isEmpty()) {
+            throw new BusinessException("NO_BOXES_FOUND", "Không tìm thấy ô tủ nào cần xóa theo yêu cầu");
+        }
+
+        List<Integer> inUseNumbers = targetBoxes.stream()
+                .filter(b -> "OCCUPIED".equalsIgnoreCase(b.getStatus()) || "RESERVED".equalsIgnoreCase(b.getStatus()))
+                .map(LockerBox::getBoxNumber)
+                .toList();
+
+        if (!inUseNumbers.isEmpty()) {
+            throw new BusinessException("BOX_IN_USE", "Không thể xóa các ô đang chứa hàng hoặc đã được giữ chỗ: " + inUseNumbers);
+        }
+
+        boxRepository.deleteAll(targetBoxes);
+
+        for (LockerBox box : targetBoxes) {
+            publishLockerLayoutUpdated(lockerId, box.getId(), box.getBoxNumber(), "DELETED", "Đã xóa ô #" + box.getBoxNumber());
+        }
+
+        return targetBoxes.size();
     }
 
     @Transactional
