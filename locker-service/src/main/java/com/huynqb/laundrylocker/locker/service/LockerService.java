@@ -266,6 +266,24 @@ public class LockerService {
     @Transactional
     public LockerBoxSummary updateBox(Long boxId, UpdateBoxRequest request) {
         LockerBox box = findBox(boxId);
+        if (request.boxNumber() != null
+                && !request.boxNumber().equals(box.getBoxNumber())
+                && boxRepository.existsByLockerIdAndBoxNumber(box.getLockerId(), request.boxNumber())) {
+            throw new BusinessException("BOX_ALREADY_EXISTS", "Ô số " + request.boxNumber() + " đã tồn tại trong tủ này");
+        }
+        if ((request.rowIndex() != null && request.rowIndex() < 0) || (request.colIndex() != null && request.colIndex() < 0)) {
+            throw new BusinessException("INVALID_BOX_POSITION", "Hàng/cột của ô không được âm");
+        }
+        if (StringUtils.hasText(request.status())
+                && "AVAILABLE".equalsIgnoreCase(request.status().trim())
+                && holdsOrder(box)) {
+            // Ô đang giữ hàng/chỗ cho một đơn: đưa về AVAILABLE thì ô bị đặt chồng, đơn mất ô.
+            // Ô được nhả qua luồng đơn (release) hoặc qua phiếu sự cố.
+            throw new BusinessException(
+                    "BOX_IN_USE",
+                    "Ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ cho một đơn — không thể chuyển về Trống",
+                    HttpStatus.CONFLICT);
+        }
         if (request.boxNumber() != null) {
             box.setBoxNumber(request.boxNumber());
         }
@@ -295,6 +313,14 @@ public class LockerService {
                 saved.getStatus(),
                 "Cập nhật công năng ô #" + saved.getBoxNumber() + " (" + saved.getCellType() + ")");
         return toSummary(saved);
+    }
+
+    /// Ô đang giữ hàng/chỗ cho đơn: RESERVED/OCCUPIED, hoặc đang FAULT nhưng trước khi hỏng là
+    /// RESERVED/OCCUPIED (đơn chưa trả ô — releaseBox sẽ xoá preFaultStatus khi đơn trả).
+    private static boolean holdsOrder(LockerBox box) {
+        return ORDER_HELD_BOX_STATUSES.contains(String.valueOf(box.getStatus()).toUpperCase(Locale.ROOT))
+                || ("FAULT".equalsIgnoreCase(box.getStatus())
+                        && ORDER_HELD_BOX_STATUSES.contains(String.valueOf(box.getPreFaultStatus()).toUpperCase(Locale.ROOT)));
     }
 
     @Transactional
@@ -2007,9 +2033,9 @@ public class LockerService {
 
     @Transactional
     public DroneUnitResponse createDroneUnit(DroneUnitRequest request) {
-        lockerRepository
+        requireLandingPad(lockerRepository
                 .findById(request.lockerId())
-                .orElseThrow(() -> new NotFoundException("Locker", request.lockerId()));
+                .orElseThrow(() -> new NotFoundException("Locker", request.lockerId())));
         if (droneUnitRepository.existsByCode(request.code())) {
             throw new BusinessException("DRONE_CODE_DUPLICATE", "Drone code already exists: " + request.code());
         }
@@ -2017,6 +2043,14 @@ public class LockerService {
         unit.setLockerId(request.lockerId());
         unit.setCode(request.code());
         return toDroneUnit(droneUnitRepository.save(unit));
+    }
+
+    /// Drone chỉ đóng trạm ở tủ có bãi đáp (cùng mã lỗi với cập nhật trạng thái bãi đáp).
+    private static void requireLandingPad(LockerUnit locker) {
+        if (!Boolean.TRUE.equals(locker.getLandingPad())) {
+            throw new BusinessException(
+                    "LANDING_PAD_ABSENT", "Tủ " + locker.getCode() + " không có bãi đáp drone — không gán drone vào tủ này được");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -2354,9 +2388,9 @@ public class LockerService {
         requireDroneWithoutActiveMission(unit, "edit");
         Long previousLockerId = unit.getLockerId();
         if (request.lockerId() != null && !request.lockerId().equals(unit.getLockerId())) {
-            lockerRepository
+            requireLandingPad(lockerRepository
                     .findById(request.lockerId())
-                    .orElseThrow(() -> new NotFoundException("Locker", request.lockerId()));
+                    .orElseThrow(() -> new NotFoundException("Locker", request.lockerId())));
             unit.setLockerId(request.lockerId());
         }
         if (StringUtils.hasText(request.code()) && !request.code().equals(unit.getCode())) {
@@ -2839,24 +2873,37 @@ public class LockerService {
     /// Maintenance/admin emergency override — opens a box without the
     /// customer's PIN/QR. Delegates the physical unlock + audit log to
     /// iot-service (which owns the MQTT/access-log infrastructure).
+    ///
+    /// Chỉ báo `accepted:true` khi iot-service xác nhận tủ đã mở (iot-service tự gọi /open ⇒ phát
+    /// sự kiện ô mở). Gọi iot lỗi/không phản hồi ⇒ `accepted:false` + `status` FAILED: không được
+    /// báo admin/KTV là ô đã mở khi chưa chắc.
     public Map<String, Object> forceOpen(Long boxId, Long actorUserId) {
         LockerBox box = findBox(boxId);
-        publishBoxOpened(box);
+        Map<String, Object> result;
         try {
-            var result = iotClient.forceUnlock(new IotClient.ForceUnlockRequest(box.getLockerId(), boxId, actorUserId));
-            if (result != null && result.data() != null) {
-                return result.data();
-            }
+            var response = iotClient.forceUnlock(new IotClient.ForceUnlockRequest(box.getLockerId(), boxId, actorUserId));
+            result = response == null ? null : response.data();
         } catch (Exception ex) {
             log.warn("IoT service force unlock failed for box {}: {}", boxId, ex.getMessage());
+            return forceOpenFailed(box, "Không gửi được lệnh mở ô tới bộ điều khiển tủ — ô chưa mở, vui lòng thử lại");
         }
-        return Map.of(
-                "accepted", true,
-                "lockerId", box.getLockerId(),
-                "boxId", boxId,
-                "boxNumber", box.getBoxNumber(),
-                "message", "Đã gửi lệnh mở ô khẩn cấp thành công"
-        );
+        if (result == null) {
+            return forceOpenFailed(box, "Bộ điều khiển tủ không xác nhận lệnh mở — ô có thể chưa mở, vui lòng kiểm tra lại");
+        }
+        Map<String, Object> enriched = new java.util.LinkedHashMap<>(result);
+        enriched.putIfAbsent("boxNumber", box.getBoxNumber());
+        return enriched;
+    }
+
+    private static Map<String, Object> forceOpenFailed(LockerBox box, String message) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("accepted", false);
+        result.put("status", "FAILED");
+        result.put("lockerId", box.getLockerId());
+        result.put("boxId", box.getId());
+        result.put("boxNumber", box.getBoxNumber());
+        result.put("message", message);
+        return result;
     }
 
 

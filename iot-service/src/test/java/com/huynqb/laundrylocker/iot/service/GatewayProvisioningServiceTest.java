@@ -188,4 +188,79 @@ class GatewayProvisioningServiceTest {
         assertNull(device.getLockerId());
         assertEquals("CLEARED", device.getSetupStatus());
     }
+    // ─── Nhật ký kết nối bộ điều khiển ───
+
+    @Test
+    void discoveryLogsControllerOnlyWithoutFabricatedDisplayRow() throws Exception {
+        when(repository.findByMacAddress(MAC)).thenReturn(Optional.empty());
+
+        service.onDiscovery(MAC, objectMapper.readTree(LockerMqttServiceTest.PI_DISCOVERY));
+
+        ArgumentCaptor<com.huynqb.laundrylocker.iot.model.BoxAccessLog> logs =
+                ArgumentCaptor.forClass(com.huynqb.laundrylocker.iot.model.BoxAccessLog.class);
+        verify(boxAccessLogRepository).save(logs.capture());
+        assertEquals("DISCOVERY", logs.getValue().getCredentialType());
+        assertEquals("ONLINE", logs.getValue().getResult());
+    }
+
+    @Test
+    void heartbeatAfterOutageLogsReconnectOnly() {
+        GatewayDevice device = device(7);
+        device.setLockerId(5L);
+        device.setLastSeenAt(java.time.LocalDateTime.now().minusMinutes(10));
+        when(repository.findByMacAddress(MAC)).thenReturn(Optional.of(device));
+
+        service.touch(MAC);
+
+        ArgumentCaptor<com.huynqb.laundrylocker.iot.model.BoxAccessLog> logs =
+                ArgumentCaptor.forClass(com.huynqb.laundrylocker.iot.model.BoxAccessLog.class);
+        verify(boxAccessLogRepository).save(logs.capture());
+        assertEquals("DISCOVERY", logs.getValue().getCredentialType());
+        assertEquals("ONLINE", logs.getValue().getResult());
+    }
+
+    @Test
+    void offlineSweepLogsDisconnectOncePerOutage() {
+        GatewayDevice stale = device(7);
+        stale.setLockerId(5L);
+        stale.setLastSeenAt(java.time.LocalDateTime.now().minusMinutes(10));
+        when(repository.findAll()).thenReturn(List.of(stale));
+        when(boxAccessLogRepository.findFirstByLockerIdAndCredentialTypeInOrderByCreatedAtDescIdDesc(
+                eq(5L), any())).thenReturn(Optional.of(connectionLog("ONLINE")));
+
+        assertEquals(1, service.logDisconnectedGateways());
+
+        ArgumentCaptor<com.huynqb.laundrylocker.iot.model.BoxAccessLog> logs =
+                ArgumentCaptor.forClass(com.huynqb.laundrylocker.iot.model.BoxAccessLog.class);
+        verify(boxAccessLogRepository).save(logs.capture());
+        assertEquals("DISCOVERY", logs.getValue().getCredentialType());
+        assertEquals("OFFLINE", logs.getValue().getResult());
+        assertEquals(5L, logs.getValue().getLockerId());
+
+        // Dòng gần nhất đã là OFFLINE ⇒ lần quét sau không ghi trùng.
+        when(boxAccessLogRepository.findFirstByLockerIdAndCredentialTypeInOrderByCreatedAtDescIdDesc(
+                eq(5L), any())).thenReturn(Optional.of(connectionLog("OFFLINE")));
+        assertEquals(0, service.logDisconnectedGateways());
+    }
+
+    @Test
+    void offlineSweepIgnoresOnlineOrUnassignedControllers() {
+        GatewayDevice online = device(7);
+        online.setLockerId(5L);
+        online.setLastSeenAt(java.time.LocalDateTime.now().minusSeconds(30));
+        GatewayDevice unassigned = new GatewayDevice();
+        unassigned.setLastSeenAt(java.time.LocalDateTime.now().minusHours(1));
+        when(repository.findAll()).thenReturn(List.of(online, unassigned));
+
+        assertEquals(0, service.logDisconnectedGateways());
+        verify(boxAccessLogRepository, never()).save(any());
+    }
+
+    private static com.huynqb.laundrylocker.iot.model.BoxAccessLog connectionLog(String result) {
+        com.huynqb.laundrylocker.iot.model.BoxAccessLog entry = new com.huynqb.laundrylocker.iot.model.BoxAccessLog();
+        entry.setLockerId(5L);
+        entry.setCredentialType("DISCOVERY");
+        entry.setResult(result);
+        return entry;
+    }
 }

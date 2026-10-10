@@ -264,7 +264,11 @@ public class LockerController {
     @PostMapping("/api/locker-technician/boxes/{id}/force-open")
     public ApiResponse<Map<String, Object>> maintenanceForceOpen(
             @PathVariable Long id, @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return ApiResponse.ok("BOX_FORCE_OPEN_ACCEPTED", "Force open accepted", lockerService.forceOpen(id, userId));
+        Map<String, Object> result = lockerService.forceOpen(id, userId);
+        // Vẫn 200 để client đọc `data.accepted`/`data.status`/`data.message`; mã phản hồi nói đúng kết quả.
+        return Boolean.TRUE.equals(result.get("accepted"))
+                ? ApiResponse.ok("BOX_FORCE_OPEN_ACCEPTED", "Force open accepted", result)
+                : ApiResponse.ok("BOX_FORCE_OPEN_FAILED", String.valueOf(result.get("message")), result);
     }
 
     @GetMapping("/api/locker-technician/boxes/{id}/active-order")

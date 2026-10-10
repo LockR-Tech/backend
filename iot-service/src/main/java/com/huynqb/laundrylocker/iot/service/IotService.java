@@ -103,29 +103,62 @@ public class IotService {
 
     /// Maintenance/admin override: open a box without a customer PIN/QR. Always
     /// audited as credential type MASTER so it's distinguishable from normal opens.
+    ///
+    /// Kết quả luôn có `accepted` + `status`: OPENED (tủ xác nhận mở), TIMEOUT (tủ không phản hồi
+    /// trong `unlockWaitSeconds` — ô có thể chưa mở), FAILED/JAMMED (gửi lệnh lỗi hoặc tủ báo lỗi).
+    /// Chỉ OPENED mới báo locker-service "ô đã mở"; trước đây timeout vẫn trả accepted=true.
     public Map<String, Object> forceUnlock(ForceUnlockRequest request) {
+        int waitSeconds = rules.unlockWaitSeconds();
+        com.fasterxml.jackson.databind.JsonNode node;
         try {
-            com.fasterxml.jackson.databind.JsonNode node = lockerMqttService.sendUnlockCommandAsync(request.lockerId(), request.boxId())
-                    .get(rules.unlockWaitSeconds(), java.util.concurrent.TimeUnit.SECONDS);
-            if (node.has("status") && "FAILED".equals(node.get("status").asText())) {
-                String errCode = node.hasNonNull("errorCode") ? node.get("errorCode").asText() : "HARDWARE_FAULT";
-                String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
-                String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
-                logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", res, "Lỗi phần cứng khẩn cấp [" + errCode + "]: " + errMsg);
-                return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", errMsg);
-            }
-            lockerClient.openBox(request.boxId());
-            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "SUCCESS", null);
-            return Map.of("accepted", true, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Force unlock accepted");
+            node = lockerMqttService.sendUnlockCommandAsync(request.lockerId(), request.boxId())
+                    .get(waitSeconds, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.error("Timeout or error waiting for IoT device on force-unlock", e);
-            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "TIMEOUT",
-                    "Lỗi kết nối bộ điều khiển tủ: Quá thời gian chờ mở khẩn cấp (Timeout " + rules.unlockWaitSeconds() + "s)");
-            try {
-                lockerClient.openBox(request.boxId());
-            } catch (Exception ignored) {}
-            return Map.of("accepted", true, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "Lệnh mở ô khẩn cấp đã được phát đi");
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            boolean timeout = e instanceof java.util.concurrent.TimeoutException
+                    || e.getCause() instanceof java.util.concurrent.TimeoutException;
+            if (timeout) {
+                log.warn("Force-unlock of box {} timed out after {}s", request.boxId(), waitSeconds);
+                logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "TIMEOUT",
+                        "Lỗi kết nối bộ điều khiển tủ: Quá thời gian chờ mở khẩn cấp (Timeout " + waitSeconds + "s)");
+                return forceUnlockResult(request, false, "TIMEOUT",
+                        "Tủ không phản hồi lệnh mở khẩn cấp sau " + waitSeconds
+                                + " giây — ô có thể chưa mở, vui lòng kiểm tra tại tủ rồi thử lại");
+            }
+            log.error("Force-unlock command for box {} could not be sent", request.boxId(), e);
+            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "FAILED",
+                    "Lỗi kết nối bộ điều khiển tủ: không gửi được lệnh mở khẩn cấp");
+            return forceUnlockResult(request, false, "FAILED",
+                    "Không gửi được lệnh mở ô tới tủ — ô chưa mở, vui lòng thử lại");
         }
+        if (node != null && node.has("status") && "FAILED".equals(node.get("status").asText())) {
+            String errCode = node.hasNonNull("errorCode") ? node.get("errorCode").asText() : "HARDWARE_FAULT";
+            String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
+            String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
+            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", res, "Lỗi phần cứng khẩn cấp [" + errCode + "]: " + errMsg);
+            return forceUnlockResult(request, false, res, errMsg);
+        }
+        logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "SUCCESS", null);
+        try {
+            lockerClient.openBox(request.boxId());
+        } catch (Exception ex) {
+            // Cửa đã mở thật — lỗi phát sự kiện bên locker-service không đổi kết quả trả về.
+            log.warn("Could not notify locker-service that box {} opened: {}", request.boxId(), ex.getMessage());
+        }
+        return forceUnlockResult(request, true, "OPENED", "Đã mở ô khẩn cấp");
+    }
+
+    private static Map<String, Object> forceUnlockResult(
+            ForceUnlockRequest request, boolean accepted, String status, String message) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("accepted", accepted);
+        result.put("status", status);
+        result.put("lockerId", request.lockerId());
+        result.put("boxId", request.boxId());
+        result.put("message", message);
+        return result;
     }
 
     public VerifyPinResponse verifyPin(VerifyPinRequest request) {
@@ -456,7 +489,9 @@ public class IotService {
         return repository.findAll().stream().map(this::toResponse).toList();
     }
 
-    @Transactional
+    /// Chỉ ĐỌC nhật ký: sự kiện kết nối/mất kết nối của bộ điều khiển được ghi lúc nhận heartbeat/
+    /// discovery và lúc quét mất kết nối (GatewayProvisioningService), không ghi trong GET này.
+    @Transactional(readOnly = true)
     public List<BoxAccessLogResponse> getLockerLogs(Long lockerId) {
         List<BoxAccessLog> dbLogs = accessLogRepository.findByLockerIdOrderByCreatedAtDesc(lockerId);
         List<BoxAccessLogResponse> list = new java.util.ArrayList<>();
@@ -473,68 +508,12 @@ public class IotService {
                     l.getCreatedAt()));
         }
 
-        // Tự động bổ sung thông tin bộ điều khiển / Gateway nếu tủ đã được gán hoặc tìm thấy
+        // Cảnh báo kiểm tra sơ đồ phần cứng gần nhất (dòng ảo, không lưu DB).
         if (gatewayDeviceRepository != null) {
             gatewayDeviceRepository.findByLockerId(lockerId).ifPresent(gw -> {
                 final LocalDateTime seen = (gw.getLastSeenAt() != null) ? gw.getLastSeenAt()
                         : (gw.getUpdatedAt() != null) ? gw.getUpdatedAt()
                         : (gw.getCreatedAt() != null) ? gw.getCreatedAt() : LocalDateTime.now();
-                boolean online = seen.isAfter(LocalDateTime.now().minusSeconds(150));
-                String hwStr = gw.getHardware() != null ? gw.getHardware().toUpperCase() : "GPIO";
-                int slots = gw.getAvailableSlots() != null ? gw.getAvailableSlots() : 7;
-                String fwStr = gw.getFirmwareVersion() != null ? gw.getFirmwareVersion() : "v1.0.0";
-                java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
-                String seenFormatted = seen.format(fmt);
-
-                // Kiểm tra xem trạng thái gần nhất trong DB đã phản ánh online/offline hiện tại chưa
-                BoxAccessLog lastDiscLog = dbLogs.stream()
-                        .filter(l -> "DISCOVERY".equalsIgnoreCase(l.getCredentialType()) || "GATEWAY".equalsIgnoreCase(l.getCredentialType()))
-                        .findFirst()
-                        .orElse(null);
-
-                boolean stateChanged = false;
-                if (lastDiscLog == null) {
-                    stateChanged = true;
-                } else {
-                    boolean wasOnline = "ONLINE".equalsIgnoreCase(lastDiscLog.getResult());
-                    if (online != wasOnline) {
-                        stateChanged = true;
-                    }
-                }
-
-                if (stateChanged) {
-                    String discoveryMsg = online
-                            ? String.format("Bộ điều khiển kết nối thành công (Cấp nguồn điện / Trực tuyến) · %s · %d ô phần cứng · firmware %s · lúc %s", hwStr, slots, fwStr, seenFormatted)
-                            : String.format("Bộ điều khiển mất kết nối (Rút nguồn điện / Ngoại tuyến) · %s · thấy lần cuối lúc %s", hwStr, seenFormatted);
-
-                    String screenMsg = online
-                            ? String.format("Màn hình cảm ứng 7\" Waveshare HDMI LCD (C) [1024×600 IPS] · Tín hiệu HDMI-1 & USB Touch OK · Kiosk UI :3002 (lúc %s)", seenFormatted)
-                            : String.format("Màn hình cảm ứng 7\" Waveshare: Mất kết nối (Offline) · Tủ chưa được cấp nguồn điện hoặc bộ điều khiển đang tắt (thấy lần cuối %s)", seenFormatted);
-
-                    try {
-                        BoxAccessLog newDisc = new BoxAccessLog();
-                        newDisc.setLockerId(lockerId);
-                        newDisc.setBoxId(0L);
-                        newDisc.setCredentialType("DISCOVERY");
-                        newDisc.setResult(online ? "ONLINE" : "OFFLINE");
-                        newDisc.setMessage(discoveryMsg);
-                        BoxAccessLog savedDisc = accessLogRepository.save(newDisc);
-
-                        BoxAccessLog newDisp = new BoxAccessLog();
-                        newDisp.setLockerId(lockerId);
-                        newDisp.setBoxId(0L);
-                        newDisp.setCredentialType("DISPLAY");
-                        newDisp.setResult(online ? "ONLINE" : "OFFLINE");
-                        newDisp.setMessage(screenMsg);
-                        BoxAccessLog savedDisp = accessLogRepository.save(newDisp);
-
-                        list.add(new BoxAccessLogResponse(savedDisc.getId(), 0L, lockerId, null, null, "DISCOVERY", savedDisc.getResult(), savedDisc.getMessage(), savedDisc.getCreatedAt()));
-                        list.add(new BoxAccessLogResponse(savedDisp.getId(), 0L, lockerId, null, null, "DISPLAY", savedDisp.getResult(), savedDisp.getMessage(), savedDisp.getCreatedAt()));
-                    } catch (Exception ex) {
-                        list.add(new BoxAccessLogResponse(-1L, 0L, lockerId, null, null, "DISCOVERY", online ? "ONLINE" : "OFFLINE", discoveryMsg, seen));
-                        list.add(new BoxAccessLogResponse(-2L, 0L, lockerId, null, null, "DISPLAY", online ? "ONLINE" : "OFFLINE", screenMsg, seen));
-                    }
-                }
 
                 if ("FAILED".equalsIgnoreCase(gw.getSetupStatus()) || "PARTIAL".equalsIgnoreCase(gw.getSetupStatus())) {
                     list.add(new BoxAccessLogResponse(
