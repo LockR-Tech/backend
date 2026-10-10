@@ -326,8 +326,10 @@ public class LockerController {
     public ApiResponse<List<MaintenanceScheduleResponse>> maintenanceSchedules(
             @RequestParam(required = false, defaultValue = "false") boolean mine,
             @RequestParam(required = false) String target,
-            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return ApiResponse.ok(lockerService.listSchedules(mine ? userId : null, target));
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        String allowedTarget = scheduleTargetForRoles(target, roles);
+        return ApiResponse.ok(lockerService.listSchedules(mine ? userId : null, allowedTarget));
     }
 
     @PostMapping("/api/maintenance/schedules/{id}/complete")
@@ -338,12 +340,39 @@ public class LockerController {
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return ApiResponse.ok(
                 "SCHEDULE_COMPLETED", "Inspection completed",
-                lockerService.completeSchedule(id, body, actorUserId, UserRoles.isAdmin(roles)));
+                lockerService.completeSchedule(
+                        id, body, actorUserId, UserRoles.isAdmin(roles), scheduleTargetForRoles(null, roles)));
     }
 
     @GetMapping("/api/maintenance/schedules/{id}/logs")
-    public ApiResponse<List<MaintenanceInspectionLogResponse>> scheduleInspectionLogs(@PathVariable Long id) {
+    public ApiResponse<List<MaintenanceInspectionLogResponse>> scheduleInspectionLogs(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        lockerService.requireScheduleTarget(id, scheduleTargetForRoles(null, roles));
         return ApiResponse.ok(lockerService.listInspectionLogs(id, null, null));
+    }
+
+    private String scheduleTargetForRoles(String requestedTarget, String rolesHeader) {
+        if (UserRoles.isAdmin(rolesHeader)) {
+            return requestedTarget;
+        }
+        List<String> roles = UserRoles.parse(rolesHeader);
+        boolean droneTechnician = roles.contains("DRONE_TECHNICIAN");
+        boolean lockerTechnician = roles.contains("LOCKER_TECHNICIAN");
+        if (droneTechnician && !lockerTechnician) {
+            return "DRONE";
+        }
+        if (lockerTechnician && !droneTechnician) {
+            return "LOCKER";
+        }
+        if (droneTechnician && lockerTechnician
+                && ("DRONE".equalsIgnoreCase(requestedTarget) || "LOCKER".equalsIgnoreCase(requestedTarget))) {
+            return requestedTarget.toUpperCase(java.util.Locale.ROOT);
+        }
+        throw new BusinessException(
+                "TECHNICIAN_ROLE_REQUIRED",
+                "Cần vai trò kỹ thuật viên phù hợp để truy cập lịch bảo trì",
+                org.springframework.http.HttpStatus.FORBIDDEN);
     }
 
     @GetMapping("/api/maintenance/inspection-logs")
@@ -436,7 +465,13 @@ public class LockerController {
     @PutMapping("/api/drone-technician/reports/{id}/claim")
     public ApiResponse<LockerReportResponse> droneTechnicianClaimReport(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
-        requireDroneReport(id);
+        LockerReportResponse report = requireDroneReport(id);
+        if (report.routedToUserId() != null && !report.routedToUserId().equals(userId)) {
+            throw new BusinessException(
+                    "DRONE_REPORT_ROUTED_TO_ANOTHER_TECHNICIAN",
+                    "Phiếu Drone đã được điều phối cho kỹ thuật viên khác",
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
         return ApiResponse.ok("DRONE_REPORT_CLAIMED", "Drone report claimed", lockerService.claimReport(id, userId));
     }
 
