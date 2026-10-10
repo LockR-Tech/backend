@@ -966,6 +966,77 @@ public class LockerService {
                 .toList();
     }
 
+    /** Phiếu sự cố chỉ thuộc đội Drone; không lẫn sự cố tủ/Kiosk. */
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> allDroneReports() {
+        return reportRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(this::isDroneReport)
+                .map(this::toReport)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> assignedDroneReports(Long userId) {
+        return reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
+                .filter(this::isDroneReport)
+                .sorted(Comparator.comparing(
+                        (LockerReport r) -> r.getAssignedAt() != null ? r.getAssignedAt() : r.getCreatedAt(),
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(LockerReport::getId, Comparator.reverseOrder()))
+                .map(this::toReport)
+                .toList();
+    }
+
+    /** OPEN được định tuyến riêng cho KTV Drone hoặc broadcast cho toàn bộ đội Drone. */
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> routedDroneReports(Long userId) {
+        return reportRepository.findByStatusInOrderByCreatedAtDesc(List.of("OPEN")).stream()
+                .filter(this::isDroneReport)
+                .filter(report -> report.getRoutedToUserId() == null || Objects.equals(report.getRoutedToUserId(), userId))
+                .map(this::toReport)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public LockerReportResponse getDroneReport(Long reportId) {
+        return toReport(requireDroneReport(reportId));
+    }
+
+    @Transactional
+    public LockerReportResponse claimDroneReport(Long reportId, Long userId) {
+        requireDroneReport(reportId);
+        return claimReport(reportId, userId);
+    }
+
+    @Transactional
+    public LockerReportResponse resolveDroneReport(
+            Long reportId, Long userId, ResolveReportRequest request, boolean admin) {
+        requireDroneReport(reportId);
+        return resolveReportAndClearFault(reportId, userId, request, admin);
+    }
+
+    /** Guard dùng chung cho các endpoint ảnh/nhật ký của đội Drone. */
+    @Transactional(readOnly = true)
+    public void assertDroneReport(Long reportId) {
+        requireDroneReport(reportId);
+    }
+
+    private LockerReport requireDroneReport(Long reportId) {
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        if (!isDroneReport(report)) {
+            throw new BusinessException("DRONE_REPORT_REQUIRED", "Phiếu này không thuộc đội kỹ thuật Drone");
+        }
+        return report;
+    }
+
+    private boolean isDroneReport(LockerReport report) {
+        // Legacy drone reports predate the DRONE category. The drone-unit link
+        // remains the canonical relationship for those reports.
+        return ReportCategory.DRONE.equals(report.getCategory())
+                || report.getDroneUnitId() != null;
+    }
+
     /// Phiếu OPEN đang được định tuyến cho KTV (tủ người đó phụ trách), chờ nhận.
     @Transactional(readOnly = true)
     public List<LockerReportResponse> routedReports(Long userId) {
