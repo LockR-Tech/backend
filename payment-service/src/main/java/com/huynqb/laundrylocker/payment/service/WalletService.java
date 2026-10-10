@@ -512,12 +512,26 @@ public class WalletService {
         List<WithdrawalRecord> list = StringUtils.hasText(status)
                 ? withdrawalRepository.findByStatusOrderByCreatedAtDesc(status.toUpperCase())
                 : withdrawalRepository.findAllByOrderByCreatedAtDesc();
+        // Một lời gọi user-service cho cả trang; tra lỗi thì tên/sđt để null, danh sách vẫn trả.
+        Map<Long, com.huynqb.laundrylocker.common.dto.UserSummary> users =
+                resolver.users(list.stream().map(WithdrawalRecord::getUserId).toList());
         return list.stream()
-                .map(w -> toWithdrawResponse(w, null, null))
+                .map(w -> {
+                    var user = w.getUserId() == null ? null : users.get(w.getUserId());
+                    return toWithdrawResponse(
+                            w, null, null,
+                            user == null || !StringUtils.hasText(user.fullName()) ? null : user.fullName(),
+                            user == null ? null : user.phoneNumber());
+                })
                 .toList();
     }
 
     private WithdrawResponse toWithdrawResponse(WithdrawalRecord w, BigDecimal balanceAfter, BigDecimal withdrawable) {
+        return toWithdrawResponse(w, balanceAfter, withdrawable, null, null);
+    }
+
+    private WithdrawResponse toWithdrawResponse(
+            WithdrawalRecord w, BigDecimal balanceAfter, BigDecimal withdrawable, String userName, String userPhone) {
         return new WithdrawResponse(
                 w.getId(),
                 w.getReferenceId(),
@@ -531,7 +545,10 @@ public class WalletService {
                 w.getStatus(),
                 w.getRejectionReason(),
                 w.getCreatedAt(),
-                w.getProcessedAt()
+                w.getProcessedAt(),
+                w.getUserId(),
+                userName,
+                userPhone
         );
     }
 

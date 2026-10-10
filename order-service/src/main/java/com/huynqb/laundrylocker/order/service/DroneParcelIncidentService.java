@@ -610,7 +610,10 @@ public class DroneParcelIncidentService {
                 incident.getRecoveryOutcome(), incident.getParcelCondition(), incident.getRecoveryNote(),
                 incident.getRecoveredLatitude(), incident.getRecoveredLongitude(), incident.getRecoveredGpsAccuracyM(),
                 incident.getReturnedToHubAt(), incident.getRedeliveryOrderId(), incident.getCompensationReference(),
-                incident.getCreatedAt(), incident.getUpdatedAt(), evidence, timeline, proposals);
+                incident.getCreatedAt(), incident.getUpdatedAt(), evidence, timeline, proposals,
+                order != null && Boolean.TRUE.equals(order.getIncidentCompensationEnabled())
+                        ? suggestedCompensation(order)
+                        : null);
     }
 
     private void requestCompensation(DroneParcelIncident incident, LockerOrder order,

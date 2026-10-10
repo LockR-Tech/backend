@@ -33,6 +33,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AuthService {
 
     private static final Map<String, TempToken> TEMP_TOKENS = new ConcurrentHashMap<>();
+    /// Trạng thái tài khoản admin đặt được qua user-service.
+    static final Set<String> ACCOUNT_STATUSES = Set.of("ACTIVE", "INACTIVE");
+    /// Số lần nhập sai OTP 2FA admin tối đa cho một token tạm; quá số này token bị huỷ, phải đăng nhập lại.
+    static final int ADMIN_2FA_MAX_ATTEMPTS = 5;
 
     private final AuthAccountRepository authAccountRepository;
     private final RefreshTokenRepository refreshTokenRepository;
@@ -119,7 +123,17 @@ public class AuthService {
         account.setPhoneNumber(request.phoneNumber());
         String rawPassword = StringUtils.hasText(request.password()) ? request.password() : UUID.randomUUID().toString();
         account.setPasswordHash(passwordEncoder.encode(rawPassword));
-        return issue(authAccountRepository.save(account), roles);
+        String status = StringUtils.hasText(request.status()) ? request.status().trim().toUpperCase(Locale.ROOT) : "ACTIVE";
+        if (!ACCOUNT_STATUSES.contains(status)) {
+            throw new BusinessException("AUTH_STATUS_INVALID", "Trạng thái tài khoản không hợp lệ: " + request.status());
+        }
+        account.setStatus(status);
+        AuthAccount saved = authAccountRepository.save(account);
+        if (!"ACTIVE".equals(status)) {
+            // Tài khoản tạo sẵn ở trạng thái khoá: không cấp token.
+            return new AuthResponse(saved.getId(), saved.getUserId(), null, null, "Bearer", null, roles);
+        }
+        return issue(saved, roles);
     }
 
     @Transactional
@@ -383,9 +397,7 @@ public class AuthService {
                         .findByEmail(email)
                         .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "User not found"));
         account.setPasswordHash(passwordEncoder.encode(password));
-        refreshTokenRepository.findAll().stream()
-                .filter(token -> token.getAccountId().equals(account.getId()))
-                .forEach(token -> token.setRevoked(true));
+        revokeRefreshTokens(account.getId());
     }
 
     @Transactional
@@ -400,15 +412,85 @@ public class AuthService {
         }
         String newPassword = firstText(request, "newPassword", "password");
         account.setPasswordHash(passwordEncoder.encode(newPassword));
-        refreshTokenRepository.findAll().stream()
-                .filter(token -> token.getAccountId().equals(account.getId()))
-                .forEach(token -> token.setRevoked(true));
+        revokeRefreshTokens(account.getId());
+    }
+
+    /// Admin khoá/mở người dùng (user-service gọi). Khoá ⇒ thu hồi mọi refresh token để phiên đang mở
+    /// không gia hạn được; access token đã cấp vẫn dùng được tới khi hết hạn (JWT không trạng thái).
+    @Transactional
+    public Map<String, Object> updateAccountStatus(Long userId, String status) {
+        String normalized = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
+        if (!ACCOUNT_STATUSES.contains(normalized)) {
+            throw new BusinessException(
+                    "AUTH_STATUS_INVALID", "Trạng thái tài khoản không hợp lệ: " + status + " (chỉ ACTIVE hoặc INACTIVE)");
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("userId", userId);
+        result.put("status", normalized);
+        // Hồ sơ chưa có tài khoản đăng nhập thì không có gì để khoá — trả 200 thay vì 404 để
+        // circuit breaker phía user-service không đếm đây là lỗi.
+        Optional<AuthAccount> found = authAccountRepository.findByUserId(userId);
+        result.put("accountExists", found.isPresent());
+        if (found.isEmpty()) {
+            result.put("revokedTokens", 0);
+            return result;
+        }
+        AuthAccount account = found.get();
+        account.setStatus(normalized);
+        result.put("revokedTokens", "INACTIVE".equals(normalized) ? revokeRefreshTokens(account.getId()) : 0);
+        return result;
+    }
+
+    /// Admin đổi email/số điện thoại trên hồ sơ ⇒ định danh đăng nhập đổi theo. Field rỗng = giữ nguyên.
+    /// Định danh mới chưa được xác minh nên cờ verified tương ứng về false.
+    @Transactional
+    public Map<String, Object> updateAccountIdentifiers(Long userId, AccountIdentifiersRequest request) {
+        Optional<AuthAccount> found = authAccountRepository.findByUserId(userId);
+        if (found.isEmpty()) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("userId", userId);
+            result.put("accountExists", false);
+            return result;
+        }
+        AuthAccount account = found.get();
+        String email = request == null || !StringUtils.hasText(request.email()) ? null : request.email().trim();
+        String phone = request == null || !StringUtils.hasText(request.phoneNumber()) ? null : request.phoneNumber().trim();
+        if (email != null && !email.equalsIgnoreCase(account.getEmail() == null ? "" : account.getEmail())) {
+            authAccountRepository.findByEmail(email)
+                    .filter(other -> !other.getId().equals(account.getId()))
+                    .ifPresent(other -> {
+                        throw new BusinessException(
+                                "AUTH_EMAIL_TAKEN", "Email đã có tài khoản đăng nhập: " + email,
+                                org.springframework.http.HttpStatus.CONFLICT);
+                    });
+            account.setEmail(email);
+            account.setEmailVerified(false);
+        }
+        if (phone != null && !phone.equals(account.getPhoneNumber())) {
+            authAccountRepository.findByPhoneNumber(phone)
+                    .filter(other -> !other.getId().equals(account.getId()))
+                    .ifPresent(other -> {
+                        throw new BusinessException(
+                                "AUTH_PHONE_TAKEN", "Số điện thoại đã có tài khoản đăng nhập: " + phone,
+                                org.springframework.http.HttpStatus.CONFLICT);
+                    });
+            account.setPhoneNumber(phone);
+            account.setPhoneVerified(false);
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("userId", userId);
+        result.put("accountExists", true);
+        result.put("email", account.getEmail());
+        result.put("phoneNumber", account.getPhoneNumber());
+        return result;
     }
 
     @Transactional
     public Map<String, Object> adminLogin(Map<String, Object> request) {
         AuthAccount account = findByIdentifier(text(request, "email"));
-        if (!passwordEncoder.matches(text(request, "password"), account.getPasswordHash())) {
+        // Tài khoản bị khoá báo chung "sai thông tin" như login thường, và không gửi OTP.
+        if (!"ACTIVE".equalsIgnoreCase(account.getStatus())
+                || !passwordEncoder.matches(text(request, "password"), account.getPasswordHash())) {
             throw new BusinessException("AUTH_INVALID", "Invalid credentials");
         }
         UserSummary user = userClient.getUser(account.getUserId()).data();
@@ -426,13 +508,22 @@ public class AuthService {
         return response;
     }
 
+    /// Kiểm OTP trước rồi mới tiêu token tạm: gõ sai một lần không làm mất phiên 2FA. Sai đủ
+    /// {@link #ADMIN_2FA_MAX_ATTEMPTS} lần thì token tạm bị huỷ, phải đăng nhập lại từ đầu.
     @Transactional
     public Map<String, Object> verifyAdmin2fa(Map<String, Object> request) {
-        TempToken token = consumeTempToken(text(request, "tempToken"), "ADMIN_2FA");
+        String tempToken = text(request, "tempToken");
+        TempToken token = peekTempToken(tempToken, "ADMIN_2FA");
         AuthAccount account = findAccount(token.accountId());
         if (!emailOtpService.verifyOtp(account.getEmail(), "ADMIN_2FA", firstText(request, "otpCode", "otp"))) {
-            throw new BusinessException("ADMIN_AUTH_OTP_INVALID", "OTP is invalid or expired");
+            int remaining = recordFailedOtpAttempt(tempToken);
+            throw new BusinessException(
+                    "ADMIN_AUTH_OTP_INVALID",
+                    remaining > 0
+                            ? "Mã OTP không đúng hoặc đã hết hạn (còn " + remaining + " lần thử)"
+                            : "Nhập sai OTP quá " + ADMIN_2FA_MAX_ATTEMPTS + " lần — vui lòng đăng nhập lại");
         }
+        consumeTempToken(tempToken, "ADMIN_2FA");
         UserSummary user = userClient.getUser(account.getUserId()).data();
         if (!user.roles().contains("ADMIN")) {
             throw new BusinessException("ADMIN_AUTH_NOT_ADMIN", "User is not an admin");
@@ -461,6 +552,11 @@ public class AuthService {
     }
 
     private AuthResponse issue(AuthAccount account, Set<String> roles) {
+        // Mọi đường cấp token (mật khẩu, OTP, Firebase, refresh) đều chặn tài khoản đã bị admin khoá.
+        if (!"ACTIVE".equalsIgnoreCase(account.getStatus())) {
+            throw new BusinessException(
+                    "AUTH_ACCOUNT_INACTIVE", "Tài khoản đã bị khoá", org.springframework.http.HttpStatus.FORBIDDEN);
+        }
         Set<String> effectiveRoles = defaultRoles(roles);
         JwtService.TokenPair tokenPair = jwtService.issue(account.getId(), account.getUserId(), effectiveRoles);
         RefreshToken refreshToken = new RefreshToken();
@@ -504,12 +600,40 @@ public class AuthService {
 
     private String createTempToken(String identifier, String purpose, Long accountId) {
         String token = purpose.toLowerCase() + "_" + UUID.randomUUID();
-        TEMP_TOKENS.put(token, new TempToken(identifier, purpose, accountId, Instant.now().plusSeconds(rules.tempTokenTtlSeconds())));
+        TEMP_TOKENS.put(token, new TempToken(identifier, purpose, accountId, Instant.now().plusSeconds(rules.tempTokenTtlSeconds()), 0));
         return token;
     }
 
+    /// Đọc token tạm mà không tiêu nó (dùng khi còn phải kiểm OTP). Token hết hạn thì bị xoá luôn.
+    private TempToken peekTempToken(String token, String expectedPurpose) {
+        TempToken temp = token == null ? null : TEMP_TOKENS.get(token);
+        if (temp == null || temp.expiresAt().isBefore(Instant.now())) {
+            if (temp != null) {
+                TEMP_TOKENS.remove(token, temp);
+            }
+            throw new BusinessException("AUTH_TEMP_TOKEN_INVALID", "Temporary token is invalid or expired");
+        }
+        if (StringUtils.hasText(expectedPurpose) && !expectedPurpose.equals(temp.purpose())) {
+            throw new BusinessException("AUTH_TEMP_TOKEN_INVALID", "Temporary token purpose is invalid");
+        }
+        return temp;
+    }
+
+    /// Tăng đếm lần nhập sai; chạm trần thì xoá token. Trả về số lần thử còn lại (0 = token đã bị huỷ).
+    private int recordFailedOtpAttempt(String token) {
+        TempToken updated = TEMP_TOKENS.computeIfPresent(token, (key, temp) ->
+                temp.failedAttempts() + 1 >= ADMIN_2FA_MAX_ATTEMPTS ? null : temp.withFailedAttempt());
+        return updated == null ? 0 : ADMIN_2FA_MAX_ATTEMPTS - updated.failedAttempts();
+    }
+
+    private int revokeRefreshTokens(Long accountId) {
+        List<RefreshToken> active = refreshTokenRepository.findByAccountIdAndRevokedFalse(accountId);
+        active.forEach(token -> token.setRevoked(true));
+        return active.size();
+    }
+
     private TempToken consumeTempToken(String token, String expectedPurpose) {
-        TempToken temp = TEMP_TOKENS.remove(token);
+        TempToken temp = token == null ? null : TEMP_TOKENS.remove(token);
         if (temp == null || temp.expiresAt().isBefore(Instant.now())) {
             throw new BusinessException("AUTH_TEMP_TOKEN_INVALID", "Temporary token is invalid or expired");
         }
@@ -560,6 +684,10 @@ public class AuthService {
         }
     }
 
-    private record TempToken(String identifier, String purpose, Long accountId, Instant expiresAt) {
+    private record TempToken(String identifier, String purpose, Long accountId, Instant expiresAt, int failedAttempts) {
+
+        TempToken withFailedAttempt() {
+            return new TempToken(identifier, purpose, accountId, expiresAt, failedAttempts + 1);
+        }
     }
 }

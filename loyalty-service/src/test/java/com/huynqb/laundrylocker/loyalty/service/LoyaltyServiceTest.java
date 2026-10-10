@@ -1,7 +1,9 @@
 package com.huynqb.laundrylocker.loyalty.service;
 
 import com.huynqb.laundrylocker.common.settings.BusinessSettings;
+import com.huynqb.laundrylocker.common.util.BusinessTime;
 import com.huynqb.laundrylocker.loyalty.dto.AdjustPointsRequest;
+import com.huynqb.laundrylocker.loyalty.dto.LoyaltyStatisticsResponse;
 import com.huynqb.laundrylocker.loyalty.model.LoyaltyAccount;
 import com.huynqb.laundrylocker.loyalty.model.PointTransaction;
 import com.huynqb.laundrylocker.loyalty.repository.LoyaltyAccountRepository;
@@ -16,12 +18,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -80,5 +87,65 @@ class LoyaltyServiceTest {
 
         account.setPoints(1000);
         assertEquals(700, service.redeemReward(7L, 1L).points());
+    }
+
+    @Test
+    void statisticsCutMonthByBusinessTimezoneAndFillAllTiers() {
+        // 18:30 UTC ngày 30/09 = 01:30 ngày 01/10 giờ Việt Nam ⇒ "tháng này" là tháng 10.
+        service.setTime(new BusinessTime(
+                ZoneOffset.UTC, BusinessTime.DEFAULT_BUSINESS_ZONE,
+                Clock.fixed(Instant.parse("2026-09-30T18:30:00Z"), ZoneOffset.UTC)));
+        LocalDateTime monthStart = LocalDateTime.of(2026, 9, 30, 17, 0);
+        LocalDateTime activeSince = LocalDateTime.of(2026, 8, 31, 18, 30);
+
+        LoyaltyAccountRepository.AccountAggregate accounts = mock(LoyaltyAccountRepository.AccountAggregate.class);
+        when(accounts.getTotalMembers()).thenReturn(4L);
+        when(accounts.getNewMembersThisMonth()).thenReturn(1L);
+        when(accounts.getTotalPoints()).thenReturn(1400L);
+        when(accounts.getAveragePoints()).thenReturn(new java.math.BigDecimal("466.666666"));
+        when(accounts.getMedianPoints()).thenReturn(200.5d);
+        when(accountRepository.aggregate(monthStart)).thenReturn(accounts);
+        when(accountRepository.countByTier()).thenReturn(List.of(tier("SILVER", 3L), tier("BRONZE", 1L)));
+
+        PointTransactionRepository.TransactionAggregate transactions =
+                mock(PointTransactionRepository.TransactionAggregate.class);
+        when(transactions.getTransactions()).thenReturn(9L);
+        when(transactions.getPointsIssued()).thenReturn(1650L);
+        when(transactions.getPointsRedeemed()).thenReturn(250L);
+        when(transactions.getPointsIssuedThisMonth()).thenReturn(300L);
+        when(transactions.getPointsRedeemedThisMonth()).thenReturn(null);
+        when(transactions.getActiveMembers()).thenReturn(2L);
+        when(transactionRepository.aggregate(monthStart, activeSince)).thenReturn(transactions);
+
+        LoyaltyStatisticsResponse stats = service.statistics();
+
+        assertEquals(4L, stats.accounts());
+        assertEquals(9L, stats.transactions());
+        assertEquals(4L, stats.totalMembers());
+        assertEquals(1L, stats.newMembersThisMonth());
+        assertEquals(2L, stats.activeMembersLast30Days());
+        assertEquals(List.of("BRONZE", "SILVER", "GOLD", "PLATINUM"), List.copyOf(stats.tierDistribution().keySet()));
+        assertEquals(Map.of("BRONZE", 1L, "SILVER", 3L, "GOLD", 0L, "PLATINUM", 0L), stats.tierDistribution());
+        assertEquals(1400L, stats.totalPointsOutstanding());
+        assertEquals(466.67, stats.averagePoints());
+        assertEquals(200.5, stats.medianPoints());
+        assertEquals(1650L, stats.pointsIssued());
+        assertEquals(250L, stats.pointsRedeemed());
+        assertEquals(300L, stats.pointsIssuedThisMonth());
+        assertEquals(0L, stats.pointsRedeemedThisMonth());
+    }
+
+    private static LoyaltyAccountRepository.TierCount tier(String tier, long members) {
+        return new LoyaltyAccountRepository.TierCount() {
+            @Override
+            public String getTier() {
+                return tier;
+            }
+
+            @Override
+            public Long getMembers() {
+                return members;
+            }
+        };
     }
 }

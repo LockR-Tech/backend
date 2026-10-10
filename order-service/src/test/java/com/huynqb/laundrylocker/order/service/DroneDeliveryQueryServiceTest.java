@@ -158,6 +158,28 @@ class DroneDeliveryQueryServiceTest {
         assertEquals(List.of(22L, 21L), visible.stream().map(DroneDeliveryOrderResponse::orderId).toList());
     }
 
+    @Test
+    void adminCanFilterDroneOrdersByDroneUnit() {
+        LockerOrder unassigned = order();
+        unassigned.setId(22L);
+        LockerOrder flownByNine = order();
+        LockerOrder flownByOther = order();
+        flownByOther.setId(23L);
+        DroneMission otherMission = mission(88L);
+        otherMission.setDroneUnitId(4L);
+        when(orderRepository.findByTypeOrderByUpdatedAtDesc("DRONE_DELIVERY"))
+                .thenReturn(List.of(unassigned, flownByNine, flownByOther));
+        when(missionRepository.findByOrderId(22L)).thenReturn(Optional.empty());
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission(77L)));
+        when(missionRepository.findByOrderId(23L)).thenReturn(Optional.of(otherMission));
+
+        List<DroneDeliveryOrderResponse> filtered = service.operations(null, null, true, true, 9L);
+        List<DroneDeliveryOrderResponse> all = service.operations(null, null, true, true, null);
+
+        assertEquals(List.of(21L), filtered.stream().map(DroneDeliveryOrderResponse::orderId).toList());
+        assertEquals(3, all.size());
+    }
+
     private DroneMission mission(Long assignedBy) {
         DroneMission mission = new DroneMission();
         mission.setId(301L);

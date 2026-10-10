@@ -3,13 +3,19 @@ package com.huynqb.laundrylocker.user.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.user.client.AuthClient;
 import com.huynqb.laundrylocker.user.client.NotificationClient;
 import com.huynqb.laundrylocker.user.dto.AdminCreateUserRequest;
+import com.huynqb.laundrylocker.user.dto.AdminUserView;
+import com.huynqb.laundrylocker.user.dto.UserGrowthPoint;
 import com.huynqb.laundrylocker.user.dto.UserProfileRequest;
 import com.huynqb.laundrylocker.user.service.UserProfileService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -17,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 public class UserController {
@@ -38,7 +45,21 @@ public class UserController {
 
     @PutMapping("/api/users/{id}")
     public ApiResponse<UserSummary> update(@PathVariable Long id, @RequestBody UserProfileRequest request) {
-        return ApiResponse.ok("USER_UPDATED", "User updated", userProfileService.update(id, request));
+        return ApiResponse.ok("USER_UPDATED", "User updated", userProfileService.update(id, withoutAdminFields(request)));
+    }
+
+    /// Đường sửa hồ sơ không phải admin: bỏ trạng thái/vai trò khỏi request (chỉ admin đổi được,
+    /// qua /api/admin/users/**) — field null nghĩa là giữ nguyên giá trị hiện tại.
+    private static UserProfileRequest withoutAdminFields(UserProfileRequest request) {
+        return new UserProfileRequest(
+                request.email(),
+                request.phoneNumber(),
+                request.firstName(),
+                request.lastName(),
+                request.birthday(),
+                request.imageUrl(),
+                null,
+                null);
     }
 
     @GetMapping("/api/users/{id}")
@@ -69,7 +90,8 @@ public class UserController {
     @PutMapping("/api/user/profile")
     public ApiResponse<UserSummary> updateProfile(
             @RequestHeader("X-User-Id") Long userId, @RequestBody UserProfileRequest request) {
-        return ApiResponse.ok("PROFILE_UPDATED", "Profile updated", userProfileService.update(userId, request));
+        return ApiResponse.ok(
+                "PROFILE_UPDATED", "Profile updated", userProfileService.update(userId, withoutAdminFields(request)));
     }
 
     /// Body mới: MediaUpload (ảnh đã upload lên Cloudinary, ADR-0004). Body cũ `{imageUrl}`/`{avatar}` vẫn nhận.
@@ -127,40 +149,49 @@ public class UserController {
     }
 
     @GetMapping("/api/admin/users")
-    public ApiResponse<List<com.huynqb.laundrylocker.user.dto.AdminUserView>> adminUsers(
+    public ApiResponse<List<AdminUserView>> adminUsers(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String role) {
-        List<com.huynqb.laundrylocker.user.dto.AdminUserView> views =
-                userProfileService.listAdminViews(search, status, role);
-        // Best-effort enrich with auth provider/email-verified (never break the list on lookup failure).
+        return ApiResponse.ok(withAuthInfo(userProfileService.listAdminViews(search, status, role)));
+    }
+
+    /// Người dùng mới theo tháng cho biểu đồ tăng trưởng (mặc định 12 tháng, tối đa 36, tính cả tháng này).
+    @GetMapping("/api/admin/users/growth")
+    public ApiResponse<List<UserGrowthPoint>> adminUserGrowth(
+            @RequestParam(required = false, defaultValue = "12") Integer months) {
+        return ApiResponse.ok(userProfileService.growth(months));
+    }
+
+    // Best-effort enrich with auth provider/email-verified (never break the list on lookup failure).
+    private List<AdminUserView> withAuthInfo(List<AdminUserView> views) {
         try {
-            List<Long> ids = views.stream().map(com.huynqb.laundrylocker.user.dto.AdminUserView::id).toList();
-            if (!ids.isEmpty()) {
-                Map<Long, Map<String, Object>> byUser =
-                        authClient.accountsByUsers(ids).data().stream()
-                                .filter(m -> m.get("userId") != null)
-                                .collect(
-                                        java.util.stream.Collectors.toMap(
-                                                m -> Long.valueOf(m.get("userId").toString()), m -> m, (a, b) -> a));
-                views =
-                        views.stream()
-                                .map(
-                                        v -> {
-                                            Map<String, Object> a = byUser.get(v.id());
-                                            if (a == null) {
-                                                return v;
-                                            }
-                                            String provider = a.get("provider") == null ? null : a.get("provider").toString();
-                                            Boolean verified = a.get("emailVerified") instanceof Boolean b ? b : null;
-                                            return v.withAuth(provider, verified);
-                                        })
-                                .toList();
+            List<Long> ids = views.stream().map(AdminUserView::id).toList();
+            if (ids.isEmpty()) {
+                return views;
             }
+            Map<Long, Map<String, Object>> byUser =
+                    authClient.accountsByUsers(ids).data().stream()
+                            .filter(m -> m.get("userId") != null)
+                            .collect(
+                                    java.util.stream.Collectors.toMap(
+                                            m -> Long.valueOf(m.get("userId").toString()), m -> m, (a, b) -> a));
+            return views.stream()
+                    .map(
+                            v -> {
+                                Map<String, Object> a = byUser.get(v.id());
+                                if (a == null) {
+                                    return v;
+                                }
+                                String provider = a.get("provider") == null ? null : a.get("provider").toString();
+                                Boolean verified = a.get("emailVerified") instanceof Boolean b ? b : null;
+                                return v.withAuth(provider, verified);
+                            })
+                    .toList();
         } catch (Exception ignored) {
             // auth-service unavailable -> return profile-only views
+            return views;
         }
-        return ApiResponse.ok(views);
     }
 
     @PostMapping("/api/admin/users")
@@ -184,6 +215,9 @@ public class UserController {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "VALIDATION_ERROR", "Email không hợp lệ: " + email);
         }
+        String status = StringUtils.hasText(request.status())
+                ? UserProfileService.requireValidStatus(request.status())
+                : "ACTIVE";
 
         userProfileService.assertUnique(email, phoneNumber);
 
@@ -194,7 +228,7 @@ public class UserController {
                 request.lastName(),
                 request.birthday(),
                 request.imageUrl(),
-                request.status(),
+                status,
                 request.roles()
         );
         UserSummary user = userProfileService.create(profileRequest);
@@ -205,6 +239,8 @@ public class UserController {
             payload.put("phoneNumber", user.phoneNumber());
             payload.put("password", request.password());
             payload.put("roles", request.roles());
+            // Tạo sẵn người dùng bị khoá thì tài khoản đăng nhập cũng khoá theo.
+            payload.put("status", status);
             authClient.createAccount(payload);
         } catch (Exception ex) {
             // Gỡ profile vừa tạo để không để lại bản ghi nửa vời; auth-service đã
@@ -224,14 +260,53 @@ public class UserController {
         return value == null ? "" : value.trim();
     }
 
+    /// Chi tiết cho web admin: các field của UserSummary + createdAt/updatedAt/provider/emailVerified.
     @GetMapping("/api/admin/users/{id}")
-    public ApiResponse<UserSummary> adminGet(@PathVariable Long id) {
-        return get(id);
+    public ApiResponse<AdminUserView> adminGet(@PathVariable Long id) {
+        return ApiResponse.ok(withAuthInfo(List.of(userProfileService.getAdminView(id))).get(0));
     }
 
+    /// Admin sửa hồ sơ. Email/số điện thoại/trạng thái đổi thì đồng bộ sang tài khoản đăng nhập
+    /// trước khi lưu hồ sơ — auth-service từ chối (trùng, lỗi kết nối) thì hồ sơ giữ nguyên.
     @PutMapping("/api/admin/users/{id}")
     public ApiResponse<UserSummary> adminUpdate(@PathVariable Long id, @RequestBody UserProfileRequest request) {
-        return update(id, request);
+        UserSummary current = userProfileService.get(id);
+        String status = StringUtils.hasText(request.status())
+                ? UserProfileService.requireValidStatus(request.status())
+                : null;
+        String email = changedValue(request.email(), current.email(), true);
+        String phoneNumber = changedValue(request.phoneNumber(), current.phoneNumber(), false);
+        if (email != null || phoneNumber != null) {
+            userProfileService.assertUniqueForUpdate(id, email, phoneNumber);
+            Map<String, Object> identifiers = new HashMap<>();
+            if (email != null) identifiers.put("email", email);
+            if (phoneNumber != null) identifiers.put("phoneNumber", phoneNumber);
+            callAuth(() -> authClient.updateIdentifiers(id, identifiers));
+        }
+        if (status != null && !status.equalsIgnoreCase(current.status())) {
+            syncAuthStatus(id, status);
+        }
+        UserProfileRequest normalized = new UserProfileRequest(
+                email != null ? email : request.email(),
+                phoneNumber != null ? phoneNumber : request.phoneNumber(),
+                request.firstName(),
+                request.lastName(),
+                request.birthday(),
+                request.imageUrl(),
+                status,
+                request.roles());
+        return ApiResponse.ok("USER_UPDATED", "User updated", userProfileService.update(id, normalized));
+    }
+
+    /// Giá trị mới (đã trim) nếu khác giá trị hiện tại; null khi không gửi hoặc không đổi.
+    private static String changedValue(String requested, String current, boolean ignoreCase) {
+        if (!StringUtils.hasText(requested)) {
+            return null;
+        }
+        String value = requested.trim();
+        String existing = current == null ? "" : current.trim();
+        boolean same = ignoreCase ? value.equalsIgnoreCase(existing) : value.equals(existing);
+        return same ? null : value;
     }
 
     @PutMapping("/api/admin/users/{id}/avatar")
@@ -248,13 +323,59 @@ public class UserController {
         return ApiResponse.ok("AVATAR_REMOVED", "Avatar removed", userProfileService.removeAvatar(id));
     }
 
+    /// Khoá/mở người dùng: `?status=` hoặc body `{status: "ACTIVE"|"INACTIVE"}` (thiếu/khác ⇒ 400).
+    /// Trạng thái được đẩy sang tài khoản đăng nhập trước (INACTIVE ⇒ chặn đăng nhập + thu hồi
+    /// refresh token); auth-service lỗi thì không đổi hồ sơ, tránh báo "đã khoá" mà vẫn đăng nhập được.
     @PutMapping("/api/admin/users/{id}/status")
     public ApiResponse<UserSummary> adminStatus(
             @PathVariable Long id,
             @RequestParam(required = false) String status,
             @RequestBody(required = false) Map<String, Object> request) {
-        String resolved = status != null ? status : String.valueOf(request == null ? "ACTIVE" : request.get("status"));
+        Object raw = status != null ? status : request == null ? null : request.get("status");
+        String resolved = UserProfileService.requireValidStatus(raw == null ? null : raw.toString());
+        userProfileService.get(id);
+        syncAuthStatus(id, resolved);
         return ApiResponse.ok("USER_STATUS_UPDATED", "User status updated", userProfileService.updateStatus(id, resolved));
+    }
+
+    private void syncAuthStatus(Long userId, String status) {
+        callAuth(() -> authClient.updateStatus(userId, Map.of("status", status)));
+    }
+
+    private void callAuth(Runnable call) {
+        try {
+            call.run();
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw authFailure(ex);
+        }
+    }
+
+    /// Lỗi nghiệp vụ của auth-service (VD 409 AUTH_EMAIL_TAKEN) trả nguyên mã + câu; còn lại ⇒ 502.
+    private BusinessException authFailure(Exception ex) {
+        feign.FeignException feignError = null;
+        for (Throwable cause = ex; cause != null && feignError == null; cause = cause.getCause()) {
+            if (cause instanceof feign.FeignException fe) {
+                feignError = fe;
+            }
+        }
+        if (feignError != null && feignError.status() >= 400 && feignError.status() < 500) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode body = objectMapper.readTree(feignError.contentUTF8());
+                String code = body.path("code").asText(null);
+                String message = body.path("message").asText(null);
+                HttpStatus httpStatus = HttpStatus.resolve(feignError.status());
+                if (code != null && message != null && httpStatus != null) {
+                    return new BusinessException(code, message, httpStatus);
+                }
+            } catch (Exception ignored) {
+                // Body không phải JSON — dùng lỗi chung bên dưới.
+            }
+        }
+        log.warn("auth-service sync failed: {}", ex.getMessage());
+        return new BusinessException(
+                "AUTH_SYNC_FAILED", "Không cập nhật được tài khoản đăng nhập, vui lòng thử lại", HttpStatus.BAD_GATEWAY);
     }
 
     @PutMapping("/api/admin/users/{id}/roles")
@@ -262,8 +383,12 @@ public class UserController {
         return ApiResponse.ok("USER_ROLES_UPDATED", "User roles updated", userProfileService.updateRoles(id, request.get("roles")));
     }
 
+    /// Xoá hồ sơ mà để nguyên tài khoản đăng nhập thì người dùng vẫn đăng nhập được ⇒ khoá tài khoản
+    /// (thu hồi refresh token) trước; auth-service lỗi thì không xoá.
     @DeleteMapping("/api/admin/users/{id}")
     public ApiResponse<Void> adminDelete(@PathVariable Long id) {
+        userProfileService.get(id);
+        syncAuthStatus(id, "INACTIVE");
         userProfileService.delete(id);
         return ApiResponse.ok("USER_DELETED", "User deleted");
     }

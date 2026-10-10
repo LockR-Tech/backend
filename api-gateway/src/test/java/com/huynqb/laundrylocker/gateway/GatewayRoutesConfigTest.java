@@ -29,6 +29,10 @@ class GatewayRoutesConfigTest {
         assertRoutedTo("/api/admin/payments/stats", "lb://payment-service");
         assertRoutedTo("/api/admin/payments/refunds", "lb://payment-service");
         assertRoutedTo("/api/admin/payments/wallet-transactions", "lb://payment-service");
+        assertRoutedTo("/api/admin/feedback", "lb://order-service");
+        assertRoutedTo("/api/admin/feedback/7/reply", "lb://order-service");
+        assertRoutedTo("/api/admin/analytics/satisfaction", "lb://order-service");
+        assertRoutedTo("/api/admin/dashboard/peak-hours", "lb://order-service");
     }
 
     private void assertRoutedTo(String path, String expectedUri) {

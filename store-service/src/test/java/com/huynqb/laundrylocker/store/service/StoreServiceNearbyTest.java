@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.store.service;
 
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
+import com.huynqb.laundrylocker.store.client.LockerClient;
 import com.huynqb.laundrylocker.store.client.OrderClient;
 import com.huynqb.laundrylocker.store.dto.StoreResponse;
 import com.huynqb.laundrylocker.store.model.StoreLocation;
@@ -27,6 +28,8 @@ class StoreServiceNearbyTest {
     OrderClient orderClient;
     @Mock
     CloudinaryMediaStorage mediaStorage;
+    @Mock
+    LockerClient lockerClient;
 
     @BeforeEach
     void setUp() {
@@ -37,7 +40,7 @@ class StoreServiceNearbyTest {
 
     @Test
     void defaultRadiusIsTenKilometres() {
-        StoreService service = new StoreService(repository, orderClient, mediaStorage, TestStoreRules.defaults());
+        StoreService service = new StoreService(repository, orderClient, mediaStorage, TestStoreRules.defaults(), lockerClient);
 
         assertEquals(List.of(1L), ids(service.nearby(10.77, 106.70, null)));
     }
@@ -46,7 +49,7 @@ class StoreServiceNearbyTest {
     void defaultRadiusFollowsAdminSettingButExplicitRadiusWins() {
         StoreService service = new StoreService(
                 repository, orderClient, mediaStorage,
-                TestStoreRules.of(Map.of("app.store.nearby-default-radius-km", "25.5")));
+                TestStoreRules.of(Map.of("app.store.nearby-default-radius-km", "25.5")), lockerClient);
 
         assertEquals(List.of(1L, 2L), ids(service.nearby(10.77, 106.70, null)));
         assertEquals(List.of(1L), ids(service.nearby(10.77, 106.70, 5.0)));

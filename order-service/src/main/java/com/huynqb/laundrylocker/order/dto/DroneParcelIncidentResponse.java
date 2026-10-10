@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.order.dto;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -47,5 +48,8 @@ public record DroneParcelIncidentResponse(
         LocalDateTime updatedAt,
         List<DroneIncidentEvidenceResponse> evidence,
         List<DroneIncidentTimelineResponse> timeline,
-        List<DroneIncidentProposalResponse> proposals) {
+        List<DroneIncidentProposalResponse> proposals,
+        /// Mức bồi thường gợi ý theo chính sách của đơn (giá trị khai báo × tỉ lệ, chặn trần) —
+        /// cùng công thức dùng khi lập đề xuất; null khi đơn tắt chính sách bồi thường sự cố.
+        BigDecimal suggestedCompensation) {
 }

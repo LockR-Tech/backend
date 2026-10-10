@@ -16,6 +16,7 @@ import com.huynqb.laundrylocker.iot.repository.GatewayDeviceRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -47,6 +48,8 @@ public class GatewayProvisioningService {
     /// Pi gửi heartbeat mỗi 60 s; quá 150 s không thấy thì coi là mất kết nối.
     static final long ONLINE_WINDOW_SECONDS = 150;
     static final int SETUP_TEST_TIMEOUT_SECONDS = 10;
+    /// Loại dòng nhật ký mang trạng thái kết nối của bộ điều khiển (GATEWAY là tên cũ).
+    static final List<String> CONNECTION_LOG_TYPES = List.of("DISCOVERY", "GATEWAY");
 
     private final GatewayDeviceRepository repository;
     private final LockerMqttService mqtt;
@@ -109,14 +112,7 @@ public class GatewayProvisioningService {
             logEntry.setMessage(String.format("Bộ điều khiển kết nối thành công (Cấp nguồn điện / Khởi động) · %s · %d ô phần cứng · firmware %s · lúc %s",
                     hwStr, slots, fw, seenTime));
             boxAccessLogRepository.save(logEntry);
-
-            BoxAccessLog screenLog = new BoxAccessLog();
-            screenLog.setLockerId(targetLockerId);
-            screenLog.setBoxId(0L);
-            screenLog.setCredentialType("DISPLAY");
-            screenLog.setResult("ONLINE");
-            screenLog.setMessage(String.format("Màn hình cảm ứng 7\" Waveshare [1024×600 IPS] & Kiosk UI :3002 kết nối thành công lúc %s", seenTime));
-            boxAccessLogRepository.save(screenLog);
+            // Không ghi dòng "màn hình kết nối": Pi chưa gửi telemetry màn hình nên không có căn cứ để báo màn hình OK.
         }
     }
 
@@ -150,17 +146,50 @@ public class GatewayProvisioningService {
                     logEntry.setMessage(String.format("Bộ điều khiển kết nối lại thành công (Cấp điện / Bắt được tín hiệu) · %s · %d ô phần cứng · firmware %s · lúc %s",
                             hwStr, slots, fw, seenTime));
                     boxAccessLogRepository.save(logEntry);
-
-                    BoxAccessLog screenLog = new BoxAccessLog();
-                    screenLog.setLockerId(targetLockerId);
-                    screenLog.setBoxId(0L);
-                    screenLog.setCredentialType("DISPLAY");
-                    screenLog.setResult("ONLINE");
-                    screenLog.setMessage(String.format("Màn hình cảm ứng 7\" Waveshare & Kiosk UI :3002 kết nối lại thành công lúc %s", seenTime));
-                    boxAccessLogRepository.save(screenLog);
                 }
             }
         });
+    }
+
+    /// Quét bộ điều khiển quá {@link #ONLINE_WINDOW_SECONDS} giây không heartbeat ⇒ ghi một dòng
+    /// DISCOVERY/OFFLINE cho tủ, chỉ khi sự kiện kết nối gần nhất của tủ còn là ONLINE (mỗi lần mất
+    /// kết nối ghi đúng một dòng; có heartbeat lại thì {@link #touch} ghi dòng kết nối lại). Trước đây
+    /// dòng mất kết nối chỉ được ghi khi có người mở trang nhật ký (GET), nay ghi đúng lúc phát hiện.
+    @Scheduled(
+            fixedDelayString = "${app.iot.gateway-offline-check-ms:60000}",
+            initialDelayString = "${app.iot.gateway-offline-check-ms:60000}")
+    @Transactional
+    public int logDisconnectedGateways() {
+        if (boxAccessLogRepository == null) {
+            return 0;
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minusSeconds(ONLINE_WINDOW_SECONDS);
+        int logged = 0;
+        for (GatewayDevice device : repository.findAll()) {
+            Long targetLockerId = device.getLockerId() != null ? device.getLockerId() : device.getReportedLockerId();
+            LocalDateTime lastSeen = device.getLastSeenAt();
+            if (targetLockerId == null || lastSeen == null || lastSeen.isAfter(cutoff)) {
+                continue;
+            }
+            boolean lastKnownOnline = boxAccessLogRepository
+                    .findFirstByLockerIdAndCredentialTypeInOrderByCreatedAtDescIdDesc(targetLockerId, CONNECTION_LOG_TYPES)
+                    .map(entry -> "ONLINE".equalsIgnoreCase(entry.getResult()))
+                    .orElse(false);
+            if (!lastKnownOnline) {
+                continue;
+            }
+            String hwStr = device.getHardware() != null ? device.getHardware().toUpperCase() : "GPIO";
+            BoxAccessLog entry = new BoxAccessLog();
+            entry.setLockerId(targetLockerId);
+            entry.setBoxId(0L);
+            entry.setCredentialType("DISCOVERY");
+            entry.setResult("OFFLINE");
+            entry.setMessage(String.format("Bộ điều khiển mất kết nối (Rút nguồn điện / Ngoại tuyến) · %s · thấy lần cuối lúc %s",
+                    hwStr, lastSeen.format(TIME_FMT)));
+            boxAccessLogRepository.save(entry);
+            logged++;
+        }
+        return logged;
     }
 
     @Transactional

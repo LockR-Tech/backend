@@ -61,9 +61,21 @@ public class PaymentController {
         return create(request);
     }
 
+    /// Đường cũ ngoài /api/admin (gateway không chặn theo vai trò) — chỉ ADMIN được đổi trạng thái giao dịch.
     @PatchMapping("/api/payments/{id}/status")
     public ApiResponse<PaymentResponse> updateStatus(
-            @PathVariable Long id, @Valid @RequestBody UpdatePaymentStatusRequest request) {
+            @PathVariable Long id,
+            @Valid @RequestBody UpdatePaymentStatusRequest request,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        if (!com.huynqb.laundrylocker.common.security.UserRoles.isAdmin(roles)) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "PAYMENT_STATUS_FORBIDDEN", "Chỉ quản trị viên được đổi trạng thái giao dịch",
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        return adminUpdateStatus(id, request);
+    }
+
+    private ApiResponse<PaymentResponse> adminUpdateStatus(Long id, UpdatePaymentStatusRequest request) {
         return ApiResponse.ok("PAYMENT_STATUS_UPDATED", "Payment status updated", paymentService.updateStatus(id, request));
     }
 
@@ -171,7 +183,7 @@ public class PaymentController {
     @PatchMapping("/api/admin/payments/{id}/status")
     public ApiResponse<PaymentResponse> adminStatus(
             @PathVariable Long id, @Valid @RequestBody UpdatePaymentStatusRequest request) {
-        return updateStatus(id, request);
+        return adminUpdateStatus(id, request);
     }
 
     @GetMapping("/api/admin/payments/{paymentId}")
@@ -182,7 +194,7 @@ public class PaymentController {
     @PutMapping("/api/admin/payments/{paymentId}/status")
     public ApiResponse<PaymentResponse> adminStatusLegacy(
             @PathVariable Long paymentId, @Valid @RequestBody UpdatePaymentStatusRequest request) {
-        return updateStatus(paymentId, request);
+        return adminUpdateStatus(paymentId, request);
     }
 
     /// order-service gọi khi một đơn đã thanh toán bị huỷ (gateway chặn /internal từ ngoài).

@@ -118,6 +118,21 @@ class DroneParcelIncidentServiceTest {
     }
 
     @Test
+    void incidentResponseCarriesSuggestedCompensationOnlyWhenPolicyEnabled() {
+        DroneParcelIncident incident = incident("VERIFIED");
+        LockerOrder order = policyOrder();
+        order.setIncidentCompensationCap(new BigDecimal("500.00"));
+        when(incidentRepository.findById(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+
+        // 1000 × 60% = 600, chặn trần 500.
+        assertEquals(new BigDecimal("500.00"), service.get(7L, 1L, "ADMIN").suggestedCompensation());
+
+        order.setIncidentCompensationEnabled(false);
+        assertNull(service.get(7L, 1L, "ADMIN").suggestedCompensation());
+    }
+
+    @Test
     void customerReviewRequestPreservesProposalAndOpensDispute() {
         DroneParcelIncident incident = incident("VERIFIED");
         incident.setStatus("AWAITING_CUSTOMER_RESPONSE");

@@ -80,6 +80,14 @@ public class DroneDeliveryQueryService {
     @Transactional(readOnly = true)
     public List<DroneDeliveryOrderResponse> operations(
             String deliveryStage, Long userId, boolean admin, boolean includeFinished) {
+        return operations(deliveryStage, userId, admin, includeFinished, null);
+    }
+
+    /// Như trên; {@code droneUnitId} khác null ⇒ chỉ giữ đơn có nhiệm vụ bay gán drone đó
+    /// (đơn chưa có nhiệm vụ/chưa gán drone bị loại).
+    @Transactional(readOnly = true)
+    public List<DroneDeliveryOrderResponse> operations(
+            String deliveryStage, Long userId, boolean admin, boolean includeFinished, Long droneUnitId) {
         List<LockerOrder> orders = includeFinished
                 ? orderRepository.findByTypeOrderByUpdatedAtDesc("DRONE_DELIVERY")
                 : orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc("DRONE_DELIVERY", TERMINAL_ORDER_STATUSES);
@@ -96,6 +104,8 @@ public class DroneDeliveryQueryService {
                 .map(order -> new Row(order, missionRepository.findByOrderId(order.getId()).orElse(null)))
                 .filter(row -> admin || row.mission() == null
                         || Objects.equals(userId, row.mission().getAssignedByUserId()))
+                .filter(row -> droneUnitId == null
+                        || (row.mission() != null && droneUnitId.equals(row.mission().getDroneUnitId())))
                 .toList();
         return buildAll(rows);
     }

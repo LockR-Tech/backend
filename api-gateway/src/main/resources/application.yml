@@ -192,6 +192,11 @@ spring:
               uri: lb://order-service
               predicates:
                 - Path=/api/admin/dashboard/**
+            # Đánh giá dịch vụ (order_ratings) + số liệu tab "Chỉ số & Thống kê" của /admin/feedback
+            - id: admin-feedback
+              uri: lb://order-service
+              predicates:
+                - Path=/api/admin/feedback,/api/admin/feedback/**,/api/admin/analytics/**
 
           # Global CORS. Origins are env-driven so production domains can be added
           # without a code change: set APP_CORS_ALLOWED_ORIGINS (comma-separated)

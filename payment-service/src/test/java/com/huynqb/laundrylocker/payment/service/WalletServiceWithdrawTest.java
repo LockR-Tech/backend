@@ -225,4 +225,30 @@ class WalletServiceWithdrawTest {
         assertEquals(0, wallet.getBalance().compareTo(BigDecimal.valueOf(70000)));
         verify(transactionRepository).save(any(WalletTransaction.class));
     }
+    @Test
+    void listAdminWithdrawals_includesRequesterNameAndPhone() {
+        WithdrawalRecord known = new WithdrawalRecord();
+        known.setId(1L);
+        known.setUserId(7L);
+        known.setAmount(BigDecimal.valueOf(50000));
+        known.setStatus("PENDING");
+        WithdrawalRecord unknown = new WithdrawalRecord();
+        unknown.setId(2L);
+        unknown.setUserId(8L);
+        unknown.setAmount(BigDecimal.valueOf(20000));
+        unknown.setStatus("PENDING");
+        when(withdrawalRepository.findByStatusOrderByCreatedAtDesc("PENDING")).thenReturn(java.util.List.of(known, unknown));
+        when(resolver.users(java.util.List.of(7L, 8L))).thenReturn(java.util.Map.of(
+                7L, new com.huynqb.laundrylocker.common.dto.UserSummary(7L, "a@lockr.vn", "0901000007", "Nguyễn An", "ACTIVE")));
+
+        java.util.List<WithdrawResponse> result = walletService.listAdminWithdrawals("pending");
+
+        assertEquals(7L, result.get(0).userId());
+        assertEquals("Nguyễn An", result.get(0).userName());
+        assertEquals("0901000007", result.get(0).userPhone());
+        // user-service không trả người này ⇒ vẫn có userId, tên/sđt null.
+        assertEquals(8L, result.get(1).userId());
+        assertNull(result.get(1).userName());
+        assertNull(result.get(1).userPhone());
+    }
 }

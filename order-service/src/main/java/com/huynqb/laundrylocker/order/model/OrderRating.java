@@ -28,11 +28,38 @@ public class OrderRating {
     @Column(length = 1000)
     private String comment;
 
+    /// Admin trả lời khách (trang /admin/feedback).
+    @Column(name = "admin_reply", length = 2000)
+    private String adminReply;
+
+    @Column(name = "replied_at")
+    private LocalDateTime repliedAt;
+
+    @Column(name = "replied_by")
+    private Long repliedBy;
+
+    @Column(nullable = false)
+    private boolean resolved;
+
+    @Column(name = "resolved_at")
+    private LocalDateTime resolvedAt;
+
+    @Column(name = "resolved_by")
+    private Long resolvedBy;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
 
     @PrePersist
     void onCreate() {
         createdAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    void onUpdate() {
+        updatedAt = LocalDateTime.now();
     }
 }

@@ -400,6 +400,7 @@ class LockerServiceDroneFleetTest {
         locker.setId(id);
         locker.setCode(code);
         locker.setName("Demo locker");
+        locker.setLandingPad(true);
         return locker;
     }
 }

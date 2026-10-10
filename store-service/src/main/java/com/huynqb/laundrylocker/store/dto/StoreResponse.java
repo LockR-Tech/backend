@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.store.dto;
 
+import java.time.LocalDateTime;
+
 public record StoreResponse(
         Long id,
         String name,
@@ -13,5 +15,7 @@ public record StoreResponse(
         Double distanceKm,
         String status,
         /// Cùng giá trị với `image` — admin web đọc tên này.
-        String imageUrl) {
+        String imageUrl,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt) {
 }

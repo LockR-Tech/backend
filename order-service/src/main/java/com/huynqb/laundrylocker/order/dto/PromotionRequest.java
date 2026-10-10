@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.order.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -18,5 +19,6 @@ public record PromotionRequest(
         LocalDateTime endAt,
         Long lockerId,
         Integer totalUsageLimit,
-        Integer perUserLimit) {
+        Integer perUserLimit,
+        @Size(max = 1000) String description) {
 }

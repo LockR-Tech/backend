@@ -202,10 +202,43 @@ public class PaymentService {
         return toResponse(saved);
     }
 
+    /// Trạng thái admin đặt tay được cho một giao dịch.
+    static final java.util.Set<String> ADMIN_SETTABLE_PAYMENT_STATUSES = java.util.Set.of("PENDING", "COMPLETED", "FAILED");
+    /// Đã thu tiền/đã hoàn tiền: đổi tay sẽ lệch sổ (doanh thu, ví, hoàn tiền) nên khoá.
+    static final java.util.Set<String> LOCKED_PAYMENT_STATUSES = java.util.Set.of("COMPLETED", "REFUNDED");
+
+    /// Admin đổi trạng thái giao dịch bằng tay. Chặn (409 PAYMENT_STATUS_LOCKED):
+    /// - nạp ví (`*_TOPUP`): tiền chỉ được cộng vào ví trong callback cổng thanh toán, đánh dấu
+    ///   COMPLETED bằng tay không cộng ví ⇒ lệch tiền;
+    /// - giao dịch đã COMPLETED/REFUNDED: hoàn tiền đi qua luồng hoàn tiền, không sửa tay.
+    /// Gửi lại đúng trạng thái hiện tại thì không làm gì (không phát lại sự kiện).
     @Transactional
     public PaymentResponse updateStatus(Long id, UpdatePaymentStatusRequest request) {
+        String target = request.status() == null ? "" : request.status().trim().toUpperCase(java.util.Locale.ROOT);
+        if (!ADMIN_SETTABLE_PAYMENT_STATUSES.contains(target)) {
+            throw new BusinessException(
+                    "PAYMENT_STATUS_INVALID", "Trạng thái giao dịch không hợp lệ: " + request.status()
+                    + " (chỉ PENDING, COMPLETED, FAILED)");
+        }
         PaymentRecord payment = find(id);
-        payment.setStatus(request.status().toUpperCase());
+        String current = payment.getStatus() == null ? "" : payment.getStatus().toUpperCase(java.util.Locale.ROOT);
+        if (target.equals(current)) {
+            return toResponse(payment);
+        }
+        if (payment.getMethod() != null && payment.getMethod().toUpperCase(java.util.Locale.ROOT).endsWith("_TOPUP")) {
+            throw new BusinessException(
+                    "PAYMENT_STATUS_LOCKED",
+                    "Không thể đổi tay trạng thái giao dịch nạp ví — ví chỉ được cộng khi cổng thanh toán xác nhận",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+        if (LOCKED_PAYMENT_STATUSES.contains(current)) {
+            throw new BusinessException(
+                    "PAYMENT_STATUS_LOCKED",
+                    "Giao dịch đã " + ("REFUNDED".equals(current) ? "hoàn tiền" : "hoàn tất")
+                            + " — không thể đổi trạng thái, dùng chức năng hoàn tiền nếu cần",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+        payment.setStatus(target);
         PaymentResponse response = toResponse(repository.save(payment));
         if ("COMPLETED".equals(payment.getStatus())) {
             publish(DomainEventNames.PAYMENT_COMPLETED, payment);
