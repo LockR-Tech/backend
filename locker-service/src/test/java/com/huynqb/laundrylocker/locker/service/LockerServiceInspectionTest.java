@@ -280,18 +280,28 @@ class LockerServiceInspectionTest {
                         () -> service.completeSchedule(SCHEDULE_ID, invalid, TECH, false)).getCode());
     }
 
-    // Lịch drone là việc của KTV drone ⇒ không mở phiếu tủ, vẫn dời hạn như cũ.
+    // Lịch drone là việc của KTV drone ⇒ mở phiếu drone, không mở phiếu tủ, vẫn dời hạn như cũ.
     @Test
     void droneScheduleFailureDoesNotOpenALockerTicket() {
         schedule.setLockerId(null);
         schedule.setDroneUnitId(8L);
+        DroneUnit drone = new DroneUnit();
+        drone.setId(8L);
+        drone.setLockerId(LOCKER_ID);
+        drone.setCode("DRONE-08");
+        when(droneUnitRepository.findById(8L)).thenReturn(Optional.of(drone));
+        when(droneUnitRepository.save(any(DroneUnit.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         service.completeSchedule(SCHEDULE_ID, items("PASS", "FAIL", "PASS"), TECH, false);
 
         assertEquals("FAILED", schedule.getLastResult());
         assertNull(schedule.getPendingReportId());
         assertTrue(schedule.getNextDueAt().isAfter(LocalDateTime.now().plusDays(29)));
-        verify(reportRepository, never()).save(any(LockerReport.class));
+        ArgumentCaptor<LockerReport> reportCaptor = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository).save(reportCaptor.capture());
+        assertEquals(ReportCategory.DRONE, reportCaptor.getValue().getCategory());
+        assertEquals(8L, reportCaptor.getValue().getDroneUnitId());
+        assertNull(reportCaptor.getValue().getBoxId());
     }
 
     @Test
