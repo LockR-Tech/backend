@@ -103,6 +103,21 @@ class LockerServiceInspectionTest {
     }
 
     @Test
+    void droneTechnicianCannotReadOrCompleteLockerSchedule() {
+        BusinessException readError = assertThrows(
+                BusinessException.class,
+                () -> service.requireScheduleTarget(SCHEDULE_ID, "DRONE"));
+        assertEquals("SCHEDULE_TARGET_FORBIDDEN", readError.getCode());
+
+        BusinessException completeError = assertThrows(
+                BusinessException.class,
+                () -> service.completeSchedule(
+                        SCHEDULE_ID, items("PASS", "PASS", "PASS"), TECH, false, "DRONE"));
+        assertEquals("SCHEDULE_TARGET_FORBIDDEN", completeError.getCode());
+        verify(scheduleRepository, never()).save(any(MaintenanceSchedule.class));
+    }
+
+    @Test
     void allItemsPassingAdvancesTheDueDate() {
         var response = service.completeSchedule(
                 SCHEDULE_ID, items("PASS", "PASS", "NA"), TECH, false);
