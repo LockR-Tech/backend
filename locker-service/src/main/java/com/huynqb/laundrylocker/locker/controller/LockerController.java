@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.locker.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.LockerBoxSummary;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.locker.dto.*;
 import com.huynqb.laundrylocker.locker.service.LockerService;
@@ -421,26 +422,27 @@ public class LockerController {
             @RequestParam(required = false, defaultValue = "false") boolean all,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         if (mine && userId != null) {
-            return ApiResponse.ok(lockerService.assignedDroneReports(userId));
+            return ApiResponse.ok(droneReportsOnly(lockerService.assignedReports(userId)));
         }
         if (routed && userId != null) {
-            return ApiResponse.ok(lockerService.routedDroneReports(userId));
+            return ApiResponse.ok(routedDroneReports(lockerService.openReports(), userId));
         }
         if (all) {
-            return ApiResponse.ok(lockerService.allDroneReports());
+            return ApiResponse.ok(droneReportsOnly(lockerService.allReports()));
         }
-        return ApiResponse.ok(lockerService.routedDroneReports(userId));
+        return ApiResponse.ok(routedDroneReports(lockerService.openReports(), userId));
     }
 
     @PutMapping("/api/drone-technician/reports/{id}/claim")
     public ApiResponse<LockerReportResponse> droneTechnicianClaimReport(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok("DRONE_REPORT_CLAIMED", "Drone report claimed", lockerService.claimDroneReport(id, userId));
+        requireDroneReport(id);
+        return ApiResponse.ok("DRONE_REPORT_CLAIMED", "Drone report claimed", lockerService.claimReport(id, userId));
     }
 
     @GetMapping("/api/drone-technician/reports/{id}")
     public ApiResponse<LockerReportResponse> droneTechnicianReport(@PathVariable Long id) {
-        return ApiResponse.ok(lockerService.getDroneReport(id));
+        return ApiResponse.ok(requireDroneReport(id));
     }
 
     @PutMapping("/api/drone-technician/reports/{id}/resolve")
@@ -452,13 +454,13 @@ public class LockerController {
         return ApiResponse.ok(
                 "DRONE_REPORT_RESOLVED",
                 "Drone report resolved",
-                lockerService.resolveDroneReport(id, userId, body, UserRoles.isAdmin(roles)));
+                resolveDroneReport(id, userId, body, UserRoles.isAdmin(roles)));
     }
 
     @GetMapping("/api/drone-technician/reports/{id}/attachments")
     public ApiResponse<List<ReportAttachmentResponse>> droneTechnicianReportAttachments(
             @PathVariable Long id, @RequestParam(required = false) String stage) {
-        lockerService.assertDroneReport(id);
+        requireDroneReport(id);
         return ApiResponse.ok(attachmentService.list(id, stage));
     }
 
@@ -468,7 +470,7 @@ public class LockerController {
             @Valid @RequestBody ReportAttachmentsRequest body,
             @RequestHeader("X-User-Id") Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
-        lockerService.assertDroneReport(id);
+        requireDroneReport(id);
         return ApiResponse.ok(
                 "DRONE_REPORT_ATTACHMENTS_ADDED",
                 "Drone report photos added",
@@ -478,7 +480,7 @@ public class LockerController {
 
     @GetMapping("/api/drone-technician/reports/{id}/logs")
     public ApiResponse<List<RepairLogResponse>> droneTechnicianReportLogs(@PathVariable Long id) {
-        lockerService.assertDroneReport(id);
+        requireDroneReport(id);
         return ApiResponse.ok(lockerService.repairLogs(id));
     }
 
@@ -488,11 +490,41 @@ public class LockerController {
             @Valid @RequestBody RepairLogRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
-        lockerService.assertDroneReport(id);
+        requireDroneReport(id);
         return ApiResponse.ok(
                 "DRONE_REPAIR_LOG_ADDED",
                 "Drone repair log added",
                 lockerService.addRepairLog(id, body.note(), userId, body.attachments(), UserRoles.isAdmin(roles)));
+    }
+
+    private List<LockerReportResponse> droneReportsOnly(List<LockerReportResponse> reports) {
+        return reports.stream().filter(this::isDroneReport).toList();
+    }
+
+    private List<LockerReportResponse> routedDroneReports(
+            List<LockerReportResponse> reports, Long userId) {
+        return reports.stream()
+                .filter(this::isDroneReport)
+                .filter(report -> report.routedToUserId() == null || report.routedToUserId().equals(userId))
+                .toList();
+    }
+
+    private LockerReportResponse requireDroneReport(Long reportId) {
+        LockerReportResponse report = lockerService.getReport(reportId);
+        if (!isDroneReport(report)) {
+            throw new BusinessException("DRONE_REPORT_REQUIRED", "Phiếu này không thuộc đội kỹ thuật Drone");
+        }
+        return report;
+    }
+
+    private LockerReportResponse resolveDroneReport(
+            Long reportId, Long userId, ResolveReportRequest body, boolean admin) {
+        requireDroneReport(reportId);
+        return lockerService.resolveReportAndClearFault(reportId, userId, body, admin);
+    }
+
+    private boolean isDroneReport(LockerReportResponse report) {
+        return "DRONE".equalsIgnoreCase(report.category()) || report.droneUnitId() != null;
     }
 
     @GetMapping("/api/drone-technician/drones")
