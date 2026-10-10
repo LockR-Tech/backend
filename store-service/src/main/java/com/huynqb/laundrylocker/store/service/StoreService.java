@@ -1,10 +1,13 @@
 package com.huynqb.laundrylocker.store.service;
 
+import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.common.media.MediaPurpose;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.common.media.VerifiedMedia;
+import com.huynqb.laundrylocker.store.client.LockerClient;
 import com.huynqb.laundrylocker.store.client.OrderClient;
 import com.huynqb.laundrylocker.store.dto.StoreRequest;
 import com.huynqb.laundrylocker.store.dto.StoreResponse;
@@ -12,12 +15,14 @@ import com.huynqb.laundrylocker.store.model.StoreLocation;
 import com.huynqb.laundrylocker.store.repository.StoreRepository;
 import com.huynqb.laundrylocker.store.settings.StoreRules;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -28,6 +33,8 @@ public class StoreService {
     private final CloudinaryMediaStorage mediaStorage;
     /// Bán kính tìm cửa hàng mặc định do admin cấu hình (ADR-0005).
     private final StoreRules rules;
+    /// Kiểm tra tủ còn thuộc cửa hàng trước khi xoá.
+    private final LockerClient lockerClient;
 
     @Transactional
     public StoreResponse create(StoreRequest request) {
@@ -97,9 +104,44 @@ public class StoreService {
         return toResponse(repository.save(store));
     }
 
+    /// Không xoá cửa hàng còn tủ (tủ sẽ trỏ tới cửa hàng không tồn tại). Chưa tra được
+    /// locker-service thì từ chối thay vì xoá khi chưa chắc chắn.
     @Transactional
     public void delete(Long id) {
-        repository.delete(repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id)));
+        StoreLocation store = repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id));
+        List<LockerClient.LockerRef> lockers = lockersOf(id);
+        if (!lockers.isEmpty()) {
+            String codes = lockers.stream()
+                    .limit(5)
+                    .map(locker -> StringUtils.hasText(locker.code()) ? locker.code() : "#" + locker.id())
+                    .collect(Collectors.joining(", "));
+            throw new BusinessException(
+                    "STORE_HAS_LOCKERS",
+                    "Cửa hàng còn " + lockers.size() + " tủ (" + codes + (lockers.size() > 5 ? ", …" : "")
+                            + "). Chuyển tủ sang cửa hàng khác hoặc xoá tủ trước khi xoá cửa hàng.",
+                    HttpStatus.CONFLICT);
+        }
+        repository.delete(store);
+    }
+
+    private List<LockerClient.LockerRef> lockersOf(Long storeId) {
+        ApiResponse<List<LockerClient.LockerRef>> response;
+        try {
+            response = lockerClient.lockersByStore(storeId);
+        } catch (RuntimeException ex) {
+            response = null;
+        }
+        if (response == null || !response.success()) {
+            throw new BusinessException(
+                    "LOCKER_SERVICE_UNAVAILABLE",
+                    "Chưa kiểm tra được các tủ thuộc cửa hàng, vui lòng thử lại sau.",
+                    HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        List<LockerClient.LockerRef> lockers = response.data() == null ? List.of() : response.data();
+        // Phòng khi bên kia bỏ qua tham số storeId: chỉ tính tủ thực sự thuộc cửa hàng này.
+        return lockers.stream()
+                .filter(locker -> locker.storeId() == null || storeId.equals(locker.storeId()))
+                .toList();
     }
 
     /// API cũ nhận URL tuỳ ý — giữ để tương thích; client mới dùng `updateImage(id, MediaUpload, userId)`.
@@ -134,19 +176,39 @@ public class StoreService {
         }
     }
 
+    /// Chỉ ghi đè field có gửi: field null giữ giá trị hiện tại (tạo mới ⇒ mặc định của entity:
+    /// active = true, status = ACTIVE); chuỗi rỗng xoá field chữ.
     private void apply(StoreLocation store, StoreRequest request) {
         store.setName(request.name());
-        store.setContactPhone(request.contactPhone());
-        store.setAddress(request.address());
-        store.setLatitude(request.latitude());
-        store.setLongitude(request.longitude());
+        if (request.contactPhone() != null) {
+            store.setContactPhone(textOrNull(request.contactPhone()));
+        }
+        if (request.address() != null) {
+            store.setAddress(textOrNull(request.address()));
+        }
+        if (request.latitude() != null) {
+            store.setLatitude(request.latitude());
+        }
+        if (request.longitude() != null) {
+            store.setLongitude(request.longitude());
+        }
         // Form sửa thông tin không gửi ảnh ⇒ giữ ảnh hiện tại; xoá ảnh qua DELETE /image.
         if (StringUtils.hasText(request.image())) {
             store.setImage(request.image());
         }
-        store.setDescription(request.description());
-        store.setActive(request.active() == null ? true : request.active());
-        store.setStatus(StringUtils.hasText(request.status()) ? request.status() : "ACTIVE");
+        if (request.description() != null) {
+            store.setDescription(textOrNull(request.description()));
+        }
+        if (request.active() != null) {
+            store.setActive(request.active());
+        }
+        if (StringUtils.hasText(request.status())) {
+            store.setStatus(request.status());
+        }
+    }
+
+    private static String textOrNull(String value) {
+        return StringUtils.hasText(value) ? value : null;
     }
 
     private StoreResponse toResponse(StoreLocation store) {
@@ -157,7 +219,7 @@ public class StoreService {
         return new StoreResponse(
                 store.getId(), store.getName(), store.getContactPhone(), store.getAddress(),
                 store.getLatitude(), store.getLongitude(), store.getImage(), store.getDescription(), store.getActive(),
-                distanceKm, store.getStatus(), store.getImage());
+                distanceKm, store.getStatus(), store.getImage(), store.getCreatedAt(), store.getUpdatedAt());
     }
 
     private Double distanceKm(Double lat1, Double lon1, Double lat2, Double lon2) {

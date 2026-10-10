@@ -4,6 +4,7 @@ import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.notification.dto.AdminBroadcastRequest;
 import com.huynqb.laundrylocker.notification.dto.FcmTokenRequest;
 import com.huynqb.laundrylocker.notification.dto.NotificationResponse;
 import com.huynqb.laundrylocker.notification.model.FcmToken;
@@ -21,6 +22,7 @@ import org.springframework.util.StringUtils;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -55,11 +57,7 @@ public class NotificationService {
         notification.setReferenceType(request.referenceType());
         NotificationMessage saved = notificationRepository.save(notification);
 
-        Map<String, String> data = new HashMap<>();
-        data.put("notificationId", String.valueOf(saved.getId()));
-        data.put("type", saved.getType());
-        data.put("referenceType", saved.getReferenceType() == null ? "" : saved.getReferenceType());
-        data.put("referenceId", saved.getReferenceId() == null ? "" : String.valueOf(saved.getReferenceId()));
+        Map<String, String> data = pushData(saved);
         if (extraData != null) {
             data.putAll(extraData);
         }
@@ -83,6 +81,8 @@ public class NotificationService {
         return response;
     }
 
+    /// Gửi mọi user đã đăng ký FCM token. Push FCM đi qua create() — mỗi user một lần, kèm
+    /// notificationId riêng — nên mỗi thiết bị nhận đúng một push; không gửi thêm push chung.
     @Transactional
     public List<NotificationResponse> broadcast(NotificationRequest request) {
         List<Long> userIds = fcmTokenRepository.findAll().stream().map(FcmToken::getUserId).distinct().toList();
@@ -90,9 +90,32 @@ public class NotificationService {
                 userIds.stream()
                         .map(userId -> create(new NotificationRequest(userId, request.title(), request.message(), request.type(), request.referenceId(), request.referenceType())))
                         .toList();
-        fcmPushNotificationService.broadcast(request.title(), request.message(), Map.of("type", request.type() == null ? "SYSTEM" : request.type()));
         responses.forEach(webSocketNotificationService::broadcast);
         return responses;
+    }
+
+    /// Broadcast từ trang admin: không có `userIds` ⇒ như {@link #broadcast(NotificationRequest)};
+    /// có `userIds` ⇒ chỉ gửi cho các user đó.
+    @Transactional
+    public List<NotificationResponse> adminBroadcast(AdminBroadcastRequest request) {
+        if (request.userIds() == null) {
+            return broadcast(request.template());
+        }
+        return sendToUsers(request.userIds(), request.template());
+    }
+
+    /// Tạo một notification cho từng user trong danh sách (bỏ trùng, bỏ null) rồi đẩy FCM/WebSocket
+    /// riêng cho user đó. Bản ghi luôn được tạo kể cả khi user chưa có FCM token, để tin vẫn hiện
+    /// trong hộp thư; không gửi lên kênh chung /topic/notifications.
+    @Transactional
+    public List<NotificationResponse> sendToUsers(List<Long> userIds, NotificationRequest template) {
+        return userIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .map(userId -> create(new NotificationRequest(
+                        userId, template.title(), template.message(), template.type(),
+                        template.referenceId(), template.referenceType())))
+                .toList();
     }
 
     @Transactional
@@ -136,19 +159,32 @@ public class NotificationService {
         return notificationRepository.countByUserIdAndIsReadFalse(userId);
     }
 
+    /// Đánh dấu đã đọc thay người dùng (trang admin) — không kiểm chủ sở hữu.
     @Transactional
     public NotificationResponse markRead(Long id) {
-        NotificationMessage notification =
-                notificationRepository.findById(id).orElseThrow(() -> new NotFoundException("Notification", id));
-        notification.setIsRead(true);
-        notification.setStatus("READ");
-        notification.setReadAt(java.time.LocalDateTime.now());
-        return toResponse(notificationRepository.save(notification));
+        return toResponse(markRead(find(id)));
+    }
+
+    /// Người dùng chỉ đánh dấu được notification của chính mình; notification của người khác
+    /// trả 404 giống như không tồn tại.
+    @Transactional
+    public NotificationResponse markRead(Long id, Long userId) {
+        return toResponse(markRead(findOwned(id, userId)));
     }
 
     @Transactional
-    public List<NotificationResponse> markBatchRead(List<Long> ids) {
-        return ids.stream().map(this::markRead).toList();
+    public List<NotificationResponse> markBatchRead(List<Long> ids, Long userId) {
+        return ids.stream().map(id -> markRead(id, userId)).toList();
+    }
+
+    /// Gửi lại push FCM của một notification cho đúng người nhận của nó (dùng lại data gốc).
+    /// Không tạo bản ghi mới, không đổi trạng thái đã đọc.
+    @Transactional(readOnly = true)
+    public NotificationResponse resend(Long id) {
+        NotificationMessage notification = find(id);
+        fcmPushNotificationService.sendToUser(
+                notification.getUserId(), notification.getTitle(), notification.getMessage(), pushData(notification));
+        return toResponse(notification);
     }
 
     @Transactional
@@ -161,12 +197,19 @@ public class NotificationService {
         notificationRepository.deleteByUserId(userId);
     }
 
+    /// Xoá bất kỳ notification nào (trang admin).
     @Transactional
     public void delete(Long id) {
         if (!notificationRepository.existsById(id)) {
             throw new NotFoundException("Notification", id);
         }
         notificationRepository.deleteById(id);
+    }
+
+    /// Người dùng chỉ xoá được notification của chính mình; của người khác trả 404.
+    @Transactional
+    public void delete(Long id, Long userId) {
+        notificationRepository.delete(findOwned(id, userId));
     }
 
     @Transactional
@@ -237,6 +280,32 @@ public class NotificationService {
                 || DomainEventNames.DELIVERY_STATUS_CHANGED.equals(eventType)
                 || DomainEventNames.PAYMENT_COMPLETED.equals(eventType)
                 || DomainEventNames.PAYMENT_FAILED.equals(eventType);
+    }
+
+    private NotificationMessage find(Long id) {
+        return notificationRepository.findById(id).orElseThrow(() -> new NotFoundException("Notification", id));
+    }
+
+    private NotificationMessage findOwned(Long id, Long userId) {
+        return notificationRepository.findByIdAndUserId(id, userId)
+                .orElseThrow(() -> new NotFoundException("Notification", id));
+    }
+
+    private NotificationMessage markRead(NotificationMessage notification) {
+        notification.setIsRead(true);
+        notification.setStatus("READ");
+        notification.setReadAt(java.time.LocalDateTime.now());
+        return notificationRepository.save(notification);
+    }
+
+    /// Phần data của message FCM; client mở đúng màn hình theo các field này.
+    private Map<String, String> pushData(NotificationMessage notification) {
+        Map<String, String> data = new HashMap<>();
+        data.put("notificationId", String.valueOf(notification.getId()));
+        data.put("type", notification.getType());
+        data.put("referenceType", notification.getReferenceType() == null ? "" : notification.getReferenceType());
+        data.put("referenceId", notification.getReferenceId() == null ? "" : String.valueOf(notification.getReferenceId()));
+        return data;
     }
 
     private NotificationResponse toResponse(NotificationMessage notification) {

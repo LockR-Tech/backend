@@ -104,7 +104,7 @@ public class LoyaltyController {
     }
 
     @GetMapping("/api/admin/loyalty/statistics")
-    public ApiResponse<Map<String, Object>> adminStatistics() {
+    public ApiResponse<LoyaltyStatisticsResponse> adminStatistics() {
         return ApiResponse.ok(loyaltyService.statistics());
     }
 

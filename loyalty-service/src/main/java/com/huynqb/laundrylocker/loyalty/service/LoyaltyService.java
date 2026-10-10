@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.loyalty.service;
 
+import com.huynqb.laundrylocker.common.util.BusinessTime;
 import com.huynqb.laundrylocker.loyalty.dto.*;
 import com.huynqb.laundrylocker.loyalty.model.LoyaltyAccount;
 import com.huynqb.laundrylocker.loyalty.model.PointTransaction;
@@ -11,6 +12,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,6 +27,15 @@ public class LoyaltyService {
     private final PointTransactionRepository transactionRepository;
     /// Mốc hạng, số tem/điểm đổi thưởng do admin cấu hình (ADR-0005).
     private final LoyaltyRules rules;
+
+    /// Hạng hiển thị sẵn trong thống kê (0 nếu chưa có ai) theo thứ tự tăng dần.
+    private static final List<String> TIERS = List.of("BRONZE", "SILVER", "GOLD", "PLATINUM");
+
+    private BusinessTime time = BusinessTime.system();
+
+    void setTime(BusinessTime time) {
+        this.time = time;
+    }
 
     @Transactional
     public LoyaltyAccountResponse adjustPoints(AdjustPointsRequest request) {
@@ -129,9 +143,48 @@ public class LoyaltyService {
         return List.of();
     }
 
+    /// Thống kê cho trang /admin/loyalty: hai truy vấn tổng hợp + một truy vấn đếm theo hạng,
+    /// không nạp từng tài khoản/giao dịch lên bộ nhớ.
     @Transactional(readOnly = true)
-    public Map<String, Object> statistics() {
-        return Map.of("accounts", accountRepository.count(), "transactions", transactionRepository.count());
+    public LoyaltyStatisticsResponse statistics() {
+        LocalDateTime monthStart = time.startOfDay(time.startOfMonth(time.today()));
+        LocalDateTime activeSince = time.now().minusDays(30);
+
+        LoyaltyAccountRepository.AccountAggregate accounts = accountRepository.aggregate(monthStart);
+        PointTransactionRepository.TransactionAggregate transactions =
+                transactionRepository.aggregate(monthStart, activeSince);
+
+        Map<String, Long> tiers = new LinkedHashMap<>();
+        TIERS.forEach(tier -> tiers.put(tier, 0L));
+        accountRepository.countByTier()
+                .forEach(row -> tiers.merge(row.getTier(), row.getMembers() == null ? 0L : row.getMembers(), Long::sum));
+
+        long totalMembers = asLong(accounts.getTotalMembers());
+        return new LoyaltyStatisticsResponse(
+                totalMembers,
+                asLong(transactions.getTransactions()),
+                totalMembers,
+                asLong(accounts.getNewMembersThisMonth()),
+                asLong(transactions.getActiveMembers()),
+                tiers,
+                asLong(accounts.getTotalPoints()),
+                round2(accounts.getAveragePoints()),
+                round2(accounts.getMedianPoints()),
+                asLong(transactions.getPointsIssued()),
+                asLong(transactions.getPointsRedeemed()),
+                asLong(transactions.getPointsIssuedThisMonth()),
+                asLong(transactions.getPointsRedeemedThisMonth()));
+    }
+
+    private static long asLong(Number value) {
+        return value == null ? 0L : value.longValue();
+    }
+
+    private static double round2(Number value) {
+        if (value == null) {
+            return 0d;
+        }
+        return new BigDecimal(value.toString()).setScale(2, RoundingMode.HALF_UP).doubleValue();
     }
 
     private String resolveTier(int points) {

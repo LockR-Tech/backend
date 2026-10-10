@@ -6,10 +6,13 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface NotificationRepository extends JpaRepository<NotificationMessage, Long> {
 
     List<NotificationMessage> findByUserIdOrderByCreatedAtDesc(Long userId);
+
+    Optional<NotificationMessage> findByIdAndUserId(Long id, Long userId);
 
     List<NotificationMessage> findByUserIdAndIsReadFalseOrderByCreatedAtDesc(Long userId);
 
