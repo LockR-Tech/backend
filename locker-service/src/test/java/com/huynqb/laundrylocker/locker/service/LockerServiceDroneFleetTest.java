@@ -9,10 +9,13 @@ import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.DroneMaintenanceLogResponse;
 import com.huynqb.laundrylocker.locker.dto.DroneUpdateRequest;
 import com.huynqb.laundrylocker.locker.dto.DroneUnitResponse;
+import com.huynqb.laundrylocker.locker.dto.LockerReportResponse;
 import com.huynqb.laundrylocker.locker.model.DroneMaintenanceLog;
 import com.huynqb.laundrylocker.locker.model.DroneStatus;
 import com.huynqb.laundrylocker.locker.model.DroneUnit;
+import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
+import com.huynqb.laundrylocker.locker.model.ReportCategory;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.LockerRules;
 import com.huynqb.laundrylocker.locker.settings.TestLockerRules;
@@ -27,6 +30,8 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -282,6 +287,47 @@ class LockerServiceDroneFleetTest {
     }
 
     @Test
+    void assignedDroneReportsIncludesLegacyReportLinkedByDroneUnit() {
+        LockerReport report = droneReport(24L, 3L);
+        report.setCategory(null);
+        when(reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(3L))
+                .thenReturn(List.of(report));
+        when(attachmentService.byReportIds(any())).thenReturn(Map.of());
+        when(droneUnitRepository.findById(7L))
+                .thenReturn(Optional.of(droneUnit(7L, 3L, DroneStatus.FAULT, 40)));
+
+        List<LockerReportResponse> reports = service.assignedDroneReports(3L);
+
+        assertEquals(1, reports.size());
+        assertEquals(24L, reports.getFirst().id());
+        assertEquals(7L, reports.getFirst().droneUnitId());
+        assertEquals(3L, reports.getFirst().assignedToUserId());
+    }
+
+    @Test
+    void allDroneReportsExcludesKioskReports() {
+        LockerReport drone = droneReport(24L, 3L);
+        LockerReport kiosk = new LockerReport();
+        kiosk.setId(25L);
+        kiosk.setLockerId(10L);
+        kiosk.setUserId(1L);
+        kiosk.setTitle("Kiosk fault");
+        kiosk.setDescription("Door fault");
+        kiosk.setStatus("OPEN");
+        kiosk.setCategory(ReportCategory.BOX);
+        kiosk.setCreatedAt(LocalDateTime.now());
+        when(reportRepository.findAllByOrderByCreatedAtDesc())
+                .thenReturn(List.of(kiosk, drone));
+        when(attachmentService.byReportIds(any())).thenReturn(Map.of());
+        when(droneUnitRepository.findById(7L))
+                .thenReturn(Optional.of(droneUnit(7L, 3L, DroneStatus.FAULT, 40)));
+
+        List<LockerReportResponse> reports = service.allDroneReports();
+
+        assertEquals(List.of(24L), reports.stream().map(LockerReportResponse::id).toList());
+    }
+
+    @Test
     void internalReservationUsesLockedCompareAndSet() {
         when(droneUnitRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(droneUnit(1L, null, DroneStatus.IDLE, 80)));
@@ -331,6 +377,22 @@ class LockerServiceDroneFleetTest {
         unit.setBatteryPercent(batteryPercent);
         unit.setActive(true);
         return unit;
+    }
+
+    private LockerReport droneReport(Long id, Long assignedTechnicianId) {
+        LockerReport report = new LockerReport();
+        report.setId(id);
+        report.setLockerId(10L);
+        report.setDroneUnitId(7L);
+        report.setUserId(1L);
+        report.setTitle("Drone motor fault");
+        report.setDescription("Motor is weak");
+        report.setStatus("IN_PROGRESS");
+        report.setCategory(ReportCategory.DRONE);
+        report.setAssignedToUserId(assignedTechnicianId);
+        report.setAssignedAt(LocalDateTime.now());
+        report.setCreatedAt(LocalDateTime.now().minusMinutes(5));
+        return report;
     }
 
     private LockerUnit locker(Long id, String code) {
