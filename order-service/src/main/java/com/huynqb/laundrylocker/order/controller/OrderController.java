@@ -298,11 +298,13 @@ public class OrderController {
     }
 
     // Admin xem lại cả hành trình đã kết thúc; includeFinished=false chỉ lấy nhiệm vụ đang chạy.
+    // droneUnitId (tuỳ chọn) lọc theo drone được gán cho nhiệm vụ — trang chi tiết drone.
     @GetMapping("/api/admin/drone-orders")
     public ApiResponse<List<DroneDeliveryOrderResponse>> adminDroneOrders(
             @RequestParam(required = false) String deliveryStage,
-            @RequestParam(defaultValue = "true") boolean includeFinished) {
-        return ApiResponse.ok(droneDeliveryQueryService.operations(deliveryStage, null, true, includeFinished));
+            @RequestParam(defaultValue = "true") boolean includeFinished,
+            @RequestParam(required = false) Long droneUnitId) {
+        return ApiResponse.ok(droneDeliveryQueryService.operations(deliveryStage, null, true, includeFinished, droneUnitId));
     }
 
     @GetMapping("/api/admin/drone-orders/{orderId}")
