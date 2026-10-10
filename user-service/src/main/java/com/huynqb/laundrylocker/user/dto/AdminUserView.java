@@ -5,6 +5,7 @@ import java.util.Set;
 
 /**
  * Rich user row for the admin web (profile + auth provider/verification).
+ * `provider`/`emailVerified` null khi auth-service không tra được.
  */
 public record AdminUserView(
         Long id,
@@ -14,12 +15,14 @@ public record AdminUserView(
         String status,
         Set<String> roles,
         LocalDateTime createdAt,
+        LocalDateTime updatedAt,
         String provider,
         Boolean emailVerified,
         String imageUrl) {
 
     public AdminUserView withAuth(String provider, Boolean emailVerified) {
         return new AdminUserView(
-                id, email, phoneNumber, fullName, status, roles, createdAt, provider, emailVerified, imageUrl);
+                id, email, phoneNumber, fullName, status, roles, createdAt, updatedAt, provider, emailVerified,
+                imageUrl);
     }
 }

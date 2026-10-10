@@ -133,4 +133,22 @@ public class AuthController {
         authService.changePassword(userId, request);
         return ApiResponse.ok("PASSWORD_CHANGED", "Password changed");
     }
+
+    /// Admin khoá/mở người dùng (user-service gọi). INACTIVE ⇒ không đăng nhập/làm mới token được nữa.
+    @PutMapping("/internal/auth/users/{userId}/status")
+    public ApiResponse<Map<String, Object>> updateAccountStatus(
+            @PathVariable Long userId, @RequestBody AccountStatusRequest request) {
+        return ApiResponse.ok(
+                "AUTH_ACCOUNT_STATUS_UPDATED", "Account status updated",
+                authService.updateAccountStatus(userId, request == null ? null : request.status()));
+    }
+
+    /// Admin đổi email/số điện thoại trên hồ sơ (user-service gọi) ⇒ đăng nhập bằng định danh mới.
+    @PutMapping("/internal/auth/users/{userId}/identifiers")
+    public ApiResponse<Map<String, Object>> updateAccountIdentifiers(
+            @PathVariable Long userId, @RequestBody AccountIdentifiersRequest request) {
+        return ApiResponse.ok(
+                "AUTH_ACCOUNT_IDENTIFIERS_UPDATED", "Account identifiers updated",
+                authService.updateAccountIdentifiers(userId, request));
+    }
 }

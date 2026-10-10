@@ -1,19 +1,26 @@
 package com.huynqb.laundrylocker.user.service;
 
 import com.huynqb.laundrylocker.common.dto.UserSummary;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.common.media.MediaPurpose;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.common.media.VerifiedMedia;
+import com.huynqb.laundrylocker.common.util.BusinessTime;
+import com.huynqb.laundrylocker.user.dto.AdminUserView;
+import com.huynqb.laundrylocker.user.dto.UserGrowthPoint;
 import com.huynqb.laundrylocker.user.dto.UserProfileRequest;
 import com.huynqb.laundrylocker.user.model.UserProfile;
 import com.huynqb.laundrylocker.user.repository.UserProfileRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,8 +30,29 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class UserProfileService {
 
+    /// Trạng thái admin đặt được cho người dùng; auth-service chặn đăng nhập khi INACTIVE.
+    public static final Set<String> USER_STATUSES = Set.of("ACTIVE", "INACTIVE");
+    static final int DEFAULT_GROWTH_MONTHS = 12;
+    static final int MAX_GROWTH_MONTHS = 36;
+
     private final UserProfileRepository userProfileRepository;
     private final CloudinaryMediaStorage mediaStorage;
+    private BusinessTime time = BusinessTime.system();
+
+    void setTime(BusinessTime time) {
+        this.time = time;
+    }
+
+    /// Chuẩn hoá trạng thái do admin gửi; ngoài ACTIVE/INACTIVE (kể cả thiếu) ⇒ 400.
+    public static String requireValidStatus(String status) {
+        String normalized = status == null ? "" : status.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!USER_STATUSES.contains(normalized)) {
+            throw new BusinessException(
+                    "USER_STATUS_INVALID",
+                    "Trạng thái người dùng phải là ACTIVE hoặc INACTIVE" + (status == null ? "" : " (nhận: " + status + ")"));
+        }
+        return normalized;
+    }
 
     @Transactional
     public UserSummary create(UserProfileRequest request) {
@@ -51,6 +79,25 @@ public class UserProfileService {
                     "USER_PHONE_TAKEN",
                     "Số điện thoại đã được dùng cho người dùng khác: " + phoneNumber,
                     org.springframework.http.HttpStatus.CONFLICT);
+        }
+    }
+
+    /// Như {@link #assertUnique} nhưng bỏ qua chính người dùng đang sửa — chạy trước khi đồng bộ
+    /// định danh sang auth-service để không đổi bên auth rồi mới vấp UNIQUE bên hồ sơ.
+    @Transactional(readOnly = true)
+    public void assertUniqueForUpdate(Long id, String email, String phoneNumber) {
+        if (StringUtils.hasText(email)
+                && userProfileRepository.findFirstByEmailIgnoreCase(email.trim())
+                        .filter(other -> !other.getId().equals(id)).isPresent()) {
+            throw new BusinessException(
+                    "USER_EMAIL_TAKEN", "Email đã được dùng cho người dùng khác: " + email.trim(), HttpStatus.CONFLICT);
+        }
+        if (StringUtils.hasText(phoneNumber)
+                && userProfileRepository.findFirstByPhoneNumber(phoneNumber.trim())
+                        .filter(other -> !other.getId().equals(id)).isPresent()) {
+            throw new BusinessException(
+                    "USER_PHONE_TAKEN", "Số điện thoại đã được dùng cho người dùng khác: " + phoneNumber.trim(),
+                    HttpStatus.CONFLICT);
         }
     }
 
@@ -119,23 +166,34 @@ public class UserProfileService {
                     }
                     return true;
                 })
-                .map(
-                        u ->
-                                new com.huynqb.laundrylocker.user.dto.AdminUserView(
-                                        u.getId(),
-                                        u.getEmail(),
-                                        u.getPhoneNumber(),
-                                        ((u.getFirstName() == null ? "" : u.getFirstName())
-                                                + " "
-                                                + (u.getLastName() == null ? "" : u.getLastName()))
-                                                .trim(),
-                                        u.getStatus(),
-                                        parseRoles(u.getRoles()),
-                                        u.getCreatedAt(),
-                                        null,
-                                        null,
-                                        u.getImageUrl()))
+                .map(this::toAdminView)
                 .toList();
+    }
+
+    /// Chi tiết một người dùng cho web admin (có createdAt/updatedAt); controller ghép provider từ auth.
+    @Transactional(readOnly = true)
+    public AdminUserView getAdminView(Long id) {
+        return toAdminView(find(id));
+    }
+
+    /// Người dùng mới theo tháng, `months` tháng gần nhất tính cả tháng hiện tại (giờ Việt Nam),
+    /// tháng không có ai vẫn trả 0. `months` ngoài 1..36 bị kẹp về biên.
+    @Transactional(readOnly = true)
+    public List<UserGrowthPoint> growth(Integer months) {
+        int span = Math.max(1, Math.min(MAX_GROWTH_MONTHS, months == null ? DEFAULT_GROWTH_MONTHS : months));
+        YearMonth current = YearMonth.from(time.today());
+        YearMonth first = current.minusMonths(span - 1L);
+        Map<YearMonth, Long> counts = new java.util.HashMap<>();
+        for (LocalDateTime createdAt : userProfileRepository.findCreatedAtSince(time.startOfDay(first.atDay(1)))) {
+            if (createdAt != null) {
+                counts.merge(YearMonth.from(time.businessDate(createdAt)), 1L, Long::sum);
+            }
+        }
+        List<UserGrowthPoint> points = new java.util.ArrayList<>(span);
+        for (YearMonth month = first; !month.isAfter(current); month = month.plusMonths(1)) {
+            points.add(new UserGrowthPoint(month.toString(), counts.getOrDefault(month, 0L)));
+        }
+        return points;
     }
 
     @Transactional
@@ -145,8 +203,9 @@ public class UserProfileService {
 
     @Transactional
     public UserSummary updateStatus(Long id, String status) {
+        String normalized = requireValidStatus(status);
         UserProfile user = find(id);
-        user.setStatus(status);
+        user.setStatus(normalized);
         return toSummary(userProfileRepository.save(user));
     }
 
@@ -213,12 +272,36 @@ public class UserProfileService {
         if (StringUtils.hasText(request.imageUrl())) {
             user.setImageUrl(request.imageUrl());
         }
-        user.setStatus(StringUtils.hasText(request.status()) ? request.status() : "ACTIVE");
+        // Request không gửi trạng thái ⇒ giữ trạng thái hiện tại (trước đây bị reset về ACTIVE, tức
+        // sửa hồ sơ là vô tình mở khoá người dùng); hồ sơ mới mặc định ACTIVE.
+        if (StringUtils.hasText(request.status())) {
+            user.setStatus(requireValidStatus(request.status()));
+        } else if (!StringUtils.hasText(user.getStatus())) {
+            user.setStatus("ACTIVE");
+        }
         if (request.roles() != null && !request.roles().isEmpty()) {
             user.setRoles(request.roles().stream().map(String::toUpperCase).collect(Collectors.joining(",")));
         } else if (!StringUtils.hasText(user.getRoles())) {
             user.setRoles("USER");
         }
+    }
+
+    private AdminUserView toAdminView(UserProfile u) {
+        return new AdminUserView(
+                u.getId(),
+                u.getEmail(),
+                u.getPhoneNumber(),
+                ((u.getFirstName() == null ? "" : u.getFirstName())
+                        + " "
+                        + (u.getLastName() == null ? "" : u.getLastName()))
+                        .trim(),
+                u.getStatus(),
+                parseRoles(u.getRoles()),
+                u.getCreatedAt(),
+                u.getUpdatedAt(),
+                null,
+                null,
+                u.getImageUrl());
     }
 
     private UserSummary toSummary(UserProfile user) {
