@@ -43,4 +43,9 @@ public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long>,
 
     @Query("select o from LockerOrder o where (o.sendBoxId = :boxId or o.receiveBoxId = :boxId or o.reservedBoxId = :boxId or o.sourceBoxId = :boxId) and o.status not in ('COMPLETED', 'CANCELED', 'EXPIRED') order by o.createdAt desc")
     List<LockerOrder> findActiveByBoxId(@Param("boxId") Long boxId);
+
+    /// Thời điểm tạo đơn trong [start, end) — dashboard gom theo giờ (giờ cao điểm).
+    @Query("select o.createdAt from LockerOrder o where o.createdAt >= :start and o.createdAt < :end")
+    List<java.time.LocalDateTime> createdAtBetween(
+            @Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
 }
