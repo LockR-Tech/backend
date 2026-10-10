@@ -969,32 +969,32 @@ public class LockerService {
     /** Phiếu sự cố chỉ thuộc đội Drone; không lẫn sự cố tủ/Kiosk. */
     @Transactional(readOnly = true)
     public List<LockerReportResponse> allDroneReports() {
-        return reportRepository.findAllByOrderByCreatedAtDesc().stream()
+        List<LockerReport> reports = reportRepository.findAllByOrderByCreatedAtDesc().stream()
                 .filter(this::isDroneReport)
-                .map(this::toReport)
                 .toList();
+        return toReports(reports);
     }
 
     @Transactional(readOnly = true)
     public List<LockerReportResponse> assignedDroneReports(Long userId) {
-        return reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
+        List<LockerReport> reports = reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
                 .filter(this::isDroneReport)
                 .sorted(Comparator.comparing(
                         (LockerReport r) -> r.getAssignedAt() != null ? r.getAssignedAt() : r.getCreatedAt(),
                         Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(LockerReport::getId, Comparator.reverseOrder()))
-                .map(this::toReport)
                 .toList();
+        return toReports(reports);
     }
 
     /** OPEN được định tuyến riêng cho KTV Drone hoặc broadcast cho toàn bộ đội Drone. */
     @Transactional(readOnly = true)
     public List<LockerReportResponse> routedDroneReports(Long userId) {
-        return reportRepository.findByStatusInOrderByCreatedAtDesc(List.of("OPEN")).stream()
+        List<LockerReport> reports = reportRepository.findByStatusInOrderByCreatedAtDesc(List.of("OPEN")).stream()
                 .filter(this::isDroneReport)
                 .filter(report -> report.getRoutedToUserId() == null || Objects.equals(report.getRoutedToUserId(), userId))
-                .map(this::toReport)
                 .toList();
+        return toReports(reports);
     }
 
     @Transactional(readOnly = true)
@@ -1084,8 +1084,7 @@ public class LockerService {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         assertNotResolved(report);
-        requireTechnician(
-                technicianId, ReportCategory.DRONE.equals(report.getCategory()) ? DRONE_TECHNICIAN : LOCKER_TECHNICIAN);
+        requireTechnician(technicianId, isDroneReport(report) ? DRONE_TECHNICIAN : LOCKER_TECHNICIAN);
         report.setStatus("IN_PROGRESS");
         report.setAssignedToUserId(technicianId);
         report.setAssignedAt(java.time.LocalDateTime.now());
