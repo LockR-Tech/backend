@@ -1350,6 +1350,7 @@ public class OrderService {
         promotion.setLockerId(request.lockerId());
         promotion.setTotalUsageLimit(request.totalUsageLimit());
         promotion.setPerUserLimit(request.perUserLimit());
+        promotion.setDescription(request.description());
         promotion.setCreatedByUserId(createdByUserId);
         return promotionRepository.save(promotion);
     }
@@ -1390,6 +1391,7 @@ public class OrderService {
         promotion.setLockerId(request.lockerId());
         promotion.setTotalUsageLimit(request.totalUsageLimit());
         promotion.setPerUserLimit(request.perUserLimit());
+        promotion.setDescription(request.description());
         return promotionRepository.save(promotion);
     }
 
@@ -1779,13 +1781,10 @@ public class OrderService {
         }
     }
 
-    @Transactional(readOnly = true)
+    /// Nút "Pickup Reminders" ở /admin/scheduler: chạy đúng job cron (gửi nhắc thật), trả số nhắc đã gửi.
+    @Transactional
     public Map<String, Object> pickupReminders() {
-        long count =
-                orderRepository.findByStatusOrderByCreatedAtDesc("RETURNED").stream()
-                        .filter(order -> order.getPickupDeadline() != null)
-                        .count();
-        return Map.of("reminders", count);
+        return Map.of("reminders", sendPickupReminders());
     }
 
     private OrderResponse transition(
