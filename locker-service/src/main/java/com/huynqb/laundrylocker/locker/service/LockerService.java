@@ -1494,16 +1494,28 @@ public class LockerService {
         return completeSchedule(id, req, actorUserId, true);
     }
 
+    @Transactional
+    public MaintenanceScheduleResponse completeSchedule(
+            Long id, CompleteScheduleRequest req, Long actorUserId, boolean admin, String technicianTarget) {
+        return completeScheduleInternal(id, req, actorUserId, admin, technicianTarget);
+    }
+
     /// Hoàn tất một lượt kiểm tra định kỳ + lưu biên bản. ĐẠT ⇒ hạn kế tiếp = now + chu kỳ.
     /// KHÔNG ĐẠT (lịch của tủ) ⇒ không dời hạn; tự mở phiếu gắn lịch, giao cho KTV vừa kiểm tra;
     /// phiếu đóng mới dời hạn. Chỉ KTV phụ trách lịch (hoặc ADMIN) được hoàn tất.
     @Transactional
     public MaintenanceScheduleResponse completeSchedule(
             Long id, CompleteScheduleRequest req, Long actorUserId, boolean admin) {
+        return completeScheduleInternal(id, req, actorUserId, admin, null);
+    }
+
+    private MaintenanceScheduleResponse completeScheduleInternal(
+            Long id, CompleteScheduleRequest req, Long actorUserId, boolean admin, String technicianTarget) {
         MaintenanceSchedule schedule =
                 scheduleRepository
                         .findById(id)
                         .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        requireScheduleTarget(schedule, technicianTarget);
         if (!Boolean.TRUE.equals(schedule.getActive())) {
             throw new BusinessException("SCHEDULE_INACTIVE", "Lịch kiểm tra đã ngưng", HttpStatus.CONFLICT);
         }
@@ -1575,6 +1587,29 @@ public class LockerService {
             }
         }
         return toSchedule(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public void requireScheduleTarget(Long id, String technicianTarget) {
+        MaintenanceSchedule schedule = scheduleRepository
+                .findById(id)
+                .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        requireScheduleTarget(schedule, technicianTarget);
+    }
+
+    private void requireScheduleTarget(MaintenanceSchedule schedule, String technicianTarget) {
+        if (technicianTarget == null) {
+            return;
+        }
+        boolean allowed = "DRONE".equalsIgnoreCase(technicianTarget)
+                ? schedule.getDroneUnitId() != null
+                : "LOCKER".equalsIgnoreCase(technicianTarget) && schedule.getLockerId() != null;
+        if (!allowed) {
+            throw new BusinessException(
+                    "SCHEDULE_TARGET_FORBIDDEN",
+                    "Lịch bảo trì không thuộc mảng kỹ thuật viên đang đăng nhập",
+                    HttpStatus.FORBIDDEN);
+        }
     }
 
     private static final Set<String> LEGACY_PASSED_STATUSES = Set.of("PASSED", "ATTENTION");
