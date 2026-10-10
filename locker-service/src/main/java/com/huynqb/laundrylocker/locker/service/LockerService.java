@@ -2124,6 +2124,129 @@ public class LockerService {
         return toReport(savedReport);
     }
 
+    /**
+     * Idempotently creates the physical-drone inspection ticket and selects the
+     * responsible kiosk technician for parcel recovery. The recovery workflow is
+     * owned by order-service because it is tied to parcel custody and resolution.
+     */
+    @Transactional
+    public IncidentTicketBundleResponse createIncidentTickets(CreateIncidentTicketsRequest request) {
+        Optional<LockerReport> existing = reportRepository.findByExternalIncidentIdAndTicketType(
+                request.incidentId(), "DRONE_INSPECTION");
+        if (existing.isPresent()) {
+            LockerReport report = existing.get();
+            RecoveryAssignment recovery = selectRecoveryTechnician(request.latitude(), request.longitude());
+            return new IncidentTicketBundleResponse(
+                    report.getId(), report.getAssignedToUserId(), recovery.technicianId(), recovery.lockerId());
+        }
+
+        DroneUnit drone = findDroneUnit(request.droneUnitId());
+        if (!drone.getCode().equalsIgnoreCase(request.droneCode())) {
+            throw new BusinessException("INCIDENT_DRONE_MISMATCH", "Incident drone does not match the fleet record");
+        }
+
+        LockerReport report = new LockerReport();
+        report.setLockerId(drone.getLockerId());
+        report.setDroneUnitId(drone.getId());
+        report.setCategory(ReportCategory.DRONE);
+        report.setUserId(request.reporterUserId());
+        report.setOrderId(request.orderId());
+        report.setOrderCode(request.orderCode());
+        report.setExternalIncidentId(request.incidentId());
+        report.setTicketType("DRONE_INSPECTION");
+        report.setTitle("Kiểm tra an toàn sau sự cố " + request.incidentCode());
+        report.setDescription(buildIncidentInspectionDescription(request));
+        Long inspectionTechnician = activeTechnician(drone.getAssignedTechnicianId(), DRONE_TECHNICIAN);
+        if (inspectionTechnician != null) {
+            report.setAssignedToUserId(inspectionTechnician);
+            report.setAssignedAt(LocalDateTime.now());
+            report.setStatus("IN_PROGRESS");
+        } else {
+            report.setStatus("OPEN");
+        }
+        LockerReport saved = reportRepository.save(report);
+        if (inspectionTechnician != null) {
+            publishStaffNotification(
+                    DomainEventNames.LOCKER_REPORT_ASSIGNED,
+                    inspectionTechnician,
+                    saved.getId(),
+                    "LOCKER_REPORT",
+                    "Bạn được giao kiểm tra " + drone.getCode() + " sau sự cố " + request.incidentCode() + ".");
+        }
+        RecoveryAssignment recovery = selectRecoveryTechnician(request.latitude(), request.longitude());
+        return new IncidentTicketBundleResponse(
+                saved.getId(), inspectionTechnician, recovery.technicianId(), recovery.lockerId());
+    }
+
+    private String buildIncidentInspectionDescription(CreateIncidentTicketsRequest request) {
+        StringBuilder value = new StringBuilder()
+                .append("Kiểm tra hook/gripper, servo/actuator, dây điện và cơ cấu giữ hàng. ")
+                .append("Incident ").append(request.incidentCode())
+                .append(", đơn ").append(request.orderCode()).append(". ")
+                .append(request.reason() == null ? "" : request.reason());
+        if (request.latitude() != null && request.longitude() != null) {
+            value.append(" Vị trí báo rơi: ").append(request.latitude()).append(", ").append(request.longitude());
+        }
+        if (StringUtils.hasText(request.cameraSnapshotUrl())) {
+            value.append(". Ảnh camera được lưu trong hồ sơ incident.");
+        }
+        return value.length() <= 2000 ? value.toString() : value.substring(0, 2000);
+    }
+
+    private RecoveryAssignment selectRecoveryTechnician(Double latitude, Double longitude) {
+        if (latitude == null || longitude == null) {
+            return new RecoveryAssignment(null, null);
+        }
+        return lockerRepository.findAll().stream()
+                .filter(locker -> "ACTIVE".equalsIgnoreCase(locker.getStatus()))
+                .filter(locker -> locker.getLatitude() != null && locker.getLongitude() != null)
+                .map(locker -> new RecoveryCandidate(
+                        locker,
+                        activeTechnician(locker.getAssignedTechnicianId(), LOCKER_TECHNICIAN),
+                        distanceMeters(latitude, longitude, locker.getLatitude(), locker.getLongitude())))
+                .filter(candidate -> candidate.technicianId() != null)
+                .sorted(Comparator
+                        .comparingDouble(RecoveryCandidate::distanceMeters)
+                        .thenComparingLong(candidate -> activeWorkload(candidate.technicianId())))
+                .map(candidate -> new RecoveryAssignment(candidate.technicianId(), candidate.locker().getId()))
+                .findFirst()
+                .orElse(new RecoveryAssignment(null, null));
+    }
+
+    private Long activeTechnician(Long technicianId, String requiredRole) {
+        if (technicianId == null) {
+            return null;
+        }
+        UserSummary user = lookupUserQuietly(technicianId);
+        return user != null
+                        && "ACTIVE".equalsIgnoreCase(user.status())
+                        && user.roles() != null
+                        && user.roles().contains(requiredRole)
+                ? technicianId
+                : null;
+    }
+
+    private long activeWorkload(Long technicianId) {
+        return reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(technicianId).stream()
+                .filter(report -> OPEN_REPORT_STATUSES.contains(report.getStatus()))
+                .count();
+    }
+
+    private static double distanceMeters(double lat1, double lon1, double lat2, double lon2) {
+        double lat = Math.toRadians(lat2 - lat1);
+        double lon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(lat / 2) * Math.sin(lat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lon / 2) * Math.sin(lon / 2);
+        return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    private record RecoveryCandidate(LockerUnit locker, Long technicianId, double distanceMeters) {
+    }
+
+    private record RecoveryAssignment(Long technicianId, Long lockerId) {
+    }
+
     private void validateManualDroneStatusChange(DroneUnit unit, String status) {
         if (DroneStatus.RESERVED.equals(status) || DroneStatus.IN_FLIGHT.equals(status)) {
             throw new BusinessException(
@@ -2577,7 +2700,9 @@ public class LockerService {
                 report.getDroneUnitId(),
                 report.getDroneUnitId() == null
                         ? null
-                        : droneUnitRepository.findById(report.getDroneUnitId()).map(DroneUnit::getCode).orElse(null));
+                        : droneUnitRepository.findById(report.getDroneUnitId()).map(DroneUnit::getCode).orElse(null),
+                report.getExternalIncidentId(),
+                report.getTicketType());
     }
 
     // ---- Định tuyến phiếu cho KTV tủ ----

@@ -45,6 +45,12 @@ public class LockerReport {
     @Column(name = "drone_unit_id")
     private Long droneUnitId;
 
+    @Column(name = "external_incident_id")
+    private Long externalIncidentId;
+
+    @Column(name = "ticket_type", length = 40)
+    private String ticketType;
+
     @Column(name = "assigned_to_user_id")
     private Long assignedToUserId;
 

@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
+import java.util.Objects;
 
 import static com.huynqb.laundrylocker.order.settings.OrderSettingsCatalog.*;
 
@@ -198,5 +199,34 @@ public class OrderRules {
 
     public int droneMaxPayloadWeightGrams() {
         return settings.getInt(DRONE_MAX_PAYLOAD_WEIGHT);
+    }
+
+    public IncidentPolicy incidentPolicy() {
+        boolean enabled = settings.getBoolean(INCIDENT_POLICY_ENABLED);
+        BigDecimal rate = settings.getDecimal(INCIDENT_COMPENSATION_RATE);
+        BigDecimal cap = settings.getDecimal(INCIDENT_COMPENSATION_CAP);
+        boolean freeRedelivery = settings.getBoolean(INCIDENT_FREE_REDELIVERY);
+        boolean refundShippingFee = settings.getBoolean(INCIDENT_REFUND_SHIPPING_FEE);
+        int recoverySlaHours = settings.getInt(INCIDENT_RECOVERY_SLA_HOURS);
+        boolean approvalRequired = settings.getBoolean(INCIDENT_APPROVAL_REQUIRED);
+        boolean disputeAllowed = settings.getBoolean(INCIDENT_DISPUTE_ALLOWED);
+        String version = "INCIDENT-" + Integer.toUnsignedString(Objects.hash(
+                enabled, rate, cap, freeRedelivery, refundShippingFee,
+                recoverySlaHours, approvalRequired, disputeAllowed), 16);
+        return new IncidentPolicy(
+                version, enabled, rate, cap, freeRedelivery, refundShippingFee,
+                recoverySlaHours, approvalRequired, disputeAllowed);
+    }
+
+    public record IncidentPolicy(
+            String version,
+            boolean enabled,
+            BigDecimal compensationRate,
+            BigDecimal compensationCap,
+            boolean freeRedelivery,
+            boolean refundShippingFee,
+            int recoverySlaHours,
+            boolean approvalRequired,
+            boolean disputeAllowed) {
     }
 }

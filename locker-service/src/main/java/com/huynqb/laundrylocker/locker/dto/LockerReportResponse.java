@@ -43,5 +43,7 @@ public record LockerReportResponse(
         String orderCode,
         // Drone gắn với phiếu (null với sự cố Kiosk/ô tủ)
         Long droneUnitId,
-        String droneCode) {
+        String droneCode,
+        Long externalIncidentId,
+        String ticketType) {
 }

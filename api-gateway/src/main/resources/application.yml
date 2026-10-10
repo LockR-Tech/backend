@@ -44,7 +44,11 @@ spring:
             - id: order-service-admin-drone-orders
               uri: lb://order-service
               predicates:
-                - Path=/api/admin/drone-orders,/api/admin/drone-orders/**
+                - Path=/api/admin/drone-orders,/api/admin/drone-orders/**,/api/admin/drone-incidents,/api/admin/drone-incidents/**
+            - id: order-service-locker-technician-recovery
+              uri: lb://order-service
+              predicates:
+                - Path=/api/locker-technician/drone-recoveries,/api/locker-technician/drone-recoveries/**
             # Thiết bị IoT là việc của KTV tủ nhưng do iot-service phục vụ; phải
             # khai báo TRƯỚC locker-service, nếu không /api/locker-technician/**
             # bên dưới sẽ nuốt mất đường này.
