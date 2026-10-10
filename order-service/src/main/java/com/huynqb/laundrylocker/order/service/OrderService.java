@@ -273,6 +273,16 @@ public class OrderService {
         order.setProhibitedItemsDeclaredAt(LocalDateTime.now());
         order.setRouteDistanceMeters(routeDistanceMeters);
         order.setIdempotencyKey(idempotencyKey);
+        var incidentPolicy = rules.incidentPolicy();
+        order.setIncidentPolicyVersion(incidentPolicy.version());
+        order.setIncidentCompensationEnabled(incidentPolicy.enabled());
+        order.setIncidentCompensationRate(incidentPolicy.compensationRate());
+        order.setIncidentCompensationCap(incidentPolicy.compensationCap());
+        order.setIncidentFreeRedelivery(incidentPolicy.freeRedelivery());
+        order.setIncidentRefundShippingFee(incidentPolicy.refundShippingFee());
+        order.setIncidentRecoverySlaHours(incidentPolicy.recoverySlaHours());
+        order.setIncidentApprovalRequired(incidentPolicy.approvalRequired());
+        order.setIncidentDisputeAllowed(incidentPolicy.disputeAllowed());
         // Phí theo khối lượng khách khai báo; đội bay cân lại lúc nạp hàng, nặng hơn thì
         // thu thêm phần chênh (DroneOrderMaintenanceService.confirmLoading).
         BigDecimal droneFee = rules.droneDeliveryFee(parcelWeightGrams);

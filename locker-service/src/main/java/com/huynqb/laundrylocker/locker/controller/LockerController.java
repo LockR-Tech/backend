@@ -585,6 +585,25 @@ public class LockerController {
                 id, request.expectedStatus(), request.status(), request.reason()));
     }
 
+    @PostMapping("/internal/drone-incidents/tickets")
+    public ApiResponse<IncidentTicketBundleResponse> createIncidentTickets(
+            @Valid @RequestBody CreateIncidentTicketsRequest request) {
+        return ApiResponse.ok(
+                "INCIDENT_TICKETS_CREATED",
+                "Incident tickets created or reused",
+                lockerService.createIncidentTickets(request));
+    }
+
+    @GetMapping("/internal/drone-incidents/inspection-reports/{id}")
+    public ApiResponse<LockerReportResponse> incidentInspectionReport(@PathVariable Long id) {
+        LockerReportResponse report = lockerService.getReport(id);
+        if (!"DRONE_INSPECTION".equalsIgnoreCase(report.ticketType())) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "DRONE_INSPECTION_REPORT_REQUIRED", "Report is not a drone inspection ticket");
+        }
+        return ApiResponse.ok(report);
+    }
+
     /// Pin drone tự báo qua telemetry. Không ghi nhật ký bảo trì: đây là số đo máy gửi liên tục.
     @PostMapping("/internal/drones/telemetry")
     public ApiResponse<DroneUnitResponse> internalDroneTelemetry(@Valid @RequestBody DroneTelemetryRequest request) {

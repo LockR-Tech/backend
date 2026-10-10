@@ -227,6 +227,35 @@ public class LockerOrder {
     @Column(name = "last_payment_id")
     private Long lastPaymentId;
 
+    // Immutable incident-policy snapshot captured when a drone order is created.
+    // Later admin setting changes therefore do not retroactively alter this order.
+    @Column(name = "incident_policy_version", length = 64)
+    private String incidentPolicyVersion;
+
+    @Column(name = "incident_compensation_enabled")
+    private Boolean incidentCompensationEnabled;
+
+    @Column(name = "incident_compensation_rate", precision = 5, scale = 2)
+    private BigDecimal incidentCompensationRate;
+
+    @Column(name = "incident_compensation_cap", precision = 12, scale = 2)
+    private BigDecimal incidentCompensationCap;
+
+    @Column(name = "incident_free_redelivery")
+    private Boolean incidentFreeRedelivery;
+
+    @Column(name = "incident_refund_shipping_fee")
+    private Boolean incidentRefundShippingFee;
+
+    @Column(name = "incident_recovery_sla_hours")
+    private Integer incidentRecoverySlaHours;
+
+    @Column(name = "incident_approval_required")
+    private Boolean incidentApprovalRequired;
+
+    @Column(name = "incident_dispute_allowed")
+    private Boolean incidentDisputeAllowed;
+
     @Column(name = "idempotency_key", length = 120)
     private String idempotencyKey;
 

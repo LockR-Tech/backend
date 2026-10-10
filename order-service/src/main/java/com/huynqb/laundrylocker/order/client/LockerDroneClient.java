@@ -5,7 +5,10 @@ import com.huynqb.laundrylocker.order.dto.DroneStatusUpdateRequest;
 import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.dto.DroneTelemetryReport;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
+import com.huynqb.laundrylocker.order.dto.CreateIncidentTicketsCommand;
+import com.huynqb.laundrylocker.order.dto.IncidentTicketBundle;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
+import com.huynqb.laundrylocker.order.dto.IncidentInspectionStatus;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,4 +35,10 @@ public interface LockerDroneClient {
     @PostMapping("/internal/drones/{id}/status-transition")
     ApiResponse<DroneUnitDto> transitionDroneStatus(
             @PathVariable Long id, @RequestBody DroneStatusTransitionRequest request);
+
+    @PostMapping("/internal/drone-incidents/tickets")
+    ApiResponse<IncidentTicketBundle> createIncidentTickets(@RequestBody CreateIncidentTicketsCommand request);
+
+    @GetMapping("/internal/drone-incidents/inspection-reports/{id}")
+    ApiResponse<IncidentInspectionStatus> getIncidentInspectionReport(@PathVariable Long id);
 }

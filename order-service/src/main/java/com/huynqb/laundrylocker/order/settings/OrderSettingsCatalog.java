@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.bool;
+import static com.huynqb.laundrylocker.common.settings.SettingDefinition.decimal;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integer;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integerList;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.string;
@@ -64,6 +65,14 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_WEIGHT_TOLERANCE = "app.order.drone-weight-tolerance-grams";
     public static final String RECEIVER_NOTIFY_SMS = "app.order.receiver-notify-sms";
     public static final String RECEIVER_NOTIFY_EMAIL = "app.order.receiver-notify-email";
+    public static final String INCIDENT_POLICY_ENABLED = "app.order.incident-policy-enabled";
+    public static final String INCIDENT_COMPENSATION_RATE = "app.order.incident-compensation-rate";
+    public static final String INCIDENT_COMPENSATION_CAP = "app.order.incident-compensation-cap";
+    public static final String INCIDENT_FREE_REDELIVERY = "app.order.incident-free-redelivery";
+    public static final String INCIDENT_REFUND_SHIPPING_FEE = "app.order.incident-refund-shipping-fee";
+    public static final String INCIDENT_RECOVERY_SLA_HOURS = "app.order.incident-recovery-sla-hours";
+    public static final String INCIDENT_APPROVAL_REQUIRED = "app.order.incident-approval-required";
+    public static final String INCIDENT_DISPUTE_ALLOWED = "app.order.incident-dispute-allowed";
 
     private static final String PRICING = "Giá & phí";
     private static final String DEADLINES = "Thời hạn & tự động hoá";
@@ -71,6 +80,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     private static final String PAYMENT = "Thanh toán";
     private static final String DRONE = "Giao hàng drone";
     private static final String RECEIVER = "Thông báo cho người nhận";
+    private static final String INCIDENT = "Sự cố & bồi thường";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -141,6 +151,25 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                                 + "bật cũng không gửi được.", true),
                 bool(RECEIVER_NOTIFY_EMAIL, RECEIVER, "Gửi mã mở tủ qua email",
                         "Gửi mã tới email người nhận khi người gửi có nhập email.", true),
+
+                bool(INCIDENT_POLICY_ENABLED, INCIDENT, "Bật chính sách xử lý sự cố rơi kiện",
+                        "Cho phép đề xuất giao lại hoặc bồi thường sau khi Admin đã xác minh sự cố.", true),
+                decimal(INCIDENT_COMPENSATION_RATE, INCIDENT, "Tỷ lệ bồi thường đề xuất",
+                        "Tỷ lệ mặc định trên giá trị đủ điều kiện; đây không phải mức pháp lý bắt buộc.",
+                        "60", "0", "100", "%"),
+                decimal(INCIDENT_COMPENSATION_CAP, INCIDENT, "Trần bồi thường",
+                        "0 = không đặt trần; Admin vẫn phải thẩm định giá trị khai báo và điều khoản.",
+                        "0", "0", "1000000000", "VND"),
+                bool(INCIDENT_FREE_REDELIVERY, INCIDENT, "Cho phép giao lại miễn phí",
+                        "Chỉ áp dụng khi kiện đã về Hub/kho và drone đã được xác nhận an toàn.", true),
+                bool(INCIDENT_REFUND_SHIPPING_FEE, INCIDENT, "Hoàn phí giao hàng khi bồi thường",
+                        "Phân biệt với khoản bồi thường giá trị kiện hàng.", true),
+                integer(INCIDENT_RECOVERY_SLA_HOURS, INCIDENT, "SLA thu hồi kiện",
+                        "Thời gian mục tiêu từ lúc báo rơi tới khi KTV gửi kết quả tìm kiếm.", 4, 1, 720, "giờ"),
+                bool(INCIDENT_APPROVAL_REQUIRED, INCIDENT, "Bắt buộc duyệt bồi thường",
+                        "Khoản bồi thường chỉ được thanh toán sau khi Admin duyệt.", true),
+                bool(INCIDENT_DISPUTE_ALLOWED, INCIDENT, "Cho phép khách yêu cầu xem xét lại",
+                        "Giữ proposal cũ và tạo phiên bản mới thay vì ghi đè lịch sử.", true),
 
                 bool(DRONE_DEMO_ENABLED, DRONE, "Cho phép chế độ drone DEMO",
                         "Bật bộ giả lập chặng bay cho đơn drone.", true),
