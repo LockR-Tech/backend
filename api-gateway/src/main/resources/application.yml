@@ -217,6 +217,11 @@ app:
   security:
     jwt:
       secret: ${APP_SECURITY_JWT_SECRET:laundry-locker-microservices-secret-key-change-me-please-32chars}
+    # Hỏi auth-service tài khoản còn ACTIVE không trước khi cho token đi tiếp (nhớ kết quả trong ttl).
+    account-status-check:
+      enabled: ${APP_SECURITY_ACCOUNT_STATUS_CHECK_ENABLED:true}
+      ttl: 30s
+      timeout: 1s
 
 eureka:
   client:

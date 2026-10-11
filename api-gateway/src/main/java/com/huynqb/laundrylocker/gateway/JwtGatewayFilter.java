@@ -27,11 +27,16 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
     @Value("${app.security.jwt.secret:laundry-locker-microservices-secret-key-change-me-please-32chars}")
     private String secret;
 
+    // Header định danh chỉ gateway được gắn (từ JWT đã kiểm); client tự gửi thì bỏ.
+    private static final List<String> USER_HEADERS = List.of("X-User-Id", "X-Account-Id", "X-User-Roles");
+
     private final Environment environment;
+    private final AccountStatusChecker accountStatus;
     private SecretKey key;
 
-    public JwtGatewayFilter(Environment environment) {
+    public JwtGatewayFilter(Environment environment, AccountStatusChecker accountStatus) {
         this.environment = environment;
+        this.accountStatus = accountStatus;
     }
 
     @PostConstruct
@@ -87,7 +92,16 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
                 exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
                 return exchange.getResponse().setComplete();
             }
-            return chain.filter(withUserHeaders(exchange, claims, roles));
+            ServerWebExchange forwarded = withUserHeaders(exchange, claims, roles);
+            // Tài khoản bị khoá sau khi cấp token ⇒ 401 để client làm mới token, việc đó cũng bị
+            // auth-service từ chối nên người dùng bị đăng xuất.
+            return accountStatus.isActive(accountId(claims)).flatMap(active -> {
+                if (!active) {
+                    exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                    return exchange.getResponse().setComplete();
+                }
+                return chain.filter(forwarded);
+            });
         } catch (Exception ex) {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
@@ -97,17 +111,34 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
     private Mono<Void> enrichIfPresent(ServerWebExchange exchange, GatewayFilterChain chain) {
         String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            return chain.filter(exchange);
+            return chain.filter(withoutUserHeaders(exchange));
         }
+        Claims claims;
         try {
-            Claims claims = parse(authHeader.substring(7));
-            if (!isAccessToken(claims)) {
-                return chain.filter(exchange);
-            }
-            return chain.filter(withUserHeaders(exchange, claims, extractRoles(claims)));
+            claims = parse(authHeader.substring(7));
         } catch (Exception ex) {
-            return chain.filter(exchange);
+            return chain.filter(withoutUserHeaders(exchange));
         }
+        if (!isAccessToken(claims)) {
+            return chain.filter(withoutUserHeaders(exchange));
+        }
+        // Đường công khai: tài khoản bị khoá vẫn gọi được nhưng như khách vãng lai.
+        return accountStatus.isActive(accountId(claims)).flatMap(active -> chain.filter(
+                active ? withUserHeaders(exchange, claims, extractRoles(claims)) : withoutUserHeaders(exchange)));
+    }
+
+    private ServerWebExchange withoutUserHeaders(ServerWebExchange exchange) {
+        HttpHeaders headers = exchange.getRequest().getHeaders();
+        if (USER_HEADERS.stream().noneMatch(headers::containsKey)) {
+            return exchange;
+        }
+        ServerHttpRequest request =
+                exchange.getRequest().mutate().headers(h -> USER_HEADERS.forEach(h::remove)).build();
+        return exchange.mutate().request(request).build();
+    }
+
+    private static Long accountId(Claims claims) {
+        return claims.get("accountId") instanceof Number id ? id.longValue() : null;
     }
 
     private ServerWebExchange withUserHeaders(

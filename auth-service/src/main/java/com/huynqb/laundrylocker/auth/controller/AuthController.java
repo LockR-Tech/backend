@@ -117,6 +117,13 @@ public class AuthController {
         return ApiResponse.ok(authService.getAccount(id));
     }
 
+    /// Gateway hỏi trước khi cho access token đi tiếp: tài khoản đã bị khoá hoặc không còn ⇒ chặn ngay,
+    /// không đợi token hết hạn.
+    @GetMapping("/internal/auth/accounts/{id}/active")
+    public ApiResponse<Map<String, Object>> accountActive(@PathVariable Long id) {
+        return ApiResponse.ok(Map.of("accountId", id, "active", authService.isAccountActive(id)));
+    }
+
     @PostMapping("/internal/auth/accounts")
     public ApiResponse<AuthResponse> createAccount(@Valid @RequestBody CreateAccountRequest request) {
         return ApiResponse.ok("AUTH_ACCOUNT_CREATED", "Account created", authService.createAccount(request));
