@@ -419,12 +419,14 @@ public class UserController {
         return ApiResponse.ok("USER_ROLES_UPDATED", "User roles updated", userProfileService.updateRoles(id, request.get("roles")));
     }
 
-    /// Xoá hồ sơ mà để nguyên tài khoản đăng nhập thì người dùng vẫn đăng nhập được ⇒ khoá tài khoản
-    /// (thu hồi refresh token) trước; auth-service lỗi thì không xoá.
+    /// Xoá hồ sơ mà để nguyên tài khoản đăng nhập thì người dùng vẫn đăng nhập được, và tài khoản đó vẫn giữ
+    /// email/số điện thoại nên không tạo lại người dùng mới với chúng được ⇒ auth-service khoá hẳn tài khoản
+    /// (thu hồi refresh token) và nhả định danh trước; auth-service lỗi thì không xoá. Gọi lại an toàn nên
+    /// xoá hồ sơ lỗi sau bước này thì admin chỉ cần xoá lại. Đơn hàng/thanh toán vẫn giữ id người dùng cũ.
     @DeleteMapping("/api/admin/users/{id}")
     public ApiResponse<Void> adminDelete(@PathVariable Long id) {
         userProfileService.get(id);
-        syncAuthStatus(id, "INACTIVE");
+        callAuth(() -> authClient.deleteAccount(id));
         userProfileService.delete(id);
         return ApiResponse.ok("USER_DELETED", "User deleted");
     }

@@ -26,4 +26,9 @@ public interface AuthClient {
     /// Body `{email?, phoneNumber?}` — field rỗng = giữ nguyên. Trùng tài khoản khác ⇒ 409 AUTH_EMAIL_TAKEN/AUTH_PHONE_TAKEN.
     @PutMapping("/users/{userId}/identifiers")
     ApiResponse<Map<String, Object>> updateIdentifiers(@PathVariable Long userId, @RequestBody Map<String, Object> request);
+
+    /// Xoá người dùng: khoá hẳn tài khoản đăng nhập, thu hồi refresh token, nhả email/số điện thoại và liên kết
+    /// Google/Facebook cho tài khoản mới. Gọi lại vẫn an toàn. Không có tài khoản ⇒ 200, `accountExists=false`.
+    @DeleteMapping("/users/{userId}")
+    ApiResponse<Map<String, Object>> deleteAccount(@PathVariable Long userId);
 }

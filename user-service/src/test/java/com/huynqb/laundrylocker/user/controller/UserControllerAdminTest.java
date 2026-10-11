@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.user.client.AuthClient;
 import com.huynqb.laundrylocker.user.client.NotificationClient;
 import com.huynqb.laundrylocker.user.dto.AdminUserView;
@@ -61,6 +62,7 @@ class UserControllerAdminTest {
         when(userProfileService.get(5L)).thenReturn(current);
         when(authClient.updateStatus(anyLong(), anyMap())).thenReturn(ApiResponse.ok(Map.of()));
         when(authClient.updateIdentifiers(anyLong(), anyMap())).thenReturn(ApiResponse.ok(Map.of()));
+        when(authClient.deleteAccount(anyLong())).thenReturn(ApiResponse.ok(Map.of()));
     }
 
     @Test
@@ -95,20 +97,33 @@ class UserControllerAdminTest {
     }
 
     @Test
-    void deleteDisablesLoginBeforeRemovingProfile() {
+    void deleteReleasesLoginAccountBeforeRemovingProfile() {
         controller.adminDelete(5L);
 
         InOrder order = inOrder(authClient, userProfileService);
-        order.verify(authClient).updateStatus(5L, Map.of("status", "INACTIVE"));
+        order.verify(authClient).deleteAccount(5L);
         order.verify(userProfileService).delete(5L);
+        verify(authClient, never()).updateStatus(anyLong(), anyMap());
     }
 
     @Test
-    void deleteAbortsWhenLoginCannotBeDisabled() {
-        when(authClient.updateStatus(anyLong(), anyMap())).thenThrow(new RuntimeException("timeout"));
+    void deleteAbortsWhenLoginAccountCannotBeReleased() {
+        when(authClient.deleteAccount(anyLong())).thenThrow(new RuntimeException("timeout"));
 
-        assertThrows(BusinessException.class, () -> controller.adminDelete(5L));
+        BusinessException ex = assertThrows(BusinessException.class, () -> controller.adminDelete(5L));
 
+        assertEquals("AUTH_SYNC_FAILED", ex.getCode());
+        assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatus());
+        verify(userProfileService, never()).delete(anyLong());
+    }
+
+    @Test
+    void deleteOfUnknownUserDoesNotCallAuth() {
+        when(userProfileService.get(404L)).thenThrow(new NotFoundException("User", 404L));
+
+        assertThrows(NotFoundException.class, () -> controller.adminDelete(404L));
+
+        verify(authClient, never()).deleteAccount(anyLong());
         verify(userProfileService, never()).delete(anyLong());
     }
 
