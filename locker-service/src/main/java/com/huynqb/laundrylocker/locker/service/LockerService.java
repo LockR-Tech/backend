@@ -242,8 +242,66 @@ public class LockerService {
 
     @Transactional
     public void deleteLocker(Long id) {
-        lockerRepository.delete(
-                lockerRepository.findById(id).orElseThrow(() -> new NotFoundException("Locker", id)));
+        LockerUnit locker =
+                lockerRepository.findById(id).orElseThrow(() -> new NotFoundException("Locker", id));
+        List<LockerBox> boxes = boxRepository.findByLockerIdOrderByRowIndexAscColIndexAsc(id);
+        boolean hasOccupied = boxes.stream().anyMatch(
+                b -> "OCCUPIED".equalsIgnoreCase(b.getStatus()) || "RESERVED".equalsIgnoreCase(b.getStatus()));
+        if (hasOccupied) {
+            throw new BusinessException("LOCKER_IN_USE", "Không thể xóa tủ đang có ô chứa hàng hoặc đã được giữ chỗ");
+        }
+        boolean hasDrones = droneUnitRepository.findAllByOrderByLockerIdAscCodeAsc().stream()
+                .anyMatch(d -> id.equals(d.getLockerId()));
+        if (hasDrones) {
+            throw new BusinessException("LOCKER_HAS_DRONES", "Không thể xóa trạm tủ đang có Drone trực chiến. Vui lòng chuyển hoặc xử lý Drone trước.");
+        }
+        if (!boxes.isEmpty()) {
+            boxRepository.deleteAll(boxes);
+        }
+        lockerRepository.delete(locker);
+    }
+
+    @Transactional
+    public int deleteLockersBatch(BatchDeleteLockersRequest request) {
+        List<LockerUnit> targetLockers;
+        if (request != null && Boolean.TRUE.equals(request.deleteAll())) {
+            targetLockers = lockerRepository.findAll();
+        } else if (request != null && request.lockerIds() != null && !request.lockerIds().isEmpty()) {
+            targetLockers = lockerRepository.findAllById(request.lockerIds());
+        } else {
+            targetLockers = lockerRepository.findAll();
+        }
+
+        if (targetLockers.isEmpty()) {
+            return 0;
+        }
+
+        List<Long> targetIds = targetLockers.stream().map(LockerUnit::getId).toList();
+
+        boolean hasDrones = droneUnitRepository.findAllByOrderByLockerIdAscCodeAsc().stream()
+                .anyMatch(d -> targetIds.contains(d.getLockerId()));
+        if (hasDrones) {
+            throw new BusinessException("LOCKER_HAS_DRONES", "Không thể xóa các trạm tủ đang có Drone trực chiến. Vui lòng chuyển hoặc xử lý Drone trước.");
+        }
+
+        List<LockerBox> boxes = boxRepository.findByLockerIdIn(targetIds);
+
+        List<LockerBox> inUseBoxes = boxes.stream()
+                .filter(b -> "OCCUPIED".equalsIgnoreCase(b.getStatus()) || "RESERVED".equalsIgnoreCase(b.getStatus()))
+                .toList();
+
+        if (!inUseBoxes.isEmpty()) {
+            List<Long> lockedLockerIds = inUseBoxes.stream().map(LockerBox::getLockerId).distinct().toList();
+            throw new BusinessException("LOCKER_IN_USE", "Không thể xóa các tủ đang có ô chứa hàng hoặc đã được giữ chỗ (Tủ ID: " + lockedLockerIds + ")");
+        }
+
+        if (!boxes.isEmpty()) {
+            boxRepository.deleteAll(boxes);
+        }
+
+        int count = targetLockers.size();
+        lockerRepository.deleteAll(targetLockers);
+        return count;
     }
 
     @Transactional
@@ -354,19 +412,26 @@ public class LockerService {
         }
 
         List<LockerBox> targetBoxes = new ArrayList<>();
-        if (request.boxIds() != null && !request.boxIds().isEmpty()) {
-            targetBoxes.addAll(boxRepository.findByLockerIdAndIdIn(lockerId, request.boxIds()));
-        }
-        if (request.boxNumbers() != null && !request.boxNumbers().isEmpty()) {
-            List<LockerBox> byNumbers = boxRepository.findByLockerIdAndBoxNumberIn(lockerId, request.boxNumbers());
-            for (LockerBox b : byNumbers) {
-                if (targetBoxes.stream().noneMatch(existing -> existing.getId().equals(b.getId()))) {
-                    targetBoxes.add(b);
+        if (request != null && Boolean.TRUE.equals(request.deleteAll())) {
+            targetBoxes.addAll(boxRepository.findByLockerIdOrderByRowIndexAscColIndexAsc(lockerId));
+        } else if (request != null) {
+            if (request.boxIds() != null && !request.boxIds().isEmpty()) {
+                targetBoxes.addAll(boxRepository.findByLockerIdAndIdIn(lockerId, request.boxIds()));
+            }
+            if (request.boxNumbers() != null && !request.boxNumbers().isEmpty()) {
+                List<LockerBox> byNumbers = boxRepository.findByLockerIdAndBoxNumberIn(lockerId, request.boxNumbers());
+                for (LockerBox b : byNumbers) {
+                    if (targetBoxes.stream().noneMatch(existing -> existing.getId().equals(b.getId()))) {
+                        targetBoxes.add(b);
+                    }
                 }
             }
         }
 
         if (targetBoxes.isEmpty()) {
+            if (request != null && Boolean.TRUE.equals(request.deleteAll())) {
+                return 0;
+            }
             throw new BusinessException("NO_BOXES_FOUND", "Không tìm thấy ô tủ nào cần xóa theo yêu cầu");
         }
 
@@ -386,6 +451,11 @@ public class LockerService {
         }
 
         return targetBoxes.size();
+    }
+
+    @Transactional
+    public int deleteAllBoxesInLocker(Long lockerId) {
+        return deleteBoxesBatch(lockerId, new BatchDeleteBoxesRequest(null, null, true));
     }
 
     @Transactional
