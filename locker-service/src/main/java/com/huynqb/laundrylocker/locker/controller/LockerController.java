@@ -934,6 +934,22 @@ public class LockerController {
         return ApiResponse.ok("LOCKER_DELETED", "Locker deleted");
     }
 
+    @PostMapping("/api/admin/lockers/batch-delete")
+    public ApiResponse<Map<String, Object>> adminDeleteLockersBatch(
+            @RequestBody(required = false) BatchDeleteLockersRequest request) {
+        int count = lockerService.deleteLockersBatch(request);
+        return ApiResponse.ok("LOCKERS_DELETED", "Deleted " + count + " lockers successfully", Map.of("deletedCount", count));
+    }
+
+    @DeleteMapping("/api/admin/lockers")
+    public ApiResponse<Map<String, Object>> adminDeleteAllLockers(
+            @RequestParam(name = "all", defaultValue = "false") boolean all,
+            @RequestBody(required = false) BatchDeleteLockersRequest request) {
+        BatchDeleteLockersRequest req = request != null ? request : new BatchDeleteLockersRequest(null, all);
+        int count = lockerService.deleteLockersBatch(req);
+        return ApiResponse.ok("LOCKERS_DELETED", "Deleted " + count + " lockers successfully", Map.of("deletedCount", count));
+    }
+
     @PutMapping("/api/admin/lockers/{id}/maintenance")
     public ApiResponse<LockerResponse> maintenance(@PathVariable Long id, @RequestBody Map<String, Object> request) {
         boolean maintenance = Boolean.parseBoolean(String.valueOf(request.getOrDefault("maintenance", "true")));
@@ -986,8 +1002,14 @@ public class LockerController {
 
     @DeleteMapping("/api/admin/lockers/{id}/boxes")
     public ApiResponse<Map<String, Object>> adminDeleteBoxesBatchWithDelete(
-            @PathVariable Long id, @RequestBody BatchDeleteBoxesRequest request) {
+            @PathVariable Long id, @RequestBody(required = false) BatchDeleteBoxesRequest request) {
         int count = lockerService.deleteBoxesBatch(id, request);
         return ApiResponse.ok("BOXES_DELETED", "Deleted " + count + " boxes successfully", Map.of("deletedCount", count));
+    }
+
+    @DeleteMapping("/api/admin/lockers/{id}/boxes/all")
+    public ApiResponse<Map<String, Object>> adminDeleteAllBoxesInLocker(@PathVariable Long id) {
+        int count = lockerService.deleteAllBoxesInLocker(id);
+        return ApiResponse.ok("BOXES_DELETED", "Deleted all " + count + " boxes successfully", Map.of("deletedCount", count));
     }
 }
