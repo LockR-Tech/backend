@@ -35,6 +35,10 @@ public class AuthService {
     private static final Map<String, TempToken> TEMP_TOKENS = new ConcurrentHashMap<>();
     /// Trạng thái tài khoản admin đặt được qua user-service.
     static final Set<String> ACCOUNT_STATUSES = Set.of("ACTIVE", "INACTIVE");
+    /// Tài khoản của người dùng đã bị admin xoá: không cấp token, không mở lại hay đổi định danh được.
+    static final String DELETED_STATUS = "DELETED";
+    /// Tên miền `.invalid` (RFC 2606) không bao giờ nhận thư ⇒ email giữ chỗ không trùng email thật nào.
+    private static final String DELETED_EMAIL_DOMAIN = "deleted.invalid";
     /// Số lần nhập sai OTP 2FA admin tối đa cho một token tạm; quá số này token bị huỷ, phải đăng nhập lại.
     static final int ADMIN_2FA_MAX_ATTEMPTS = 5;
 
@@ -436,6 +440,7 @@ public class AuthService {
             return result;
         }
         AuthAccount account = found.get();
+        requireNotDeleted(account);
         account.setStatus(normalized);
         result.put("revokedTokens", "INACTIVE".equals(normalized) ? revokeRefreshTokens(account.getId()) : 0);
         return result;
@@ -453,6 +458,7 @@ public class AuthService {
             return result;
         }
         AuthAccount account = found.get();
+        requireNotDeleted(account);
         String email = request == null || !StringUtils.hasText(request.email()) ? null : request.email().trim();
         String phone = request == null || !StringUtils.hasText(request.phoneNumber()) ? null : request.phoneNumber().trim();
         if (email != null && !email.equalsIgnoreCase(account.getEmail() == null ? "" : account.getEmail())) {
@@ -483,6 +489,50 @@ public class AuthService {
         result.put("email", account.getEmail());
         result.put("phoneNumber", account.getPhoneNumber());
         return result;
+    }
+
+    /// Admin xoá người dùng (user-service gọi trước khi xoá hồ sơ). Bản ghi được giữ (refresh token và lịch
+    /// sử theo userId vẫn tham chiếu được) nhưng khoá hẳn: trạng thái DELETED, mật khẩu ngẫu nhiên, thu hồi
+    /// mọi refresh token. Email đổi sang địa chỉ giữ chỗ duy nhất, bỏ số điện thoại và gỡ liên kết
+    /// Google/Facebook ⇒ các định danh đó đăng ký lại được thành tài khoản mới. Gọi lại nhiều lần vẫn an toàn.
+    @Transactional
+    public Map<String, Object> deleteAccount(Long userId) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("userId", userId);
+        // Như updateAccountStatus: hồ sơ chưa có tài khoản đăng nhập ⇒ 200 thay vì 404.
+        Optional<AuthAccount> found = authAccountRepository.findByUserId(userId);
+        result.put("accountExists", found.isPresent());
+        if (found.isEmpty()) {
+            result.put("revokedTokens", 0);
+            return result;
+        }
+        AuthAccount account = found.get();
+        account.setStatus(DELETED_STATUS);
+        account.setEmail(deletedEmail(userId));
+        account.setPhoneNumber(null);
+        account.setEmailVerified(false);
+        account.setPhoneVerified(false);
+        account.setPasswordHash(passwordEncoder.encode(UUID.randomUUID().toString()));
+        socialIdentityRepository.deleteAll(socialIdentityRepository.findByAccountId(account.getId()));
+        result.put("status", DELETED_STATUS);
+        result.put("revokedTokens", revokeRefreshTokens(account.getId()));
+        return result;
+    }
+
+    /// `deleted+<userId>+<epochSeconds>@deleted.invalid` — user_id là UNIQUE nên không đụng nhau, dài dưới
+    /// 60 ký tự (cột email 255). Số điện thoại không cần giữ chỗ: cột cho phép NULL.
+    private static String deletedEmail(Long userId) {
+        return "deleted+" + userId + "+" + Instant.now().getEpochSecond() + "@" + DELETED_EMAIL_DOMAIN;
+    }
+
+    /// Mở lại hay gắn lại email/sđt cho tài khoản đã xoá sẽ cho nó đăng nhập lại và chiếm định danh của
+    /// người dùng mới ⇒ từ chối.
+    private static void requireNotDeleted(AuthAccount account) {
+        if (DELETED_STATUS.equalsIgnoreCase(account.getStatus())) {
+            throw new BusinessException(
+                    "AUTH_ACCOUNT_ALREADY_DELETED", "Tài khoản đăng nhập của người dùng này đã bị xoá",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
     }
 
     @Transactional

@@ -151,4 +151,11 @@ public class AuthController {
                 "AUTH_ACCOUNT_IDENTIFIERS_UPDATED", "Account identifiers updated",
                 authService.updateAccountIdentifiers(userId, request));
     }
+
+    /// Admin xoá người dùng (user-service gọi trước khi xoá hồ sơ) ⇒ khoá hẳn tài khoản đăng nhập và nhả
+    /// email/số điện thoại/liên kết Google-Facebook để đăng ký lại được. Không có tài khoản ⇒ 200, `accountExists=false`.
+    @DeleteMapping("/internal/auth/users/{userId}")
+    public ApiResponse<Map<String, Object>> deleteAccount(@PathVariable Long userId) {
+        return ApiResponse.ok("AUTH_ACCOUNT_DELETED", "Account deleted", authService.deleteAccount(userId));
+    }
 }
