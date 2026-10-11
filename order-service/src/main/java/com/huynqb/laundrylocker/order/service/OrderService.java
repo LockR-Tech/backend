@@ -1605,6 +1605,12 @@ public class OrderService {
             if (order.getPickupDeadline() == null || order.getPickupDeadline().isAfter(cutoff)) {
                 continue;
             }
+            boolean isRental = "RENTAL".equalsIgnoreCase(order.getType())
+                    || "RENTAL".equalsIgnoreCase(order.getServiceCategory());
+            if (isRental && !rules.rentalAutoReleaseEnabled()) {
+                // Đơn thuê tủ không tự động dời về kho theo cấu hình admin — tiếp tục giữ tại tủ
+                continue;
+            }
             BigDecimal overtime = calculatePickupOvertimeFee(order);
             if (overtime.compareTo(BigDecimal.ZERO) > 0) {
                 BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -2051,6 +2057,14 @@ public class OrderService {
         if (order.getPickupDeadline() == null || !LocalDateTime.now().isAfter(order.getPickupDeadline())) {
             return BigDecimal.ZERO;
         }
+        // Nếu đơn đã thanh toán xong và đang trong thời gian ân hạn (grace period) để lấy đồ:
+        // đóng băng phí quá giờ tại mức hiện tại, không lũy kế thêm tiền trong lúc khách mở ô.
+        int graceMinutes = rules.overtimeGracePeriodMinutes();
+        if (graceMinutes > 0 && order.getPaidAt() != null && "PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+            if (LocalDateTime.now().isBefore(order.getPaidAt().plusMinutes(graceMinutes))) {
+                return order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+            }
+        }
         long hours = ChronoUnit.HOURS.between(order.getPickupDeadline(), LocalDateTime.now());
         BigDecimal raw = BigDecimal.valueOf(Math.max(0, hours) * rules.overtimeFeePerHour());
         BigDecimal percentageCap =
@@ -2099,11 +2113,6 @@ public class OrderService {
         if (!rules.requirePaymentBeforeDrop()) {
             return;
         }
-        // Đơn EXPIRED: khách đã thanh toán qua app flow trước khi gọi endpoint này.
-        // paymentStatus có thể chưa kịp sync từ payment-service → bỏ qua check.
-        if ("EXPIRED".equalsIgnoreCase(order.getStatus())) {
-            return;
-        }
         if (!isOrderPaid(order)) {
             throw new BusinessException(
                     "ORDER_UNPAID",
@@ -2112,9 +2121,6 @@ public class OrderService {
     }
 
     private void assertPaidBeforePickup(LockerOrder order) {
-        if ("EXPIRED".equalsIgnoreCase(order.getStatus())) {
-            return;
-        }
         if ("DRONE_DELIVERY".equalsIgnoreCase(order.getType())) {
             if (!"READY_FOR_PICKUP".equalsIgnoreCase(order.getDeliveryStage())) {
                 return;

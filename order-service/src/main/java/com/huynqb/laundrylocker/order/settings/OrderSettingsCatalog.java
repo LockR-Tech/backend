@@ -42,6 +42,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_MAX_DECLARED_VALUE = "app.order.drone-max-declared-value";
     public static final String AUTO_CANCEL_UNPAID_MINUTES = "app.order.auto-cancel-unpaid-minutes";
     public static final String OVERDUE_RELEASE_HOURS = "app.order.overdue-release-hours";
+    public static final String OVERTIME_GRACE_PERIOD_MINUTES = "app.order.overtime-grace-period-minutes";
+    public static final String RENTAL_AUTO_RELEASE_ENABLED = "app.order.rental-auto-release-enabled";
     public static final String REMINDER_COOLDOWN_MINUTES = "app.order.reminder-cooldown-minutes";
     public static final String RENTAL_MIN_HOURS = "app.order.rental-min-hours";
     public static final String RENTAL_MAX_HOURS = "app.order.rental-max-hours";
@@ -124,10 +126,14 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Đơn INITIALIZED chưa thanh toán sẽ tự động bị huỷ và giải phóng ô tủ sau số phút này nếu khách không hoàn tất thanh toán.",
                         15, 1, 180, "phút").asPublic(),
                 integer(OVERDUE_RELEASE_HOURS, DEADLINES, "Nhả ô quá hạn sau",
-                        "Số giờ sau hạn lấy hàng thì đơn chuyển EXPIRED và nhả ô. 0 = không tự nhả.", 24, 0, 720, "giờ"),
+                        "Số giờ sau hạn lấy hàng thì đơn chuyển EXPIRED và nhả ô. 0 = không tự nhả (tiếp tục lưu giữ tại tủ và tính phí quá hạn).", 72, 0, 720, "giờ").asPublic(),
+                integer(OVERTIME_GRACE_PERIOD_MINUTES, DEADLINES, "Thời gian ân hạn phí quá giờ khi thanh toán",
+                        "Sau khi khách nộp phí quá hạn, hệ thống đóng băng phí trong số phút này để khách mở tủ lấy đồ mà không bị phát sinh thêm tiền. 0 = không ân hạn.", 15, 0, 180, "phút").asPublic(),
                 integer(REMINDER_COOLDOWN_MINUTES, DEADLINES, "Khoảng cách nhắc quá hạn",
                         "Không gửi nhắc lấy hàng cho cùng một đơn dày hơn khoảng này.", 60, 5, 10_080, "phút"),
 
+                bool(RENTAL_AUTO_RELEASE_ENABLED, RENTAL, "Tự động dời hàng thuê tủ về kho khi quá hạn",
+                        "Bật để đơn thuê tủ quá hạn bị dời về kho sau 'Nhả ô quá hạn sau' giờ. Tắt (mặc định) để đồ luôn ở trong tủ và tiếp tục tính phí thuê/quá giờ đến khi khách tự lấy đồ.", false).asPublic(),
                 integer(RENTAL_MIN_HOURS, RENTAL, "Số giờ thuê tối thiểu", "", 1, 1, 720, "giờ").asPublic(),
                 integer(RENTAL_MAX_HOURS, RENTAL, "Số giờ thuê tối đa", "", 720, 1, 8760, "giờ").asPublic(),
                 integer(RENTAL_DEFAULT_HOURS, RENTAL, "Số giờ thuê mặc định trên app", "", 4, 1, 8760, "giờ").asPublic(),
@@ -143,7 +149,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Đơn gửi hàng chỉ được xác nhận đã bỏ hàng khi ô đã từng được mở bằng mã gửi.", true),
                 bool(BLOCK_UNPAID_RENTAL_ACCESS, RENTAL, "Chặn mở ô thuê khi còn nợ tiền gia hạn",
                         "Gia hạn làm đơn thuê chưa thanh toán; bật để PIN không mở được ô cho tới khi trả.",
-                        false),
+                        false).asPublic(),
 
                 bool(RECEIVER_NOTIFY_SMS, RECEIVER, "Gửi mã mở tủ qua SMS",
                         "Nhắn mã và hạn lấy hàng tới số điện thoại người nhận, kể cả người chưa có "
