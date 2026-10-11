@@ -240,6 +240,14 @@ public class AuthService {
         refreshTokenRepository.findByTokenHashAndRevokedFalse(hash(request.refreshToken())).ifPresent(token -> token.setRevoked(true));
     }
 
+    /// Cùng điều kiện với `issue`: chỉ tài khoản ACTIVE mới được dùng token đã cấp.
+    @Transactional(readOnly = true)
+    public boolean isAccountActive(Long accountId) {
+        return authAccountRepository.findById(accountId)
+                .map(account -> "ACTIVE".equalsIgnoreCase(account.getStatus()))
+                .orElse(false);
+    }
+
     @Transactional(readOnly = true)
     public AuthResponse getAccount(Long id) {
         AuthAccount account = findAccount(id);

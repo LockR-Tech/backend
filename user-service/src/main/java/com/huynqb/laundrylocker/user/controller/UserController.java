@@ -5,6 +5,7 @@ import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
+import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.user.client.AuthClient;
 import com.huynqb.laundrylocker.user.client.NotificationClient;
 import com.huynqb.laundrylocker.user.dto.AdminCreateUserRequest;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @Slf4j
@@ -33,19 +35,43 @@ public class UserController {
     private final NotificationClient notificationClient;
     private final ObjectMapper objectMapper;
 
+    // /api/users/** đi qua gateway với mọi JWT hợp lệ, nên quyền kiểm ở đây: tạo/liệt kê chỉ ADMIN
+    // (web dùng /api/admin/users), đọc/sửa theo id chỉ chính chủ hoặc ADMIN.
     @PostMapping("/api/users")
-    public ApiResponse<UserSummary> create(@RequestBody UserProfileRequest request) {
+    public ApiResponse<UserSummary> create(
+            @RequestBody UserProfileRequest request,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        requireAdmin(roles);
         return ApiResponse.ok("USER_CREATED", "User created", userProfileService.create(request));
     }
 
     @PostMapping("/api/user")
-    public ApiResponse<UserSummary> createLegacy(@RequestBody UserProfileRequest request) {
-        return create(request);
+    public ApiResponse<UserSummary> createLegacy(
+            @RequestBody UserProfileRequest request,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return create(request, roles);
     }
 
     @PutMapping("/api/users/{id}")
-    public ApiResponse<UserSummary> update(@PathVariable Long id, @RequestBody UserProfileRequest request) {
+    public ApiResponse<UserSummary> update(
+            @PathVariable Long id,
+            @RequestBody UserProfileRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long callerId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        requireSelfOrAdmin(id, callerId, roles);
         return ApiResponse.ok("USER_UPDATED", "User updated", userProfileService.update(id, withoutAdminFields(request)));
+    }
+
+    private static void requireAdmin(String roles) {
+        if (!UserRoles.isAdmin(roles)) {
+            throw new BusinessException("USER_FORBIDDEN", "Không có quyền thực hiện thao tác này", HttpStatus.FORBIDDEN);
+        }
+    }
+
+    private static void requireSelfOrAdmin(Long userId, Long callerId, String roles) {
+        if (!Objects.equals(userId, callerId)) {
+            requireAdmin(roles);
+        }
     }
 
     /// Đường sửa hồ sơ không phải admin: bỏ trạng thái/vai trò khỏi request (chỉ admin đổi được,
@@ -63,23 +89,33 @@ public class UserController {
     }
 
     @GetMapping("/api/users/{id}")
-    public ApiResponse<UserSummary> get(@PathVariable Long id) {
+    public ApiResponse<UserSummary> get(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long callerId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        requireSelfOrAdmin(id, callerId, roles);
         return ApiResponse.ok(userProfileService.get(id));
     }
 
     @GetMapping("/api/user/{id}")
-    public ApiResponse<UserSummary> getLegacy(@PathVariable Long id) {
-        return get(id);
+    public ApiResponse<UserSummary> getLegacy(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long callerId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return get(id, callerId, roles);
     }
 
     @GetMapping("/api/users")
-    public ApiResponse<List<UserSummary>> list() {
+    public ApiResponse<List<UserSummary>> list(
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        requireAdmin(roles);
         return ApiResponse.ok(userProfileService.list());
     }
 
     @GetMapping("/api/user/read")
-    public ApiResponse<List<UserSummary>> listLegacy() {
-        return list();
+    public ApiResponse<List<UserSummary>> listLegacy(
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return list(roles);
     }
 
     @GetMapping("/api/user/profile")

@@ -16,6 +16,8 @@ import reactor.core.publisher.Mono;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
@@ -32,9 +34,7 @@ class JwtGatewayFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new JwtGatewayFilter(new MockEnvironment());
-        ReflectionTestUtils.setField(filter, "secret", SECRET);
-        filter.init();
+        filter = newFilter(AccountStatusChecker.allowAll());
     }
 
     @Test
@@ -429,6 +429,75 @@ class JwtGatewayFilterTest {
         AtomicBoolean notPublicForwarded = new AtomicBoolean(false);
         filter.filter(notPublic, chainThatMarks(notPublicForwarded)).block();
         assertFalse(notPublicForwarded.get());
+    }
+
+    @Test
+    void lockedAccountTokenIsRejectedWith401() {
+        filter = newFilter(checkerReturning(false));
+        MockServerWebExchange exchange =
+                exchangeWithBearer(MockServerHttpRequest.get("/api/orders/my-orders"), token("access", "CUSTOMER"));
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+        filter.filter(exchange, chainThatMarks(chainCalled)).block();
+
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+        assertFalse(chainCalled.get());
+    }
+
+    @Test
+    void activeAccountTokenIsForwardedWithUserHeaders() {
+        filter = newFilter(checkerReturning(true));
+        MockServerWebExchange exchange =
+                exchangeWithBearer(MockServerHttpRequest.get("/api/orders/my-orders"), token("access", "CUSTOMER"));
+        AtomicReference<ServerWebExchange> forwarded = new AtomicReference<>();
+
+        filter.filter(exchange, captureExchange(forwarded)).block();
+
+        assertNotNull(forwarded.get());
+        assertEquals("42", forwarded.get().getRequest().getHeaders().getFirst("X-User-Id"));
+        assertEquals("7", forwarded.get().getRequest().getHeaders().getFirst("X-Account-Id"));
+    }
+
+    @Test
+    void publicPathDropsClientSuppliedUserHeaders() {
+        MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/api/stores")
+                .header("X-User-Id", "1")
+                .header("X-Account-Id", "1")
+                .header("X-User-Roles", "ADMIN")
+                .build());
+        AtomicReference<ServerWebExchange> forwarded = new AtomicReference<>();
+
+        filter.filter(exchange, captureExchange(forwarded)).block();
+
+        HttpHeaders headers = forwarded.get().getRequest().getHeaders();
+        assertNull(headers.getFirst("X-User-Id"));
+        assertNull(headers.getFirst("X-Account-Id"));
+        assertNull(headers.getFirst("X-User-Roles"));
+    }
+
+    @Test
+    void publicPathTreatsLockedAccountAsAnonymous() {
+        filter = newFilter(checkerReturning(false));
+        MockServerWebExchange exchange =
+                exchangeWithBearer(MockServerHttpRequest.get("/api/stores"), token("access", "CUSTOMER"));
+        AtomicReference<ServerWebExchange> forwarded = new AtomicReference<>();
+
+        filter.filter(exchange, captureExchange(forwarded)).block();
+
+        assertNotNull(forwarded.get());
+        assertNull(forwarded.get().getRequest().getHeaders().getFirst("X-User-Id"));
+    }
+
+    private JwtGatewayFilter newFilter(AccountStatusChecker checker) {
+        JwtGatewayFilter created = new JwtGatewayFilter(new MockEnvironment(), checker);
+        ReflectionTestUtils.setField(created, "secret", SECRET);
+        created.init();
+        return created;
+    }
+
+    private static AccountStatusChecker checkerReturning(boolean active) {
+        return new AccountStatusChecker(
+                id -> Mono.just(active), true, Duration.ofSeconds(30), Duration.ofSeconds(1), Clock.systemUTC());
     }
 
     private void assertPublicGet(String path) {
