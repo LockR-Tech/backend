@@ -137,6 +137,14 @@ public class OrderRules {
         return settings.getInt(OVERDUE_RELEASE_HOURS);
     }
 
+    public int overtimeGracePeriodMinutes() {
+        return settings.getInt(OVERTIME_GRACE_PERIOD_MINUTES);
+    }
+
+    public boolean rentalAutoReleaseEnabled() {
+        return settings.getBoolean(RENTAL_AUTO_RELEASE_ENABLED);
+    }
+
     public int reminderCooldownMinutes() {
         return settings.getInt(REMINDER_COOLDOWN_MINUTES);
     }
