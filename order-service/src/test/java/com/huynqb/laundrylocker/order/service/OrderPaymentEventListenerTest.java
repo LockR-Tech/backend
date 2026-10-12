@@ -25,6 +25,8 @@ class OrderPaymentEventListenerTest {
     private LockerOrderRepository orderRepository;
     @Mock
     private DroneLateRefundScheduler droneLateRefunds;
+    @Mock
+    private DronePickupService dronePickupService;
 
     @Mock
     private org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate;
@@ -136,7 +138,8 @@ class OrderPaymentEventListenerTest {
     }
 
     private OrderPaymentEventListener listener() {
-        return new OrderPaymentEventListener(orderRepository, droneLateRefunds, rabbitTemplate, notificationClient);
+        return new OrderPaymentEventListener(
+                orderRepository, droneLateRefunds, rabbitTemplate, notificationClient, dronePickupService);
     }
 
     private static LockerOrder droneOrder(String status, String paymentStatus) {
