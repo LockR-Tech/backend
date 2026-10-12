@@ -34,6 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -56,9 +58,11 @@ class AuthServicePasswordTest {
 
     @BeforeEach
     void setUp() {
-        service = new AuthService(
+        service = spy(new AuthService(
                 authAccountRepository, refreshTokenRepository, socialIdentityRepository, passwordEncoder,
-                jwtService, userClient, emailOtpService, TestAuthRules.defaults());
+                jwtService, userClient, emailOtpService, TestAuthRules.defaults()));
+        // Không gọi Firebase thật: coi idToken trong test chính là số điện thoại đã xác minh.
+        doAnswer(inv -> inv.getArgument(0)).when(service).verifiedFirebasePhone(anyString());
         account = new AuthAccount();
         account.setId(1L);
         account.setUserId(10L);
@@ -153,7 +157,7 @@ class AuthServicePasswordTest {
 
     @Test
     void otpRegistrationWithoutPasswordIsMarkedAsNoPassword() {
-        service.completeRegistration(Map.of("phoneNumber", "0909000011", "firstName", "An"));
+        service.completeRegistration(Map.of("tempToken", phoneTempToken("0909000011"), "firstName", "An"));
 
         ArgumentCaptor<AuthAccount> saved = ArgumentCaptor.forClass(AuthAccount.class);
         verify(authAccountRepository).save(saved.capture());
@@ -162,7 +166,7 @@ class AuthServicePasswordTest {
 
     @Test
     void registrationWithPasswordIsMarkedAsHasPassword() {
-        service.completeRegistration(Map.of("phoneNumber", "0909000011", "password", "chosen-secret"));
+        service.completeRegistration(Map.of("tempToken", phoneTempToken("0909000011"), "password", "chosen-secret"));
 
         ArgumentCaptor<AuthAccount> saved = ArgumentCaptor.forClass(AuthAccount.class);
         verify(authAccountRepository).save(saved.capture());
@@ -177,5 +181,11 @@ class AuthServicePasswordTest {
         ArgumentCaptor<AuthAccount> saved = ArgumentCaptor.forClass(AuthAccount.class);
         verify(authAccountRepository).save(saved.capture());
         assertFalse(saved.getValue().getPasswordSet());
+    }
+
+    /// tempToken mà phone-login cấp cho số chưa có tài khoản (bước bắt buộc trước complete-registration).
+    private String phoneTempToken(String phone) {
+        when(authAccountRepository.findByPhoneNumber(anyString())).thenReturn(Optional.empty());
+        return (String) service.phoneLogin(Map.of("idToken", phone)).get("tempToken");
     }
 }
