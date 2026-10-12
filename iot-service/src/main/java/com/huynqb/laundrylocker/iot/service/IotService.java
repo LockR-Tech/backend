@@ -54,7 +54,7 @@ public class IotService {
         device.setLastSeenAt(LocalDateTime.now());
         DeviceStatus saved = repository.save(device);
         publishDeviceStatus(saved);
-        return toResponse(saved);
+        return DeviceManagementService.toResponse(saved, null);
     }
 
     public Map<String, Object> unlock(UnlockRequest request, Long actorUserId) {
@@ -72,6 +72,7 @@ public class IotService {
                 String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
                 String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
                 logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", res, "Lỗi phần cứng [" + errCode + "]: " + errMsg);
+                reportHardwareFault(request.boxId(), errCode, errMsg);
                 return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", errMsg);
             }
             lockerClient.openBox(request.boxId());
@@ -107,6 +108,7 @@ public class IotService {
     /// Kết quả luôn có `accepted` + `status`: OPENED (tủ xác nhận mở), TIMEOUT (tủ không phản hồi
     /// trong `unlockWaitSeconds` — ô có thể chưa mở), FAILED/JAMMED (gửi lệnh lỗi hoặc tủ báo lỗi).
     /// Chỉ OPENED mới báo locker-service "ô đã mở"; trước đây timeout vẫn trả accepted=true.
+    /// Lý do/ghi chú KTV nhập (nếu có) đi kèm mọi dòng nhật ký của lần mở này.
     public Map<String, Object> forceUnlock(ForceUnlockRequest request) {
         int waitSeconds = rules.unlockWaitSeconds();
         com.fasterxml.jackson.databind.JsonNode node;
@@ -122,14 +124,15 @@ public class IotService {
             if (timeout) {
                 log.warn("Force-unlock of box {} timed out after {}s", request.boxId(), waitSeconds);
                 logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "TIMEOUT",
-                        "Lỗi kết nối bộ điều khiển tủ: Quá thời gian chờ mở khẩn cấp (Timeout " + waitSeconds + "s)");
+                        forceOpenMessage("Lỗi kết nối bộ điều khiển tủ: Quá thời gian chờ mở khẩn cấp (Timeout "
+                                + waitSeconds + "s)", request));
                 return forceUnlockResult(request, false, "TIMEOUT",
                         "Tủ không phản hồi lệnh mở khẩn cấp sau " + waitSeconds
                                 + " giây — ô có thể chưa mở, vui lòng kiểm tra tại tủ rồi thử lại");
             }
             log.error("Force-unlock command for box {} could not be sent", request.boxId(), e);
             logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "FAILED",
-                    "Lỗi kết nối bộ điều khiển tủ: không gửi được lệnh mở khẩn cấp");
+                    forceOpenMessage("Lỗi kết nối bộ điều khiển tủ: không gửi được lệnh mở khẩn cấp", request));
             return forceUnlockResult(request, false, "FAILED",
                     "Không gửi được lệnh mở ô tới tủ — ô chưa mở, vui lòng thử lại");
         }
@@ -137,10 +140,13 @@ public class IotService {
             String errCode = node.hasNonNull("errorCode") ? node.get("errorCode").asText() : "HARDWARE_FAULT";
             String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
             String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
-            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", res, "Lỗi phần cứng khẩn cấp [" + errCode + "]: " + errMsg);
+            logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", res,
+                    forceOpenMessage("Lỗi phần cứng khẩn cấp [" + errCode + "]: " + errMsg, request));
+            reportHardwareFault(request.boxId(), errCode, errMsg);
             return forceUnlockResult(request, false, res, errMsg);
         }
-        logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "SUCCESS", null);
+        logAccess(request.boxId(), request.lockerId(), null, request.actorUserId(), "MASTER", "SUCCESS",
+                forceOpenMessage(null, request));
         try {
             lockerClient.openBox(request.boxId());
         } catch (Exception ex) {
@@ -148,6 +154,49 @@ public class IotService {
             log.warn("Could not notify locker-service that box {} opened: {}", request.boxId(), ex.getMessage());
         }
         return forceUnlockResult(request, true, "OPENED", "Đã mở ô khẩn cấp");
+    }
+
+    static final int ACCESS_LOG_MESSAGE_MAX = 255;
+
+    /// `box_access_logs.message` cho lần mở khẩn cấp: kết quả + "Lý do: …" + "Ghi chú: …" (cắt 255 ký tự).
+    /// Web admin cũ không gửi lý do ⇒ giữ nguyên như trước (lần mở thành công không có message).
+    static String forceOpenMessage(String outcome, ForceUnlockRequest request) {
+        List<String> parts = new java.util.ArrayList<>();
+        boolean hasReason = request.reason() != null && !request.reason().isBlank();
+        boolean hasNote = request.note() != null && !request.note().isBlank();
+        if (outcome != null) {
+            parts.add(outcome);
+        } else if (hasReason || hasNote) {
+            parts.add("Mở khẩn cấp");
+        }
+        if (hasReason) {
+            parts.add("Lý do: " + request.reason().trim());
+        }
+        if (hasNote) {
+            parts.add("Ghi chú: " + request.note().trim());
+        }
+        return parts.isEmpty() ? null : DeviceManagementService.truncate(String.join(" · ", parts), ACCESS_LOG_MESSAGE_MAX);
+    }
+
+    /// Mã lỗi Pi gắn với chính ô (mqtt-contract.md § 2.2). Lỗi cấu hình/kết nối cả tủ (UNKNOWN_SLOT,
+    /// INVALID_SLOT, GPIO_NOT_STARTED, TIMEOUT, SERIAL_ERROR…) chỉ ghi nhật ký, không đánh hỏng từng ô.
+    static final Set<String> BOX_FAULT_ERROR_CODES = Set.of("JAMMED", "HW_ERROR", "HARDWARE_FAULT");
+
+    /// F3.07: tủ báo mở ô thất bại vì lỗi của ô ⇒ locker-service đưa ô về FAULT và mở (hoặc gộp vào)
+    /// phiếu sự cố cho KTV phụ trách tủ. Chạy nền, lỗi chỉ ghi log — không đổi phản hồi đang trả.
+    private void reportHardwareFault(Long boxId, String errorCode, String errorMessage) {
+        if (boxId == null || errorCode == null || !BOX_FAULT_ERROR_CODES.contains(errorCode.toUpperCase(java.util.Locale.ROOT))) {
+            return;
+        }
+        String reason = DeviceManagementService.truncate(
+                "Tủ báo mở ô thất bại [" + errorCode + "]: " + errorMessage, 2000);
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                lockerClient.markFault(boxId, Map.of("reason", reason));
+            } catch (Exception ex) {
+                log.warn("Could not report hardware fault of box {} to locker-service: {}", boxId, ex.getMessage());
+            }
+        });
     }
 
     private static Map<String, Object> forceUnlockResult(
@@ -196,6 +245,7 @@ public class IotService {
                 String errMsg = node.hasNonNull("errorMessage") ? node.get("errorMessage").asText() : "Phần cứng không mở được chốt ô";
                 String res = "JAMMED".equalsIgnoreCase(errCode) ? "JAMMED" : "FAILED";
                 logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", res, "Lỗi phần cứng Kiosk [" + errCode + "]: " + errMsg);
+                reportHardwareFault(boxId, errCode, errMsg);
                 return Map.of("accepted", false, "boxId", boxId, "message", errMsg);
             }
             lockerClient.openBox(boxId);
@@ -484,11 +534,6 @@ public class IotService {
         return new PickupResponse(response.id(), response.status(), response.completedAt(), "Pickup confirmed");
     }
 
-    @Transactional(readOnly = true)
-    public List<DeviceStatusResponse> listDeviceStatuses() {
-        return repository.findAll().stream().map(this::toResponse).toList();
-    }
-
     /// Chỉ ĐỌC nhật ký: sự kiện kết nối/mất kết nối của bộ điều khiển được ghi lúc nhận heartbeat/
     /// discovery và lúc quét mất kết nối (GatewayProvisioningService), không ghi trong GET này.
     @Transactional(readOnly = true)
@@ -574,10 +619,6 @@ public class IotService {
         return rows.stream()
                 .map(hw -> new BoxHardwareStatusResponse(hw.getBoxId(), hw.getLockerId(), hw.getHwState(), hw.getLastReportedAt()))
                 .toList();
-    }
-
-    private DeviceStatusResponse toResponse(DeviceStatus device) {
-        return new DeviceStatusResponse(device.getId(), device.getDeviceId(), device.getLockerId(), device.getStatus(), device.getLastSeenAt());
     }
 
     private void publishDeviceStatus(DeviceStatus device) {

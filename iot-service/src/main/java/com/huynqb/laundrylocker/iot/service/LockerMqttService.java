@@ -37,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class LockerMqttService {
 
+    /// `cabinet/+/command/+/result` gồm cả `…/open/result` lẫn `…/restart/result`.
     static final String[] SUBSCRIPTIONS = {
             "cabinet/+/command/+/result",
             "cabinet/+/heartbeat",
@@ -319,17 +320,38 @@ public class LockerMqttService {
 
     public CompletableFuture<JsonNode> sendUnlockCommandAsync(Long lockerId, Long boxId) {
         String commandId = UUID.randomUUID().toString();
+        return sendCommandAsync(lockerId, "open", commandId, openCommandPayload(commandId, lockerId, boxId));
+    }
+
+    /// Lệnh khởi động lại tiến trình điều khiển của tủ (mqtt-contract.md § 2.1). Pi trả
+    /// `cabinet/{lockerId}/command/restart/result` `{commandId, status: ACCEPTED|FAILED, errorMessage?}` rồi
+    /// mới thoát để systemd chạy lại `lockr-controller`; không khởi động lại cả máy.
+    ObjectNode restartCommandPayload(String commandId) {
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("commandId", commandId);
+        payload.put("action", "RESTART");
+        return payload;
+    }
+
+    public CompletableFuture<JsonNode> sendRestartCommandAsync(Long lockerId) {
+        String commandId = UUID.randomUUID().toString();
+        return sendCommandAsync(lockerId, "restart", commandId, restartCommandPayload(commandId));
+    }
+
+    /// Gửi `cabinet/{lockerId}/command/{command}` và chờ `…/{command}/result` cùng `commandId`
+    /// (khớp ở {@link #completeCommand}); quá `unlockWaitSeconds` thì future hỏng với TimeoutException.
+    private CompletableFuture<JsonNode> sendCommandAsync(
+            Long lockerId, String command, String commandId, ObjectNode payload) {
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         pendingCommands.put(commandId, future);
 
         try {
-            MqttMessage message = new MqttMessage(
-                    openCommandPayload(commandId, lockerId, boxId).toString().getBytes(StandardCharsets.UTF_8));
+            MqttMessage message = new MqttMessage(payload.toString().getBytes(StandardCharsets.UTF_8));
             message.setQos(1);
 
-            String topic = "cabinet/" + lockerId + "/command/open";
+            String topic = "cabinet/" + lockerId + "/command/" + command;
             client.publish(topic, message);
-            log.info("Published OPEN command {} to {}", commandId, topic);
+            log.info("Published {} command {} to {}", command.toUpperCase(java.util.Locale.ROOT), commandId, topic);
 
             // Auto cleanup future if not resolved in time
             future.orTimeout(rules.unlockWaitSeconds(), TimeUnit.SECONDS).whenComplete((res, ex) -> {

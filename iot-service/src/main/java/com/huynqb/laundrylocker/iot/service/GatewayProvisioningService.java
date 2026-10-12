@@ -431,9 +431,15 @@ public class GatewayProvisioningService {
         }
     }
 
+    /// "Đang kết nối" = có tín hiệu (heartbeat/discovery) trong {@link #ONLINE_WINDOW_SECONDS} giây gần nhất.
+    /// Dùng chung cho bộ điều khiển tủ, danh sách thiết bị của KTV và cờ `online` của tủ.
+    static boolean isOnline(LocalDateTime lastSeen) {
+        return lastSeen != null && lastSeen.isAfter(LocalDateTime.now().minusSeconds(ONLINE_WINDOW_SECONDS));
+    }
+
     GatewayDeviceResponse toResponse(GatewayDevice device) {
         LocalDateTime lastSeen = device.getLastSeenAt();
-        boolean online = lastSeen != null && lastSeen.isAfter(LocalDateTime.now().minusSeconds(ONLINE_WINDOW_SECONDS));
+        boolean online = isOnline(lastSeen);
         JsonNode result = null;
         if (device.getSetupResult() != null) {
             try {

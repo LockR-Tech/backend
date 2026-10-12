@@ -3,139 +3,81 @@ package com.huynqb.laundrylocker.iot.controller;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.iot.dto.BoxAccessLogResponse;
 import com.huynqb.laundrylocker.iot.dto.DeviceStatusResponse;
-import com.huynqb.laundrylocker.iot.model.BoxAccessLog;
-import com.huynqb.laundrylocker.iot.model.DeviceStatus;
-import com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository;
-import com.huynqb.laundrylocker.iot.repository.DeviceStatusRepository;
-import com.huynqb.laundrylocker.iot.service.LockerMqttService;
+import com.huynqb.laundrylocker.iot.service.DeviceManagementService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Device management endpoints for the LOCKER_TECHNICIAN role.
- * Gateway enforces LOCKER_TECHNICIAN|ADMIN — no JWT re-validation here.
- * Depends on headers X-User-Id forwarded by gateway.
+ * Gateway enforces LOCKER_TECHNICIAN|ADMIN and forwards X-User-Id / X-User-Roles;
+ * KTV chỉ thấy thiết bị của tủ mình phụ trách (kiểm trong DeviceManagementService).
  */
-@Slf4j
 @RestController
 @RequiredArgsConstructor
 public class TechnicianController {
 
-    private final DeviceStatusRepository deviceStatusRepository;
-    private final BoxAccessLogRepository boxAccessLogRepository;
-    private final LockerMqttService lockerMqttService;
+    private final DeviceManagementService deviceService;
 
     /**
-     * List all registered IoT devices and their current status.
+     * IoT devices with their effective status (ONLINE only within the online window).
      */
     @GetMapping("/api/locker-technician/devices")
-    public ApiResponse<List<DeviceStatusResponse>> listDevices() {
-        List<DeviceStatusResponse> devices = deviceStatusRepository.findAll().stream()
-                .map(this::toResponse)
-                .toList();
-        return ApiResponse.ok(devices);
+    public ApiResponse<List<DeviceStatusResponse>> listDevices(
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(deviceService.listDevices(userId, roles));
     }
 
-    /**
-     * Get a single device by its DB id (health, last-seen, status).
-     */
     @GetMapping("/api/locker-technician/devices/{id}")
-    public ApiResponse<DeviceStatusResponse> getDevice(@PathVariable Long id) {
-        DeviceStatus device = deviceStatusRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
-        return ApiResponse.ok(toResponse(device));
+    public ApiResponse<DeviceStatusResponse> getDevice(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(deviceService.getDevice(id, userId, roles));
     }
 
     /**
-     * Manually override a device's status (e.g. mark OFFLINE when hardware
-     * is physically disconnected but heartbeat hasn't timed out yet).
-     * Request body: {"status": "ONLINE"|"OFFLINE"|"ERROR"}
+     * Manually mark a device OFFLINE or ERROR (e.g. hardware physically disconnected
+     * before the online window expires). ONLINE cannot be set by hand.
+     * Request body: {"status": "OFFLINE"|"ERROR"}
      */
     @PutMapping("/api/locker-technician/devices/{id}/status")
     public ApiResponse<DeviceStatusResponse> updateStatus(
             @PathVariable Long id,
-            @RequestBody Map<String, String> body) {
-        DeviceStatus device = deviceStatusRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
-        String newStatus = body.getOrDefault("status", "UNKNOWN").toUpperCase();
-        device.setStatus(newStatus);
-        device.setLastSeenAt(LocalDateTime.now());
-        DeviceStatus saved = deviceStatusRepository.save(device);
-        return ApiResponse.ok("DEVICE_STATUS_UPDATED", "Device status updated", toResponse(saved));
+            @RequestBody Map<String, String> body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        String status = body == null ? null : body.get("status");
+        return ApiResponse.ok(
+                "DEVICE_STATUS_UPDATED", "Device status updated", deviceService.updateStatus(id, status, userId, roles));
     }
 
     /**
-     * Audit log for a device — returns box_access_logs for the locker that
-     * this device is paired with, ordered newest-first.
+     * Audit log for a device — box_access_logs of the locker the device is paired with, newest first.
      */
     @GetMapping("/api/locker-technician/devices/{id}/logs")
-    public ApiResponse<List<BoxAccessLogResponse>> deviceLogs(@PathVariable Long id) {
-        DeviceStatus device = deviceStatusRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
-        if (device.getLockerId() == null) {
-            return ApiResponse.ok(List.of());
-        }
-        List<BoxAccessLogResponse> logs = boxAccessLogRepository
-                .findByLockerIdOrderByCreatedAtDesc(device.getLockerId())
-                .stream()
-                .map(this::toLogResponse)
-                .toList();
-        return ApiResponse.ok(logs);
+    public ApiResponse<List<BoxAccessLogResponse>> deviceLogs(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(deviceService.deviceLogs(id, userId, roles));
     }
 
     /**
-     * Publish a restart command via MQTT (best-effort) and log the attempt.
-     * If MQTT is unavailable the log entry is still written so the restart
-     * request is auditable even without a physical response.
+     * Restart the cabinet controller process over MQTT and wait for its reply.
+     * Always 200 so the client reads `data.accepted` / `data.status` / `data.message`.
      */
     @PostMapping("/api/locker-technician/devices/{id}/restart")
     public ApiResponse<Map<String, Object>> restartDevice(
             @PathVariable Long id,
-            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        DeviceStatus device = deviceStatusRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
-
-        // Write audit log entry regardless of MQTT outcome
-        BoxAccessLog auditLog = new BoxAccessLog();
-        auditLog.setBoxId(0L);
-        auditLog.setLockerId(device.getLockerId());
-        auditLog.setActorUserId(userId);
-        auditLog.setCredentialType("MASTER");
-        auditLog.setResult("RESTART_REQUESTED");
-        auditLog.setMessage("Technician restart for device " + device.getDeviceId());
-        boxAccessLogRepository.save(auditLog);
-
-        // Best-effort MQTT: publish a restart command. No box involved so boxId = 0.
-        if (device.getLockerId() != null) {
-            try {
-                lockerMqttService.sendUnlockCommandAsync(device.getLockerId(), 0L);
-            } catch (Exception ex) {
-                log.warn("MQTT restart publish failed for device {}: {}", device.getDeviceId(), ex.getMessage());
-            }
-        }
-
-        return ApiResponse.ok(
-                "DEVICE_RESTART_REQUESTED",
-                "Restart command sent",
-                Map.of("deviceId", device.getDeviceId(), "lockerId",
-                        device.getLockerId() != null ? device.getLockerId() : "N/A"));
-    }
-
-    private DeviceStatusResponse toResponse(DeviceStatus d) {
-        return new DeviceStatusResponse(d.getId(), d.getDeviceId(), d.getLockerId(), d.getStatus(), d.getLastSeenAt());
-    }
-
-    private BoxAccessLogResponse toLogResponse(BoxAccessLog l) {
-        return new BoxAccessLogResponse(
-                l.getId(), l.getBoxId(), l.getLockerId(), l.getOrderId(),
-                l.getActorUserId(), l.getCredentialType(), l.getResult(),
-                l.getMessage(), l.getCreatedAt());
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        Map<String, Object> result = deviceService.restart(id, userId, roles);
+        return Boolean.TRUE.equals(result.get("accepted"))
+                ? ApiResponse.ok("DEVICE_RESTART_ACCEPTED", String.valueOf(result.get("message")), result)
+                : ApiResponse.ok("DEVICE_RESTART_FAILED", String.valueOf(result.get("message")), result);
     }
 }
