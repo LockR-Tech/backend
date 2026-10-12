@@ -87,6 +87,17 @@ class PaymentSpecificationsJpaTest {
         assertEquals(4, paymentRepository.findAll(all(paymentStatusIn(List.of(" ")), null)).size());
     }
 
+    /// Nạp ví SePay (hiện tại) và VNPay (dữ liệu cũ) cùng được xếp loại TOPUP, không lẫn vào đơn.
+    @Test
+    void topupKindCoversCurrentAndLegacyTopupMethods() {
+        persistPayment(0L, 45L, "SEPAY_TOPUP", "COMPLETED", "TOPUP_45_1", LocalDateTime.of(2026, 9, 9, 3, 0));
+        em.flush();
+
+        assertEquals(List.of("VNPAY_TOPUP", "SEPAY_TOPUP"), paymentRepository.findAll(all(paymentKind("TOPUP")), Sort.by("id"))
+                .stream().map(PaymentRecord::getMethod).toList());
+        assertEquals(3, paymentRepository.findAll(all(paymentKind("ORDER"))).size());
+    }
+
     @Test
     void refundFiltersUseCoalescedTimeAndPaymentOwner() {
         assertEquals(1, refundRepository.findAll(all(

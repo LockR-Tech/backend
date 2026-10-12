@@ -10,9 +10,10 @@ import static com.huynqb.laundrylocker.common.settings.SettingDefinition.bool;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integer;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integerList;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.string;
+import static com.huynqb.laundrylocker.common.settings.SettingDefinition.stringList;
 
 /// Quy tắc nghiệp vụ của payment-service admin chỉnh được (ADR-0005).
-/// Không gồm khoá/URL cổng thanh toán (VNPay, MoMo) — đó là cấu hình hạ tầng, giữ ở biến môi trường.
+/// Không gồm khoá/URL cổng thanh toán (SePay) — đó là cấu hình hạ tầng, giữ ở biến môi trường.
 @Component
 public class PaymentSettingsCatalog implements SettingsCatalog {
 
@@ -22,6 +23,9 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
     public static final String TOPUP_PRESETS = "app.payment.topup-presets";
     public static final String ENABLED_METHODS = "app.payment.enabled-methods";
     public static final String CASH_AUTO_COMPLETE = "app.payment.cash-auto-complete";
+
+    /// Phương thức thanh toán đơn đang hỗ trợ — giá trị hợp lệ của {@link #ENABLED_METHODS}.
+    public static final List<String> PAYMENT_METHODS = List.of("CASH", "WALLET", "SEPAY");
 
     // Quy tắc hoàn tiền & khiếu nại (ADR-0005)
     public static final String REFUND_ENABLED = "app.payment.refund-enabled";
@@ -48,10 +52,11 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
                         "Danh sách số tiền hiển thị trên app, phân tách bằng dấu phẩy.",
                         "20000,50000,100000,200000,500000,1000000", 1000, 1_000_000_000, "VND").asPublic(),
 
-                string(ENABLED_METHODS, METHODS, "Phương thức thanh toán đang bật",
-                        "Danh sách cách nhau bởi dấu phẩy, nhận CASH, WALLET, VNPAY, MOMO, SEPAY. "
-                                + "Thanh toán đơn bằng phương thức không có trong danh sách bị từ chối; giá trị lạ bị bỏ qua.",
-                        "CASH,WALLET,VNPAY,MOMO,SEPAY", List.of()).asPublic(),
+                stringList(ENABLED_METHODS, METHODS, "Phương thức thanh toán đang bật",
+                        "Danh sách cách nhau bởi dấu phẩy, nhận CASH, WALLET, SEPAY. "
+                                + "Thanh toán đơn bằng phương thức không có trong danh sách bị từ chối. "
+                                + "Mặc định chỉ SePay (chuyển khoản VietQR).",
+                        "SEPAY", PAYMENT_METHODS).asPublic(),
                 bool(CASH_AUTO_COMPLETE, METHODS, "Tự hoàn tất thanh toán tiền mặt",
                         "Bật: thanh toán CASH được ghi nhận COMPLETED ngay. Tắt: giữ PENDING chờ nhân viên xác nhận.",
                         true),

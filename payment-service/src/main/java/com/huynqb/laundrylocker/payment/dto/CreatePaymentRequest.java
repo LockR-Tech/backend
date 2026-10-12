@@ -9,8 +9,6 @@ public record CreatePaymentRequest(
         @NotNull Long userId,
         @NotNull BigDecimal amount,
         String method,
-        String bankCode,
-        String language,
         String description,
         String referenceId) {
 }

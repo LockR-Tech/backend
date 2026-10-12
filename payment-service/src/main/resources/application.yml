@@ -77,26 +77,17 @@ resilience4j:
         slow-call-duration-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_DURATION:4s}
         slow-call-rate-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_RATE_THRESHOLD:80}
 
-vnpay:
-  tmn-code: ${VNPAY_TMN_CODE:DEMO}
-  hash-secret: ${VNPAY_HASH_SECRET:demo-secret}
-  pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
-  return-url: ${VNPAY_RETURN_URL:http://localhost:8080/api/payments/vnpay/return}
-
-momo:
-  redirect-url: ${MOMO_REDIRECT_URL:http://localhost:8080/api/payments/momo/return}
-
 sepay:
-  merchant-id: ${SEPAY_MERCHANT_ID:SP-LIVE-TN435687}
-  secret-key: ${SEPAY_SECRET_KEY:spsk_live_7kK59VKXMKMKjZPzcXB9bVjsBPeufXuc}
-  api-key: ${SEPAY_API_KEY:ac2a55074013f070cdd56ca4916315b03b77e250d3830f5b6e6f37f1f867e32f}
+  merchant-id: ${SEPAY_MERCHANT_ID:}
+  secret-key: ${SEPAY_SECRET_KEY:}
+  api-key: ${SEPAY_API_KEY:}
   checkout-url: ${SEPAY_CHECKOUT_URL:https://pay.sepay.vn/v1/checkout/init}
   return-url: ${SEPAY_RETURN_URL:https://api.locker-drone.tech/payments/sepay/callback}
   cancel-url: ${SEPAY_CANCEL_URL:https://api.locker-drone.tech/payments/sepay/callback?status=cancel}
   pay-base-url: ${SEPAY_PAY_BASE_URL:https://api.locker-drone.tech/api/payments/sepay/pay}
   # Tài khoản ngân hàng để sinh VietQR inline trong app mobile.
   # Lấy từ SePay Dashboard → Ngân hàng → Tài khoản liên kết.
-  bank-bin: ${SEPAY_BANK_BIN:970422}
-  bank-account-no: ${SEPAY_BANK_ACCOUNT_NO:0000234917957}
-  account-name: ${SEPAY_ACCOUNT_NAME:TRUONG NGUYEN THAI BINH}
+  bank-bin: ${SEPAY_BANK_BIN:}
+  bank-account-no: ${SEPAY_BANK_ACCOUNT_NO:}
+  account-name: ${SEPAY_ACCOUNT_NAME:LaundryLocker}
 

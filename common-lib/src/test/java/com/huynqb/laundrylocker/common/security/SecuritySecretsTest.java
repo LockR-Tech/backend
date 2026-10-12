@@ -45,8 +45,8 @@ class SecuritySecretsTest {
                 IllegalStateException.class,
                 () ->
                         SecuritySecrets.requireProductionSafeValue(
-                                "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html",
-                                "vnpay.pay-url",
+                                "https://pay-sandbox.sepay.vn/v1/checkout/init",
+                                "sepay.checkout-url",
                                 "production"));
     }
 
@@ -55,6 +55,6 @@ class SecuritySecretsTest {
         assertDoesNotThrow(
                 () ->
                         SecuritySecrets.requireProductionSafeValue(
-                                STRONG_PROD_SECRET, "vnpay.hash-secret", "production"));
+                                STRONG_PROD_SECRET, "sepay.secret-key", "production"));
     }
 }

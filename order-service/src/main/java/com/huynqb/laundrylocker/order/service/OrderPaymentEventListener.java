@@ -95,7 +95,7 @@ public class OrderPaymentEventListener {
     /**
      * Đơn drone đang chạy: cộng ĐÚNG số tiền của lần thanh toán này vào `paidAmount` và chỉ
      * lật `PAID` khi đã đủ tổng đơn. Trước đây mọi sự kiện đều gán `paidAmount = totalPrice`,
-     * nên sự kiện lặp lại của lần trả đầu (VNPay return + IPN) tới sau khi đã cộng phụ thu cân
+     * nên sự kiện lặp lại của lần trả đầu (cổng thanh toán gửi lại callback) tới sau khi đã cộng phụ thu cân
      * lệch lật đơn về `PAID` dù chưa thu phần chênh.
      *
      * @return false khi sự kiện không mang số tiền/mã thanh toán (nguồn phát cũ) — nơi gọi

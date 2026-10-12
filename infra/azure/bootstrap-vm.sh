@@ -100,16 +100,6 @@ MAIL_PASSWORD=
 # Firebase Admin (auth-service verify ID token) — dán nguyên JSON service account.
 FIREBASE_CREDENTIALS_JSON=
 
-# VNPay / MoMo — để trống thì dùng sandbox mặc định.
-VNPAY_TMN_CODE=
-VNPAY_HASH_SECRET=
-VNPAY_RETURN_URL=https://${API_DOMAIN}/api/payments/vnpay/callback
-MOMO_PARTNER_CODE=
-MOMO_ACCESS_KEY=
-MOMO_SECRET_KEY=
-MOMO_REDIRECT_URL=https://${API_DOMAIN}/api/payments/momo/return
-MOMO_IPN_URL=https://${API_DOMAIN}/api/payments/momo/callback
-
 # Ảnh (Cloudinary, ADR-0004) — cloudinary://<api_key>:<api_secret>@<cloud_name>. Trống ⇒ tắt upload ảnh.
 CLOUDINARY_URL=
 MEDIA_FOLDER_ROOT=lockr-prod

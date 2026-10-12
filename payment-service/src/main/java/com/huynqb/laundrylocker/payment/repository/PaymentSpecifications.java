@@ -45,11 +45,11 @@ public final class PaymentSpecifications {
         }
         if (PaymentReportRules.KIND_TOPUP.equalsIgnoreCase(kind)) {
             return (root, query, cb) -> cb.or(
-                    cb.equal(upper(root.get("method"), cb), PaymentReportRules.METHOD_TOPUP),
+                    upper(root.get("method"), cb).in(PaymentReportRules.TOPUP_METHODS),
                     cb.le(root.get("orderId"), 0L));
         }
         return (root, query, cb) -> cb.and(
-                cb.notEqual(upper(root.get("method"), cb), PaymentReportRules.METHOD_TOPUP),
+                cb.not(upper(root.get("method"), cb).in(PaymentReportRules.TOPUP_METHODS)),
                 cb.gt(root.get("orderId"), 0L));
     }
 

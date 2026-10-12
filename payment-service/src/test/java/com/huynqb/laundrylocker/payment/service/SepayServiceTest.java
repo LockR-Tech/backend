@@ -61,6 +61,47 @@ class SepayServiceTest {
         assertTrue(sepayService.verifyWebhook(body, "Apikey test_api_key"));
         assertTrue(sepayService.verifyWebhook(body, "apikey test_api_key"));
         assertFalse(sepayService.verifyWebhook(body, "Apikey wrong_key"));
+        assertFalse(sepayService.verifyWebhook(body, null));
+    }
+
+    @Test
+    void webhookIsRejectedWhenKeysAreNotConfigured() {
+        SepayService unconfigured = new SepayService();
+        ReflectionTestUtils.setField(unconfigured, "merchantId", "");
+        ReflectionTestUtils.setField(unconfigured, "secretKey", "");
+        ReflectionTestUtils.setField(unconfigured, "apiKey", "");
+        Map<String, Object> body = new LinkedHashMap<>(Map.of(
+                "transferAmount", 50000,
+                "content", "PAY-38 chuyen khoan"));
+
+        assertFalse(unconfigured.verifyWebhook(body, null));
+        assertFalse(unconfigured.verifyWebhook(body, "Apikey "));
+        assertFalse(unconfigured.verifyWebhook(body, "Apikey anything"));
+
+        // Có chữ ký nhưng chưa cấu hình merchant/secret ⇒ không được nhận.
+        body.put("signature", "any-signature");
+        assertFalse(unconfigured.verifyWebhook(body, null));
+
+        PaymentRecord payment = new PaymentRecord();
+        payment.setReferenceId("PAY-38");
+        payment.setAmount(BigDecimal.valueOf(50000));
+        assertThrows(com.huynqb.laundrylocker.common.exception.BusinessException.class,
+                () -> unconfigured.buildCheckoutFields(payment, null));
+    }
+
+    @Test
+    void signedCallbackIsAcceptedOnlyWithMatchingSignature() {
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("order_invoice_number", "PAY-38");
+        fields.put("order_amount", "50000");
+        String signature = sepayService.signFields(fields);
+
+        Map<String, Object> body = new LinkedHashMap<>(fields);
+        body.put("signature", signature);
+        assertTrue(sepayService.verifyWebhook(body, null));
+
+        body.put("signature", signature + "x");
+        assertFalse(sepayService.verifyWebhook(body, null));
     }
 
     @Test
@@ -100,5 +141,37 @@ class SepayServiceTest {
         assertTrue(html.contains("TOPUP_1_100"));
         assertTrue(html.contains("100000"));
         assertTrue(html.contains("name=\"signature\""));
+    }
+
+    @Test
+    void bankTransferCarriesReceiverAccountAndTransferContentForSepay() {
+        ReflectionTestUtils.setField(sepayService, "bankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "bankAccountNo", "0123456789");
+        ReflectionTestUtils.setField(sepayService, "accountName", "LOCKR");
+        com.huynqb.laundrylocker.payment.model.PaymentRecord payment = new com.huynqb.laundrylocker.payment.model.PaymentRecord();
+        payment.setMethod("SEPAY");
+        payment.setAmount(new java.math.BigDecimal("15000.40"));
+        payment.setReferenceId("PAY-42-ABC");
+
+        var transfer = sepayService.bankTransfer(payment);
+
+        org.junit.jupiter.api.Assertions.assertEquals("970422", transfer.bankBin());
+        org.junit.jupiter.api.Assertions.assertEquals("0123456789", transfer.accountNo());
+        org.junit.jupiter.api.Assertions.assertEquals("LOCKR", transfer.accountName());
+        org.junit.jupiter.api.Assertions.assertEquals(new java.math.BigDecimal("15000"), transfer.amount());
+        org.junit.jupiter.api.Assertions.assertEquals("PAY-42-ABC", transfer.transferContent());
+    }
+
+    @Test
+    void bankTransferIsAbsentForOtherMethodsOrWithoutReceiverAccount() {
+        com.huynqb.laundrylocker.payment.model.PaymentRecord payment = new com.huynqb.laundrylocker.payment.model.PaymentRecord();
+        payment.setMethod("SEPAY");
+        payment.setAmount(java.math.BigDecimal.TEN);
+        org.junit.jupiter.api.Assertions.assertNull(sepayService.bankTransfer(payment), "chưa cấu hình tài khoản nhận");
+
+        ReflectionTestUtils.setField(sepayService, "bankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "bankAccountNo", "0123456789");
+        payment.setMethod("WALLET");
+        org.junit.jupiter.api.Assertions.assertNull(sepayService.bankTransfer(payment));
     }
 }

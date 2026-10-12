@@ -5,31 +5,39 @@ import com.huynqb.laundrylocker.payment.model.RefundRecord;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Quy tắc dùng chung cho báo cáo thanh toán/doanh thu.
  *
  * <ul>
- *   <li>Nạp ví (method {@code VNPAY_TOPUP}, orderId = 0) là tiền gửi, không phải doanh thu.</li>
+ *   <li>Nạp ví (method {@code *_TOPUP}, orderId = 0) là tiền gửi, không phải doanh thu.</li>
  *   <li>Tiền đã thu của một đơn = payment COMPLETED, orderId &gt; 0, không phải nạp ví
  *       (gồm cả WALLET — trừ ví khi thanh toán đơn).</li>
  *   <li>Bảng payments không có cột paid_at: thời điểm thu = updatedAt của payment COMPLETED
- *       (CASH/WALLET hoàn tất ngay lúc tạo; VNPAY/MOMO cập nhật khi callback về).</li>
+ *       (CASH/WALLET hoàn tất ngay lúc tạo; SEPAY cập nhật khi webhook về).</li>
  *   <li>Hoàn tiền trừ doanh thu = refund COMPLETED có orderId &gt; 0, tính theo processedAt.</li>
  * </ul>
  */
 public final class PaymentReportRules {
 
     public static final String STATUS_COMPLETED = "COMPLETED";
-    public static final String METHOD_TOPUP = "VNPAY_TOPUP";
+    /// Method của giao dịch nạp ví. VNPAY_TOPUP chỉ còn trong dữ liệu cũ (VNPay đã ngừng hỗ trợ) —
+    /// giữ để báo cáo và bộ lọc lịch sử vẫn xếp đúng loại.
+    public static final Set<String> TOPUP_METHODS = Set.of("SEPAY_TOPUP", "VNPAY_TOPUP");
     public static final String KIND_ORDER = "ORDER";
     public static final String KIND_TOPUP = "TOPUP";
 
     private PaymentReportRules() {
     }
 
+    public static boolean isTopupMethod(String method) {
+        return method != null && TOPUP_METHODS.contains(method.toUpperCase(Locale.ROOT));
+    }
+
     public static boolean isTopup(PaymentRecord payment) {
-        return METHOD_TOPUP.equalsIgnoreCase(payment.getMethod())
+        return isTopupMethod(payment.getMethod())
                 || payment.getOrderId() == null
                 || payment.getOrderId() <= 0;
     }

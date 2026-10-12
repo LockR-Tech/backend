@@ -8,10 +8,10 @@ Phí gửi hàng, giá thuê ô theo giờ (ô tiêu chuẩn và ô XL), số gi
 
 ## Thanh toán
 
-- Ứng dụng hỗ trợ thanh toán bằng Ví Lock.R, VNPay và MoMo. Ứng dụng không có hình thức trả tiền mặt.
-- Với VNPay hoặc MoMo, ứng dụng mở trang thanh toán; sau khi thanh toán xong, bạn quay lại ứng dụng và chờ vài giây để đơn chuyển sang "Đã thanh toán".
+- Ứng dụng hỗ trợ thanh toán bằng Ví Lock.R và chuyển khoản ngân hàng qua mã VietQR (SePay). Ứng dụng không có hình thức trả tiền mặt.
+- Với chuyển khoản VietQR, ứng dụng mở trang thanh toán có mã QR; bạn quét mã bằng ứng dụng ngân hàng, giữ nguyên số tiền và nội dung chuyển khoản, rồi quay lại ứng dụng và chờ vài giây để đơn chuyển sang "Đã thanh toán".
 - Nếu đã trả tiền mà đơn chưa hiện "Đã thanh toán", hãy mở lại trang đơn để làm mới. Quá vài phút vẫn chưa cập nhật thì liên hệ bộ phận hỗ trợ, không thanh toán lại lần thứ hai.
-- Ví Lock.R được nạp tiền trong mục Ví của ứng dụng.
+- Ví Lock.R được nạp tiền trong mục Ví của ứng dụng bằng chuyển khoản VietQR.
 
 ## Gửi hàng qua tủ
 
