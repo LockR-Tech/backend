@@ -64,7 +64,7 @@ class DroneDeliverySimulatorTest {
         DroneMission mission = mission(301L, "LAUNCHING", LocalDateTime.now().minusSeconds(6));
         LockerOrder order = order("LAUNCHING");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
 
         simulator.advanceEligibleMissions(LocalDateTime.now());
 
@@ -83,7 +83,7 @@ class DroneDeliverySimulatorTest {
         DroneMission mission = mission(301L, "ARRIVED", LocalDateTime.now().minusSeconds(6));
         LockerOrder order = order("ARRIVED");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
 
         simulator.advanceEligibleMissions(LocalDateTime.now());
 
@@ -108,7 +108,7 @@ class DroneDeliverySimulatorTest {
         DroneMission mission = mission(301L, "ARRIVED", LocalDateTime.now().minusSeconds(6));
         LockerOrder order = order("ARRIVED");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         doThrow(new RuntimeException("locker-service unavailable"))
                 .when(lockerDroneClient)
                 .transitionDroneStatus(9L, new DroneStatusTransitionRequest("IN_FLIGHT", "IDLE", null));
@@ -133,8 +133,8 @@ class DroneDeliverySimulatorTest {
         standard.setId(22L);
         standard.setFulfillmentMode("STANDARD");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(waiting, real));
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(demo));
-        when(orderRepository.findById(22L)).thenReturn(Optional.of(standard));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(demo));
+        when(orderRepository.findByIdForUpdate(22L)).thenReturn(Optional.of(standard));
 
         simulator.advanceEligibleMissions(LocalDateTime.now());
 
@@ -155,7 +155,7 @@ class DroneDeliverySimulatorTest {
         LockerOrder order = order("ARRIVED");
         order.setReceiverPhone("0909000111");
         when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
 
         simulator.advanceEligibleMissions(LocalDateTime.now());
 

@@ -44,6 +44,19 @@ class OrderNextActionsDroneTest {
     }
 
     @Test
+    void homePickupOrderWaitsForTheTechnicianThenForTheDrone() {
+        LockerOrder order = drone("AWAITING_DISPATCH", "AWAITING_DISPATCH", "PAID");
+        order.setPickupLatitude(10.7);
+        assertEquals("WAIT_FOR_PICKUP", OrderNextActions.nextAction(order));
+
+        order.setDeliveryStage("PICKUP_ASSIGNED");
+        assertEquals("WAIT_FOR_PICKUP", OrderNextActions.nextAction(order));
+
+        order.setDeliveryStage("PICKED_UP");
+        assertEquals("WAIT_FOR_DRONE", OrderNextActions.nextAction(order));
+    }
+
+    @Test
     void canceledOrRefundedDroneOrderAsksForNothing() {
         assertFalse(OrderNextActions.paymentRequired(drone("CANCELED", "CANCELED", "UNPAID")));
         assertFalse(OrderNextActions.paymentRequired(drone("CANCELED", "CANCELED", "REFUNDED")));

@@ -44,13 +44,16 @@ class DroneDeliveryQueryServiceTest {
     private OrderStatusHistoryRepository historyRepository;
     @Mock
     private AdminReferenceResolver references;
+    @Mock
+    private com.huynqb.laundrylocker.order.repository.DronePickupRepository pickupRepository;
 
     private DroneDeliveryQueryService service;
 
     @BeforeEach
     void setUp() {
         service = new DroneDeliveryQueryService(
-                orderRepository, missionRepository, historyRepository, references, new DroneTelemetryRegistry(15));
+                orderRepository, missionRepository, historyRepository, references, new DroneTelemetryRegistry(15),
+                pickupRepository, com.huynqb.laundrylocker.order.settings.TestOrderRules.defaults());
         lenient().when(references.lockers(any())).thenReturn(Lookup.of(Map.of()));
         lenient().when(references.boxes(any())).thenReturn(Lookup.of(Map.of()));
         lenient().when(references.users(any())).thenReturn(Lookup.of(Map.of()));

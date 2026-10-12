@@ -44,6 +44,8 @@ class DroneOrderTimeoutSweeperTest {
     @Mock
     private DroneOrderMaintenanceService maintenanceService;
     @Mock
+    private DroneDeliveryFailureService failureService;
+    @Mock
     private DroneRefundService refundService;
 
     @Test
@@ -94,48 +96,50 @@ class DroneOrderTimeoutSweeperTest {
     }
 
     @Test
-    void paidOrderNobodyAcceptedIsCanceledRefundedAndKeepsTheCellHoldingTheParcel() {
+    void paidOrderNoTechnicianAcceptedEndsAsDeliveryNotCompletedAndIsRefunded() {
         LockerOrder order = order(21L, "PAID", NOW.minusHours(5));
-        order.setPaidAt(NOW.minusHours(5));
-        // Bỏ kiện 121 phút trước, quá hạn 120 phút chờ đội bay.
-        order.setParcelDroppedAt(NOW.minusMinutes(121));
+        // Trả tiền 121 phút trước, quá hạn 120 phút chờ KTV drone nhận lấy hàng.
+        order.setPaidAt(NOW.minusMinutes(121));
         scan(order);
 
         assertEquals(1, sweeper(Map.of()).sweep(NOW));
 
-        assertEquals("CANCELED", order.getStatus());
-        verify(lockerClient).releaseBox(9001L);
-        // Ô gửi còn kiện ⇒ giữ tới khi trả kiện.
-        verify(lockerClient, never()).releaseBox(8001L);
-        assertEquals(8001L, order.getSourceBoxId());
+        verify(failureService).fail(
+                eq(21L), isNull(), eq(DroneDeliveryFailureService.Actor.SYSTEM),
+                eq(com.huynqb.laundrylocker.order.model.DroneFailureReasons.NO_TECHNICIAN_AVAILABLE),
+                any(), isNull());
         verify(refundService).refundCanceledOrder(21L, null);
     }
 
     @Test
-    void dispatchDeadlineRunsFromTheDropOffNotFromPayment() {
-        LockerOrder order = order(21L, "PAID", NOW.minusHours(5));
-        order.setPaidAt(NOW.minusHours(5));
-        order.setParcelDroppedAt(NOW.minusMinutes(30));
+    void paidOrderStillInsideTheDispatchDeadlineOrAlreadyAssignedIsLeftAlone() {
+        LockerOrder recent = order(21L, "PAID", NOW.minusHours(5));
+        recent.setPaidAt(NOW.minusMinutes(30));
+        LockerOrder assigned = order(22L, "PAID", NOW.minusHours(5));
+        assigned.setPaidAt(NOW.minusHours(4));
+        assigned.setDeliveryStage("PICKUP_ASSIGNED");
         when(orderRepository.findByTypeAndStatusOrderByCreatedAtAsc("DRONE_DELIVERY", "AWAITING_DISPATCH"))
-                .thenReturn(List.of(order));
+                .thenReturn(List.of(recent, assigned));
 
         assertEquals(0, sweeper(Map.of()).sweep(NOW));
 
-        assertEquals("AWAITING_DISPATCH", order.getStatus());
-        verifyNoInteractions(refundService);
+        verifyNoInteractions(failureService, refundService);
     }
 
     @Test
-    void paidOrderWhoseParcelNeverArrivedReleasesBothCells() {
-        LockerOrder order = order(21L, "PAID", NOW.minusHours(5));
-        order.setPaidAt(NOW.minusHours(3));
-        scan(order);
+    void technicianAcceptingBetweenTheScanAndTheLockKeepsTheOrder() {
+        LockerOrder scanned = order(21L, "PAID", NOW.minusHours(5));
+        scanned.setPaidAt(NOW.minusHours(3));
+        LockerOrder locked = order(21L, "PAID", NOW.minusHours(5));
+        locked.setPaidAt(NOW.minusHours(3));
+        locked.setDeliveryStage("PICKUP_ASSIGNED");
+        when(orderRepository.findByTypeAndStatusOrderByCreatedAtAsc("DRONE_DELIVERY", "AWAITING_DISPATCH"))
+                .thenReturn(List.of(scanned));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(locked));
 
-        assertEquals(1, sweeper(Map.of()).sweep(NOW));
+        assertEquals(0, sweeper(Map.of()).sweep(NOW));
 
-        verify(lockerClient).releaseBox(9001L);
-        verify(lockerClient).releaseBox(8001L);
-        verify(refundService).refundCanceledOrder(21L, null);
+        verifyNoInteractions(failureService, refundService);
     }
 
     @Test
@@ -179,7 +183,7 @@ class DroneOrderTimeoutSweeperTest {
 
         assertEquals(0, sweeper(off).sweep(NOW));
 
-        verifyNoInteractions(orderRepository, maintenanceService, refundService);
+        verifyNoInteractions(orderRepository, maintenanceService, failureService, refundService);
     }
 
     private void scan(LockerOrder order) {
@@ -193,6 +197,7 @@ class DroneOrderTimeoutSweeperTest {
                 orderRepository,
                 new DroneOrderExpiryService(orderRepository, historyRepository, lockerClient, notificationClient),
                 maintenanceService,
+                failureService,
                 refundService,
                 TestOrderRules.of(overrides));
     }
