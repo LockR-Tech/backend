@@ -21,7 +21,13 @@ public final class OrderNextActions {
                     if (!"PAID".equalsIgnoreCase(order.getPaymentStatus())) {
                         yield "PAY_FOR_DRONE";
                     }
-                    // Đội bay chỉ tiếp nhận đơn mà người gửi đã xác nhận bỏ kiện vào ô gửi.
+                    if (order.getPickupLatitude() != null) {
+                        // Lấy hàng tận nhà: chờ KTV drone tới lấy, sau đó chờ drone bay.
+                        yield "AWAITING_DISPATCH".equals(deliveryStage) || "PICKUP_ASSIGNED".equals(deliveryStage)
+                                ? "WAIT_FOR_PICKUP"
+                                : "WAIT_FOR_DRONE";
+                    }
+                    // Đơn cũ: đội bay chỉ tiếp nhận khi người gửi đã xác nhận bỏ kiện vào ô gửi.
                     yield "AWAITING_DISPATCH".equals(deliveryStage) && order.getParcelDroppedAt() == null
                             ? "DROP_PARCEL_FOR_DRONE"
                             : "WAIT_FOR_DRONE";
@@ -46,6 +52,7 @@ public final class OrderNextActions {
         return switch (nextAction(order)) {
             case "PAY_AND_DROP" -> "Pay and place storage items in locker.";
             case "WAIT_FOR_DRONE" -> "Maintenance will accept and launch the drone delivery.";
+            case "WAIT_FOR_PICKUP" -> "A drone technician will come to the pickup address to collect the parcel.";
             case "DROP_PARCEL_FOR_DRONE" ->
                     "Place the parcel in the drone cell at the source locker and confirm the drop-off.";
             case "PAY_FOR_DRONE" -> "Pay for the drone delivery so the flight team can dispatch it.";

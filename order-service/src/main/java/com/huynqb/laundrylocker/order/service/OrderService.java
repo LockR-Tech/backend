@@ -219,270 +219,6 @@ public class OrderService {
         return toResponse(orderRepository.save(order));
     }
 
-    @Transactional
-    public DroneDeliveryOrderResponse createDroneDelivery(
-            CreateDroneDeliveryOrderRequest request, Long userId, String idempotencyKey) {
-        Optional<LockerOrder> existing =
-                StringUtils.hasText(idempotencyKey)
-                        ? orderRepository.findByUserIdAndIdempotencyKey(userId, idempotencyKey)
-                        : Optional.empty();
-        if (existing.isPresent()) {
-            return toDroneDeliveryResponse(existing.get());
-        }
-
-        String fulfillmentMode = resolveDroneFulfillmentMode(request.fulfillmentMode(), userId);
-        userClient.getUser(userId);
-        assertDroneOrderingOpen(userId);
-        int parcelWeightGrams = validateDroneParcelWeight(request.parcelWeightGrams());
-        validateDroneParcelDeclaration(request);
-        Integer routeDistanceMeters = validateDroneRoute(request.sourceLockerId(), request.destinationLockerId());
-        Long sourceBoxId = resolveAndReserveDroneSourceBox(request);
-        Long reservedBoxId;
-        try {
-            reservedBoxId = resolveAndReserveDroneBox(request);
-        } catch (RuntimeException ex) {
-            // Không giữ được ô nhận thì không được để ô gửi kẹt RESERVED.
-            releaseBoxQuietly(sourceBoxId);
-            throw ex;
-        }
-
-        LockerOrder order = new LockerOrder();
-        order.setOrderCode(generateOrderCode());
-        order.setUserId(userId);
-        applyDroneReceiver(order, request, userId);
-        order.setLockerId(request.destinationLockerId());
-        order.setSourceLockerId(request.sourceLockerId());
-        order.setDestinationLockerId(request.destinationLockerId());
-        order.setSourceBoxId(sourceBoxId);
-        order.setSendBoxId(reservedBoxId);
-        order.setReservedBoxId(reservedBoxId);
-        order.setType("DRONE_DELIVERY");
-        order.setServiceCategory("DRONE_DELIVERY");
-        order.setStatus("AWAITING_DISPATCH");
-        order.setPaymentStatus("UNPAID");
-        order.setDeliveryStage("AWAITING_DISPATCH");
-        order.setFulfillmentMode(fulfillmentMode);
-        order.setParcelWeightGrams(request.parcelWeightGrams());
-        order.setDescription(request.description());
-        order.setParcelLengthCm(request.parcelLengthCm());
-        order.setParcelWidthCm(request.parcelWidthCm());
-        order.setParcelHeightCm(request.parcelHeightCm());
-        order.setParcelCategory(normalizeDroneParcelCategory(request.parcelCategory()));
-        order.setParcelDeclaredValue(request.declaredValue());
-        order.setParcelFragile(Boolean.TRUE.equals(request.fragile()));
-        order.setProhibitedItemsDeclaredAt(LocalDateTime.now());
-        order.setRouteDistanceMeters(routeDistanceMeters);
-        order.setIdempotencyKey(idempotencyKey);
-        var incidentPolicy = rules.incidentPolicy();
-        order.setIncidentPolicyVersion(incidentPolicy.version());
-        order.setIncidentCompensationEnabled(incidentPolicy.enabled());
-        order.setIncidentCompensationRate(incidentPolicy.compensationRate());
-        order.setIncidentCompensationCap(incidentPolicy.compensationCap());
-        order.setIncidentFreeRedelivery(incidentPolicy.freeRedelivery());
-        order.setIncidentRefundShippingFee(incidentPolicy.refundShippingFee());
-        order.setIncidentRecoverySlaHours(incidentPolicy.recoverySlaHours());
-        order.setIncidentApprovalRequired(incidentPolicy.approvalRequired());
-        order.setIncidentDisputeAllowed(incidentPolicy.disputeAllowed());
-        // Phí theo khối lượng khách khai báo; đội bay cân lại lúc nạp hàng, nặng hơn thì
-        // thu thêm phần chênh (DroneOrderMaintenanceService.confirmLoading).
-        BigDecimal droneFee = rules.droneDeliveryFee(parcelWeightGrams);
-        order.setTotalPrice(droneFee);
-        order.setOriginalPrice(droneFee);
-
-        LockerOrder saved = orderRepository.save(order);
-        addHistory(saved.getId(), null, "AWAITING_DISPATCH", userId,
-                "Đơn drone được tạo tại tủ nguồn #" + request.sourceLockerId()
-                        + " và chờ điều phối tới tủ đích #" + request.destinationLockerId());
-        Map<String, Object> droneCreatedPayload = new HashMap<>();
-        droneCreatedPayload.put("orderId", saved.getId());
-        droneCreatedPayload.put("orderCode", saved.getOrderCode());
-        droneCreatedPayload.put("userId", saved.getUserId());
-        droneCreatedPayload.put("status", saved.getStatus());
-        droneCreatedPayload.put("type", saved.getType());
-        publish(DomainEventNames.ORDER_CREATED, saved, droneCreatedPayload);
-        notifyQuietly(saved.getUserId(), "Đơn hàng mới", "Đơn drone " + saved.getOrderCode() + " đã được tạo thành công", "ORDER_CREATED", saved.getId());
-        notifyMaintenanceDroneOrderCreated(saved);
-        return toDroneDeliveryResponse(saved);
-    }
-
-    /// Người nhận của đơn drone. Không nhập số điện thoại ⇒ người đặt tự nhận. Có nhập:
-    /// số trùng một tài khoản Lock.R thì người đó thấy hành trình và nhận mã trong app;
-    /// không trùng thì mã mở ô gửi qua SMS tới đúng số này khi hàng vào tủ.
-    private void applyDroneReceiver(LockerOrder order, CreateDroneDeliveryOrderRequest request, Long userId) {
-        String phone = StringUtils.hasText(request.receiverPhone()) ? request.receiverPhone().trim() : null;
-        String name = StringUtils.hasText(request.receiverName()) ? request.receiverName().trim() : null;
-        // Email nhận mã mở ô; bỏ trống thì lúc hàng vào tủ dùng email tài khoản người nhận.
-        order.setReceiverEmail(StringUtils.hasText(request.receiverEmail()) ? request.receiverEmail().trim() : null);
-        if (phone == null) {
-            order.setReceiverId(userId);
-            order.setReceiverUserId(userId);
-            order.setReceiverName(name);
-            return;
-        }
-        if (!phone.matches("^[+]?[0-9]{9,15}$")) {
-            throw new BusinessException("DRONE_RECEIVER_PHONE_INVALID", "Receiver phone number is not valid");
-        }
-        order.setReceiverPhone(phone);
-        order.setReceiverName(name);
-        Long receiverUserId = null;
-        try {
-            var receiver = userClient.getUserByPhone(phone).data();
-            if (receiver != null) {
-                receiverUserId = receiver.id();
-                if (name == null && StringUtils.hasText(receiver.fullName())) {
-                    order.setReceiverName(receiver.fullName());
-                }
-            }
-        } catch (Exception ex) {
-            // Không tra được ⇒ coi như người nhận chưa có tài khoản, mã sẽ gửi qua SMS.
-            log.info("Drone receiver {} has no Lock.R account or lookup failed: {}", phone, ex.getMessage());
-        }
-        order.setReceiverId(receiverUserId);
-        order.setReceiverUserId(receiverUserId);
-    }
-
-    private int validateDroneParcelWeight(Integer parcelWeightGrams) {
-        if (parcelWeightGrams == null || parcelWeightGrams <= 0) {
-            throw new BusinessException("DRONE_PARCEL_WEIGHT_INVALID", "Parcel weight must be greater than zero");
-        }
-        if (parcelWeightGrams > rules.droneMaxPayloadWeightGrams()) {
-            throw new BusinessException(
-                    "DRONE_PAYLOAD_TOO_HEAVY",
-                    "Payload exceeds the configured drone limit of "
-                            + rules.droneMaxPayloadWeightGrams() + " grams");
-        }
-        return parcelWeightGrams;
-    }
-
-    private static final Set<String> DRONE_PARCEL_CATEGORIES =
-            Set.of("DOCUMENT", "FOOD", "CLOTHING", "ELECTRONICS", "COSMETICS", "OTHER");
-
-    /// Không nhận đơn mới khi admin tạm dừng bay (thời tiết, sự cố), và giới hạn số đơn đang
-    /// mở của một khách — mỗi đơn chưa giao xong giữ ô DRONE ở cả hai tủ.
-    private void assertDroneOrderingOpen(Long userId) {
-        if (rules.droneFlightsSuspended()) {
-            throw new BusinessException(
-                    "DRONE_FLIGHTS_SUSPENDED", "Drone delivery is temporarily suspended");
-        }
-        int maxOpen = rules.droneMaxOpenOrdersPerUser();
-        if (maxOpen > 0
-                && orderRepository.countByUserIdAndTypeAndStatus(userId, "DRONE_DELIVERY", "AWAITING_DISPATCH")
-                        >= maxOpen) {
-            throw new BusinessException(
-                    "DRONE_OPEN_ORDER_LIMIT",
-                    "You already have " + maxOpen + " drone orders in progress");
-        }
-    }
-
-    private void validateDroneParcelDeclaration(CreateDroneDeliveryOrderRequest request) {
-        if (!Boolean.TRUE.equals(request.prohibitedItemsDeclared())) {
-            throw new BusinessException(
-                    "DRONE_PROHIBITED_ITEMS_NOT_DECLARED",
-                    "Sender must confirm the parcel contains no prohibited items");
-        }
-        normalizeDroneParcelCategory(request.parcelCategory());
-        Integer length = request.parcelLengthCm();
-        Integer width = request.parcelWidthCm();
-        Integer height = request.parcelHeightCm();
-        if (length != null || width != null || height != null) {
-            if (length == null || width == null || height == null || length <= 0 || width <= 0 || height <= 0) {
-                throw new BusinessException(
-                        "DRONE_PARCEL_SIZE_INVALID", "Parcel length, width and height must all be provided");
-            }
-            // Kiện xoay được: so cạnh dài nhất với cạnh dài nhất của khoang, v.v.
-            int[] parcel = {length, width, height};
-            int[] bay = rules.droneMaxParcelSizeCm();
-            java.util.Arrays.sort(parcel);
-            java.util.Arrays.sort(bay);
-            for (int i = 0; i < 3; i++) {
-                if (parcel[i] > bay[i]) {
-                    throw new BusinessException(
-                            "DRONE_PARCEL_TOO_LARGE",
-                            "Parcel does not fit the drone cargo bay of "
-                                    + bay[2] + " x " + bay[1] + " x " + bay[0] + " cm");
-                }
-            }
-        }
-        BigDecimal declared = request.declaredValue();
-        if (declared != null && (declared.signum() < 0 || declared.compareTo(rules.droneMaxDeclaredValue()) > 0)) {
-            throw new BusinessException(
-                    "DRONE_DECLARED_VALUE_TOO_HIGH",
-                    "Declared value exceeds the limit of " + rules.droneMaxDeclaredValue().toBigInteger() + " VND");
-        }
-    }
-
-    private String normalizeDroneParcelCategory(String category) {
-        if (!StringUtils.hasText(category)) {
-            return "OTHER";
-        }
-        String normalized = category.trim().toUpperCase();
-        if (!DRONE_PARCEL_CATEGORIES.contains(normalized)) {
-            throw new BusinessException("DRONE_PARCEL_CATEGORY_INVALID", "Unknown parcel category: " + category);
-        }
-        return normalized;
-    }
-
-    /// Trả về khoảng cách đường chim bay tủ gửi → tủ nhận (mét); null khi một tủ chưa có toạ độ.
-    private Integer validateDroneRoute(Long sourceLockerId, Long destinationLockerId) {
-        if (sourceLockerId == null || destinationLockerId == null) {
-            throw new BusinessException("DRONE_ROUTE_REQUIRED", "Source and destination lockers are required");
-        }
-        if (sourceLockerId.equals(destinationLockerId)) {
-            throw new BusinessException("DRONE_ROUTE_INVALID", "Source and destination lockers must be different");
-        }
-        var response = lockerLookupClient.getLockers(List.of(sourceLockerId, destinationLockerId));
-        var lockers = response == null || response.data() == null ? List.<com.huynqb.laundrylocker.order.dto.admin.LockerInfo>of() : response.data();
-        var source = lockers.stream().filter(l -> sourceLockerId.equals(l.id())).findFirst()
-                .orElseThrow(() -> new BusinessException("DRONE_SOURCE_NOT_FOUND", "Source locker was not found"));
-        var destination = lockers.stream().filter(l -> destinationLockerId.equals(l.id())).findFirst()
-                .orElseThrow(() -> new BusinessException("DRONE_DESTINATION_NOT_FOUND", "Destination locker was not found"));
-        validateDroneLocker(source, "source");
-        validateDroneLocker(destination, "destination");
-        if (source.latitude() == null || source.longitude() == null
-                || destination.latitude() == null || destination.longitude() == null) {
-            return null;
-        }
-        int distanceMeters = (int) Math.round(DroneTelemetryService.distanceM(
-                new double[] {source.latitude(), source.longitude()},
-                destination.latitude(), destination.longitude()));
-        int maxMeters = rules.droneMaxRouteMeters();
-        if (maxMeters > 0 && distanceMeters > maxMeters) {
-            throw new BusinessException(
-                    "DRONE_ROUTE_TOO_FAR",
-                    "Lockers are " + distanceMeters + " m apart, beyond the drone range of " + maxMeters + " m");
-        }
-        return distanceMeters;
-    }
-
-    private void validateDroneLocker(com.huynqb.laundrylocker.order.dto.admin.LockerInfo locker, String role) {
-        if (!"ACTIVE".equalsIgnoreCase(locker.status())) {
-            throw new BusinessException("DRONE_LOCKER_INACTIVE", "Drone " + role + " locker is not active");
-        }
-        if (!Boolean.TRUE.equals(locker.landingPad())) {
-            throw new BusinessException("LANDING_PAD_ABSENT", "Drone " + role + " locker has no landing pad");
-        }
-    }
-
-    private String resolveDroneFulfillmentMode(String requestedMode, Long userId) {
-        if (!StringUtils.hasText(requestedMode)) {
-            return canUseDroneDemo(userId) ? "DEMO" : "STANDARD";
-        }
-        String normalized = requestedMode.trim().toUpperCase();
-        if (!Set.of("DEMO", "STANDARD").contains(normalized)) {
-            throw new BusinessException(
-                    "DRONE_FULFILLMENT_MODE_INVALID", "fulfillmentMode must be DEMO or STANDARD");
-        }
-        if ("DEMO".equals(normalized) && !canUseDroneDemo(userId)) {
-            throw new BusinessException(
-                    "DRONE_DEMO_NOT_ALLOWED", "Drone demo mode is not enabled for this user");
-        }
-        return normalized;
-    }
-
-    private boolean canUseDroneDemo(Long userId) {
-        return rules.droneDemoEnabled() && rules.droneDemoAllowedFor(userId);
-    }
-
     @Transactional(readOnly = true)
     public DroneDeliveryOrderResponse getDroneDelivery(Long orderId, Long userId) {
         LockerOrder order = find(orderId);
@@ -584,45 +320,6 @@ public class OrderService {
         }
     }
 
-    /// Giữ ô DRONE tại tủ gửi để người gửi bỏ kiện vào. Người gửi chỉ định ô thì ô đó
-    /// phải là ô DRONE còn trống của đúng tủ gửi; không chỉ định thì lấy một ô DRONE
-    /// trống bất kỳ. Tủ gửi không còn ô DRONE trống ⇒ từ chối đơn: kiện không có chỗ
-    /// chờ nạp.
-    private Long resolveAndReserveDroneSourceBox(CreateDroneDeliveryOrderRequest request) {
-        Long boxId = request.sourceBoxId();
-        if (boxId == null) {
-            try {
-                boxId = findAvailableCell(request.sourceLockerId(), null, "DRONE");
-            } catch (BusinessException ex) {
-                throw new BusinessException(
-                        "DRONE_SOURCE_CELL_UNAVAILABLE", "Source locker has no available DRONE cell");
-            }
-        } else {
-            CellDto cell = lockerCellClient.getCell(boxId).data();
-            if (cell == null) {
-                throw new BusinessException("BOX_NOT_FOUND", "Box not found");
-            }
-            if (!"DRONE".equalsIgnoreCase(cell.cellType())) {
-                throw new BusinessException("DRONE_CELL_REQUIRED", "Selected box must be a DRONE cell");
-            }
-            if (!"AVAILABLE".equalsIgnoreCase(cell.status())) {
-                throw new BusinessException(
-                        "DRONE_SOURCE_CELL_UNAVAILABLE", "Selected drone cell at the source locker is not available");
-            }
-            var box = lockerClient.getBox(boxId).data();
-            if (box == null || !request.sourceLockerId().equals(box.lockerId())) {
-                throw new BusinessException(
-                        "DRONE_SOURCE_CELL_MISMATCH", "Selected drone cell does not belong to the source locker");
-            }
-        }
-        try {
-            lockerClient.reserveBox(boxId, "DRONE");
-            return boxId;
-        } catch (Exception ex) {
-            throw unwrapDownstreamError(ex, "BOX_RESERVE_FAILED", "Could not reserve drone box " + boxId);
-        }
-    }
-
     private void releaseBoxQuietly(Long boxId) {
         if (boxId == null) {
             return;
@@ -631,30 +328,6 @@ public class OrderService {
             lockerClient.releaseBox(boxId);
         } catch (Exception ex) {
             log.warn("Could not release box {}: {}", boxId, ex.getMessage());
-        }
-    }
-
-    private Long resolveAndReserveDroneBox(CreateDroneDeliveryOrderRequest request) {
-        Long boxId = request.preferredBoxId();
-        if (boxId == null) {
-            boxId = findAvailableCell(request.destinationLockerId(), null, "DRONE");
-        } else {
-            CellDto cell = lockerCellClient.getCell(boxId).data();
-            if (cell == null) {
-                throw new BusinessException("BOX_NOT_FOUND", "Box not found");
-            }
-            if (!"DRONE".equalsIgnoreCase(cell.cellType())) {
-                throw new BusinessException("DRONE_CELL_REQUIRED", "Selected box must be a DRONE cell");
-            }
-            if (!"AVAILABLE".equalsIgnoreCase(cell.status())) {
-                throw new BusinessException("BOX_NOT_AVAILABLE", "Selected drone cell is not available");
-            }
-        }
-        try {
-            lockerClient.reserveBox(boxId, "DRONE");
-            return boxId;
-        } catch (Exception ex) {
-            throw unwrapDownstreamError(ex, "BOX_RESERVE_FAILED", "Could not reserve drone box " + boxId);
         }
     }
 
@@ -775,28 +448,6 @@ public class OrderService {
             notificationClient.requestNotification(new NotificationRequest(userId, title, message, type, orderId, "ORDER"));
         } catch (Exception ex) {
             log.warn("Could not notify user {} for order {}: {}", userId, orderId, ex.getMessage());
-        }
-    }
-
-    private void notifyMaintenanceDroneOrderCreated(LockerOrder order) {
-        try {
-            ApiResponse<List<com.huynqb.laundrylocker.common.dto.UserSummary>> response =
-                    userClient.getUsersByRole("DRONE_TECHNICIAN");
-            if (response == null || response.data() == null) {
-                return;
-            }
-            for (var user : response.data()) {
-                notificationClient.requestNotification(
-                        new NotificationRequest(
-                                user.id(),
-                                "Có đơn drone mới",
-                                "Đơn " + order.getOrderCode() + " đang chờ đội bay tiếp nhận.",
-                                "DRONE_ORDER_CREATED",
-                                order.getId(),
-                                "ORDER"));
-            }
-        } catch (Exception ex) {
-            log.warn("Could not notify maintenance users for drone order {}: {}", order.getId(), ex.getMessage());
         }
     }
 
@@ -2143,10 +1794,13 @@ public class OrderService {
         if (!"DRONE_DELIVERY".equalsIgnoreCase(order.getType())) {
             return;
         }
-        if (!"AWAITING_DISPATCH".equalsIgnoreCase(order.getDeliveryStage())) {
+        // Người gửi huỷ được tới khi KTV drone đã cầm kiện (PICKED_UP); sau đó chỉ đội bay
+        // hoặc admin đóng đơn.
+        String stage = order.getDeliveryStage() == null ? "" : order.getDeliveryStage().toUpperCase();
+        if (!"AWAITING_DISPATCH".equals(stage) && !"PICKUP_ASSIGNED".equals(stage)) {
             throw new BusinessException(
                     "DRONE_ORDER_STATUS_INVALID",
-                    "Drone order can only be canceled before maintenance accepts it.");
+                    "Drone order can only be canceled before the technician has picked up the parcel.");
         }
     }
 

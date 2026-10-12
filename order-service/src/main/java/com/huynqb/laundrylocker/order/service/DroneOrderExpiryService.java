@@ -37,16 +37,20 @@ public class DroneOrderExpiryService {
                 && !order.getCreatedAt().isAfter(cutoff);
     }
 
-    /// Đơn đã trả tiền mà vẫn chờ: tính từ lúc bỏ kiện (chờ đội bay), chưa bỏ kiện thì từ
-    /// lúc trả tiền (chờ người gửi).
-    public static boolean undispatchedPast(LockerOrder order, LocalDateTime cutoff) {
+    /// Đơn đã trả tiền mà chưa KTV drone nào nhận lấy hàng, tính từ lúc thanh toán.
+    public static boolean unassignedPast(LockerOrder order, LocalDateTime cutoff) {
         if (!awaitingDispatch(order) || !"PAID".equalsIgnoreCase(order.getPaymentStatus())) {
             return false;
         }
-        LocalDateTime since = order.getParcelDroppedAt() != null
-                ? order.getParcelDroppedAt()
-                : order.getPaidAt() != null ? order.getPaidAt() : order.getCreatedAt();
+        LocalDateTime since = order.getPaidAt() != null ? order.getPaidAt() : order.getCreatedAt();
         return since != null && !since.isAfter(cutoff);
+    }
+
+    /// Kiểm lại dưới khoá ngay trước khi đóng đơn: KTV có thể vừa nhận sau lúc job quét.
+    @Transactional
+    public boolean stillUnassigned(Long orderId, LocalDateTime cutoff) {
+        LockerOrder order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+        return order != null && unassignedPast(order, cutoff);
     }
 
     @Transactional
@@ -56,32 +60,10 @@ public class DroneOrderExpiryService {
             return false;
         }
         close(order,
-                "Tự huỷ: chưa thanh toán sau " + minutes + " phút; đã nhả ô ở tủ gửi và tủ nhận",
+                "Tự huỷ: chưa thanh toán sau " + minutes + " phút; đã nhả ô ở tủ nhận",
                 "Đơn drone đã tự huỷ",
                 "Đơn " + order.getOrderCode() + " chưa được thanh toán sau " + minutes
                         + " phút nên đã huỷ. Bạn có thể đặt lại đơn mới.");
-        return true;
-    }
-
-    /// Nơi gọi tạo yêu cầu hoàn tiền sau khi giao dịch này commit.
-    @Transactional
-    public boolean cancelUndispatched(Long orderId, LocalDateTime cutoff, int minutes) {
-        LockerOrder order = orderRepository.findByIdForUpdate(orderId).orElse(null);
-        if (order == null || !undispatchedPast(order, cutoff)) {
-            return false;
-        }
-        boolean dropped = order.getParcelDroppedAt() != null;
-        close(order,
-                dropped
-                        ? "Tự huỷ: không có đội bay tiếp nhận sau " + minutes
-                                + " phút kể từ lúc bỏ kiện; kiện chờ trả cho người gửi"
-                        : "Tự huỷ: người gửi chưa bỏ kiện vào ô gửi sau " + minutes + " phút kể từ lúc thanh toán",
-                "Đơn drone đã tự huỷ",
-                dropped
-                        ? "Đơn " + order.getOrderCode() + " chưa có đội bay tiếp nhận sau " + minutes
-                                + " phút nên đã huỷ. Tiền sẽ được hoàn và đội bay sẽ trả lại kiện cho bạn."
-                        : "Đơn " + order.getOrderCode() + " chưa có kiện trong ô gửi sau " + minutes
-                                + " phút nên đã huỷ. Tiền sẽ được hoàn.");
         return true;
     }
 

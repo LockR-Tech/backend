@@ -31,6 +31,7 @@ public class OrderPaymentEventListener {
     private final DroneLateRefundScheduler droneLateRefunds;
     private final RabbitTemplate rabbitTemplate;
     private final NotificationClient notificationClient;
+    private final DronePickupService dronePickupService;
 
     @RabbitListener(queues = RabbitConfig.ORDER_PAYMENT_QUEUE)
     @Transactional
@@ -85,6 +86,7 @@ public class OrderPaymentEventListener {
                                 // Đơn drone đã huỷ: khoản này sắp được hoàn, không báo "thanh toán thành công".
                                 if (!canceledDrone) {
                                     publishPaymentCompleted(saved);
+                                    startDronePickupAfterCommit(saved);
                                 }
                             }
                         });
@@ -124,7 +126,38 @@ public class OrderPaymentEventListener {
         LockerOrder saved = orderRepository.save(order);
         log.info("Drone order {} marked PAID via payment {}", order.getId(), paymentId);
         publishPaymentCompleted(saved);
+        startDronePickupAfterCommit(saved);
         return true;
+    }
+
+    /**
+     * Đơn drone vừa trả đủ tiền: mở lượt lấy hàng và mời KTV drone rảnh gần người gửi nhất. Chạy SAU
+     * khi việc ghi nhận thanh toán commit — lỗi lúc tìm KTV không được làm mất việc đơn đã PAID;
+     * {@link DroneDispatchSweeper} mở lại lượt lấy hàng nếu bước này lỡ.
+     */
+    private void startDronePickupAfterCommit(LockerOrder order) {
+        if (!"DRONE_DELIVERY".equals(order.getType()) || !"AWAITING_DISPATCH".equals(order.getDeliveryStage())) {
+            return;
+        }
+        Long orderId = order.getId();
+        Runnable start = () -> {
+            try {
+                dronePickupService.startForPaidOrder(orderId);
+            } catch (RuntimeException ex) {
+                log.warn("Could not open pickup for paid drone order {}: {}", orderId, ex.getMessage());
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            start.run();
+                        }
+                    });
+        } else {
+            start.run();
+        }
     }
 
     private static java.math.BigDecimal decimal(Object value) {
