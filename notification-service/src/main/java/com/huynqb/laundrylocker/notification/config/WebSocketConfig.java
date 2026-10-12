@@ -15,6 +15,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final JwtStompPrincipalChannelInterceptor jwtStompPrincipalChannelInterceptor;
     private final JwtHandshakePrincipalHandler jwtHandshakePrincipalHandler;
+    private final DeliveryTopicSubscriptionInterceptor deliveryTopicSubscriptionInterceptor;
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
@@ -25,7 +26,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
-        registration.interceptors(jwtStompPrincipalChannelInterceptor);
+        // Thứ tự quan trọng: xác thực (gắn user cho phiên) trước, kiểm quyền topic theo đơn sau.
+        registration.interceptors(jwtStompPrincipalChannelInterceptor, deliveryTopicSubscriptionInterceptor);
     }
 
     /// Gateway đã gắn CORS cho mọi đường dẫn (globalcors). SockJS mà gắn thêm thì `/ws/info` có hai

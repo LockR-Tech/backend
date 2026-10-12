@@ -38,7 +38,7 @@ spring:
             - id: order-service-drone-technician
               uri: lb://order-service
               predicates:
-                - Path=/api/drone-technician/drone-orders/**
+                - Path=/api/drone-technician/drone-orders/**,/api/drone-technician/drone-incidents,/api/drone-technician/drone-incidents/**
             # Admin theo dõi hành trình drone (ADMIN — JwtGatewayFilter chặn /api/admin/**).
             # Không trùng /api/admin/drones/** của locker-service: "drone-orders" ≠ "drones".
             - id: order-service-admin-drone-orders

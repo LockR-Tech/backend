@@ -2,6 +2,8 @@ package com.huynqb.laundrylocker.locker.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
+import com.huynqb.laundrylocker.common.event.DomainEvent;
+import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.OrderClient;
@@ -15,6 +17,7 @@ import com.huynqb.laundrylocker.locker.model.DroneStatus;
 import com.huynqb.laundrylocker.locker.model.DroneUnit;
 import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
+import com.huynqb.laundrylocker.locker.model.MaintenanceSchedule;
 import com.huynqb.laundrylocker.locker.model.ReportCategory;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.LockerRules;
@@ -38,6 +41,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -351,6 +355,138 @@ class LockerServiceDroneFleetTest {
 
         assertEquals("DRONE_STATUS_CONFLICT", error.getCode());
         verify(droneUnitRepository, never()).save(any());
+    }
+
+    // ─── Quy tắc đổi trạng thái tay ───
+
+    @Test
+    void leavingFaultWhileReportIsOpenIsRejected() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.FAULT, 80)));
+        LockerReport open = droneReport(24L, 42L);
+        when(reportRepository.findFirstByDroneUnitIdAndStatusInOrderByCreatedAtDesc(eq(1L), any()))
+                .thenReturn(Optional.of(open));
+
+        BusinessException idle = assertThrows(BusinessException.class,
+                () -> service.updateDroneStatus(1L, DroneStatus.IDLE, null, 42L));
+        BusinessException charging = assertThrows(BusinessException.class,
+                () -> service.updateDroneStatusAsAdmin(1L, DroneStatus.CHARGING, null, 7L));
+
+        assertEquals("DRONE_HAS_OPEN_REPORT", idle.getCode());
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, idle.getStatus());
+        assertEquals("DRONE_HAS_OPEN_REPORT", charging.getCode());
+        assertEquals("IN_PROGRESS", open.getStatus());
+        verify(droneUnitRepository, never()).save(any());
+        verify(reportRepository, never()).save(any());
+    }
+
+    @Test
+    void leavingFaultWithoutOpenReportDoesNotTouchReports() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.FAULT, 80)));
+
+        DroneUnitResponse response = service.updateDroneStatus(1L, DroneStatus.IDLE, null, 42L);
+
+        assertEquals(DroneStatus.IDLE, response.status());
+        verify(reportRepository, never()).save(any());
+    }
+
+    @Test
+    void markingInFlightDroneFaultyMustUseTheOrderFailFlow() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IN_FLIGHT, 80)));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateDroneStatusAsAdmin(1L, DroneStatus.FAULT, "Mất tín hiệu", 7L));
+
+        assertEquals("DRONE_IN_FLIGHT_USE_FAIL", ex.getCode());
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+        verify(droneUnitRepository, never()).save(any());
+    }
+
+    // ─── Thông báo cho KTV drone ───
+
+    @Test
+    void faultReportNotifiesRoutedDroneTechnicianWithDroneType() {
+        stubReportSave();
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 84L, DroneStatus.IDLE, 80)));
+
+        service.updateDroneStatusAsAdmin(1L, DroneStatus.FAULT, "Cánh quạt nứt", 7L);
+
+        List<DomainEvent> events = staffEvents(DomainEventNames.LOCKER_REPORT_ROUTED);
+        assertEquals(1, events.size());
+        assertEquals(LockerService.DRONE_REPORT_ROUTED, events.getFirst().type());
+        assertEquals(84L, events.getFirst().payload().get("userId"));
+        assertEquals(500L, events.getFirst().payload().get("referenceId"));
+        assertEquals("DRONE_REPORT", events.getFirst().payload().get("referenceType"));
+    }
+
+    @Test
+    void unroutedFaultReportNotifiesEveryDroneTechnicianExceptTheReporter() {
+        stubReportSave();
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, null, DroneStatus.IDLE, 80)));
+        when(userClient.listByRole("DRONE_TECHNICIAN")).thenReturn(ApiResponse.ok(List.of(
+                new UserSummary(84L, "a@test", "0901", "A", "ACTIVE"),
+                new UserSummary(85L, "b@test", "0902", "B", "ACTIVE"),
+                new UserSummary(7L, "admin@test", "0903", "Admin", "ACTIVE"))));
+
+        service.updateDroneStatusAsAdmin(1L, DroneStatus.FAULT, "Pin phồng", 7L);
+
+        assertEquals(Set.of(84L, 85L), Set.copyOf(staffEvents(DomainEventNames.LOCKER_REPORT_ROUTED).stream()
+                .map(event -> event.payload().get("userId")).toList()));
+    }
+
+    @Test
+    void adminAssigningDroneReportUsesDroneAssignedType() {
+        LockerReport report = droneReport(24L, null);
+        report.setStatus("OPEN");
+        when(reportRepository.findById(24L)).thenReturn(Optional.of(report));
+        stubReportSave();
+        when(attachmentService.byReportIds(any())).thenReturn(Map.of());
+        when(droneUnitRepository.findById(7L)).thenReturn(Optional.of(droneUnit(7L, null, DroneStatus.FAULT, 40)));
+        when(userClient.getUser(84L)).thenReturn(ApiResponse.ok(new UserSummary(
+                84L, "drone-tech@test", "0908", "Drone Tech", "ACTIVE", Set.of("DRONE_TECHNICIAN"))));
+
+        service.assignReport(24L, 84L);
+
+        List<DomainEvent> events = staffEvents(DomainEventNames.LOCKER_REPORT_ASSIGNED);
+        assertEquals(1, events.size());
+        assertEquals(LockerService.DRONE_REPORT_ASSIGNED, events.getFirst().type());
+        assertEquals(24L, events.getFirst().payload().get("referenceId"));
+    }
+
+    @Test
+    void droneScheduleReminderUsesDroneScheduleType() {
+        MaintenanceSchedule schedule = new MaintenanceSchedule();
+        schedule.setId(31L);
+        schedule.setDroneUnitId(1L);
+        schedule.setTitle("Kiểm tra cánh quạt");
+        schedule.setAssignedTechnicianId(84L);
+        schedule.setNextDueAt(LocalDateTime.now().minusHours(1));
+        when(scheduleRepository.findByActiveTrueAndLastDueNotifiedAtIsNullAndNextDueAtBefore(any()))
+                .thenReturn(List.of(schedule));
+        when(scheduleRepository.markDueNotified(eq(31L), any())).thenReturn(1);
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 84L, DroneStatus.IDLE, 80)));
+
+        assertEquals(1, service.remindDueSchedules());
+
+        List<DomainEvent> events = staffEvents(DomainEventNames.LOCKER_SCHEDULE_DUE);
+        assertEquals(1, events.size());
+        assertEquals(LockerService.DRONE_SCHEDULE_DUE, events.getFirst().type());
+        assertEquals(31L, events.getFirst().payload().get("referenceId"));
+    }
+
+    private void stubReportSave() {
+        when(reportRepository.save(any(LockerReport.class))).thenAnswer(invocation -> {
+            LockerReport report = invocation.getArgument(0, LockerReport.class);
+            if (report.getId() == null) {
+                report.setId(500L);
+            }
+            return report;
+        });
+    }
+
+    private List<DomainEvent> staffEvents(String routingKey) {
+        ArgumentCaptor<DomainEvent> events = ArgumentCaptor.forClass(DomainEvent.class);
+        verify(rabbitTemplate, atLeast(0)).convertAndSend(eq(DomainEventNames.EXCHANGE), eq(routingKey), events.capture());
+        return events.getAllValues();
     }
 
     @Test

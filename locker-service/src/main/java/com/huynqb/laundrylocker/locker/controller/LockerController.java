@@ -261,10 +261,14 @@ public class LockerController {
 
     // Emergency override: open a box without the customer's PIN/QR. Always
     // audited (credential type MASTER) by iot-service's box_access_logs.
+    // Body {reason, note?, attachments?, reportId?} không bắt buộc (web admin cũ không gửi).
     @PostMapping("/api/locker-technician/boxes/{id}/force-open")
     public ApiResponse<Map<String, Object>> maintenanceForceOpen(
-            @PathVariable Long id, @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        Map<String, Object> result = lockerService.forceOpen(id, userId);
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) ForceOpenRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        Map<String, Object> result = lockerService.forceOpen(id, userId, body, UserRoles.isAdmin(roles));
         // Vẫn 200 để client đọc `data.accepted`/`data.status`/`data.message`; mã phản hồi nói đúng kết quả.
         return Boolean.TRUE.equals(result.get("accepted"))
                 ? ApiResponse.ok("BOX_FORCE_OPEN_ACCEPTED", "Force open accepted", result)
@@ -297,15 +301,28 @@ public class LockerController {
         return ApiResponse.ok(lockerService.technicianPerformance(userId));
     }
 
+    // Chỉ KTV đang được giao phiếu; giới hạn số lần / số giờ mỗi lần theo cấu hình nghiệp vụ.
     @PutMapping("/api/locker-technician/reports/{id}/extend-sla")
     public ApiResponse<LockerReportResponse> maintenanceExtendReportSla(
             @PathVariable Long id,
             @Valid @RequestBody ExtendSlaRequest body,
-            @RequestHeader(value = "X-User-Id", required = false) Long actorUserId) {
+            @RequestHeader("X-User-Id") Long actorUserId) {
         return ApiResponse.ok(
                 "SLA_EXTENDED",
-                "Đã gia hạn SLA thành công",
-                lockerService.extendSla(id, body.extensionHours(), body.reason(), actorUserId));
+                "Đã gia hạn SLA",
+                lockerService.extendSlaAsTechnician(id, body.hours(), body.reason(), actorUserId));
+    }
+
+    // KTV đang giữ phiếu trả về hàng chờ (OPEN, bỏ người được giao) kèm lý do.
+    @PutMapping("/api/locker-technician/reports/{id}/release")
+    public ApiResponse<LockerReportResponse> maintenanceReleaseReport(
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) ReleaseReportRequest body,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(
+                "REPORT_RELEASED", "Đã trả phiếu về hàng chờ",
+                lockerService.releaseReport(id, userId, body == null ? null : body.reason(), UserRoles.isAdmin(roles)));
     }
 
     @GetMapping("/api/locker-technician/reports/{id}/logs")
@@ -515,6 +532,40 @@ public class LockerController {
                 "Drone report photos added",
                 attachmentService.addByStaff(
                         id, body.stage(), body.note(), body.attachments(), userId, UserRoles.isAdmin(roles)));
+    }
+
+    @PutMapping("/api/drone-technician/reports/{id}/extend-sla")
+    public ApiResponse<LockerReportResponse> droneTechnicianExtendReportSla(
+            @PathVariable Long id,
+            @Valid @RequestBody ExtendSlaRequest body,
+            @RequestHeader("X-User-Id") Long actorUserId) {
+        requireDroneReport(id);
+        return ApiResponse.ok(
+                "SLA_EXTENDED",
+                "Đã gia hạn SLA",
+                lockerService.extendSlaAsTechnician(id, body.hours(), body.reason(), actorUserId));
+    }
+
+    @PutMapping("/api/drone-technician/reports/{id}/release")
+    public ApiResponse<LockerReportResponse> droneTechnicianReleaseReport(
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) ReleaseReportRequest body,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        requireDroneReport(id);
+        return ApiResponse.ok(
+                "DRONE_REPORT_RELEASED", "Đã trả phiếu Drone về hàng chờ",
+                lockerService.releaseReport(id, userId, body == null ? null : body.reason(), UserRoles.isAdmin(roles)));
+    }
+
+    @GetMapping("/api/drone-technician/my-rating-average")
+    public ApiResponse<Map<String, Object>> droneTechnicianMyRatingAverage(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(lockerService.myRatingAverage(userId));
+    }
+
+    @GetMapping("/api/drone-technician/my-performance")
+    public ApiResponse<Map<String, Object>> droneTechnicianMyPerformance(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(lockerService.technicianPerformance(userId));
     }
 
     @GetMapping("/api/drone-technician/reports/{id}/logs")
@@ -843,6 +894,7 @@ public class LockerController {
         return ApiResponse.ok("REPORT_UNASSIGNED", "Report unassigned", lockerService.unassignReport(id));
     }
 
+    // Admin gia hạn: không giới hạn số lần, không tính vào lượt tự gia hạn của KTV; nhận `hours` hoặc `extensionHours`.
     @PutMapping("/api/admin/lockers/reports/{id}/extend-sla")
     public ApiResponse<LockerReportResponse> adminExtendReportSla(
             @PathVariable Long id,
@@ -850,8 +902,8 @@ public class LockerController {
             @RequestHeader(value = "X-User-Id", required = false) Long actorUserId) {
         return ApiResponse.ok(
                 "SLA_EXTENDED",
-                "Đã gia hạn SLA thành công",
-                lockerService.extendSla(id, body.extensionHours(), body.reason(), actorUserId));
+                "Đã gia hạn SLA",
+                lockerService.extendSla(id, body.hours(), body.reason(), actorUserId));
     }
 
     @GetMapping("/api/admin/lockers/technicians/{id}/performance")

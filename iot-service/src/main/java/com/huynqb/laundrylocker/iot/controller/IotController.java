@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.iot.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.iot.dto.*;
+import com.huynqb.laundrylocker.iot.service.DeviceManagementService;
 import com.huynqb.laundrylocker.iot.service.IotService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,17 +16,18 @@ import java.util.Map;
 public class IotController {
 
     private final IotService iotService;
+    private final DeviceManagementService deviceManagementService;
 
     @PostMapping("/api/iot/device-status")
     public ApiResponse<DeviceStatusResponse> updateStatus(@Valid @RequestBody DeviceStatusRequest request) {
         return ApiResponse.ok("IOT_STATUS_UPDATED", "Device status updated", iotService.updateStatus(request));
     }
 
-    // Operations visibility for Admin (web console) — cabinet heartbeat was
-    // collected but never surfaced anywhere until now.
+    // Operations visibility for Admin (web console): mọi thiết bị, kèm tên tủ và
+    // trạng thái đang áp dụng (ONLINE chỉ khi còn tín hiệu trong cửa sổ online).
     @GetMapping("/api/admin/iot/device-status")
     public ApiResponse<List<DeviceStatusResponse>> listDeviceStatuses() {
-        return ApiResponse.ok(iotService.listDeviceStatuses());
+        return ApiResponse.ok(deviceManagementService.listAllDevices());
     }
 
     // GAP 2: cabinet-reported hardware box state (door/sensor), kept separate from

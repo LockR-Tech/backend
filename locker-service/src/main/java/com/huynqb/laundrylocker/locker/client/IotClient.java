@@ -18,7 +18,12 @@ public interface IotClient {
     @PostMapping("/force-unlock")
     ApiResponse<Map<String, Object>> forceUnlock(@RequestBody ForceUnlockRequest request);
 
-    record ForceUnlockRequest(Long lockerId, Long boxId, Long actorUserId) {
+    /// `reason`/`note` của KTV được iot-service ghi vào `box_access_logs.message`.
+    record ForceUnlockRequest(Long lockerId, Long boxId, Long actorUserId, String reason, String note) {
+
+        public ForceUnlockRequest(Long lockerId, Long boxId, Long actorUserId) {
+            this(lockerId, boxId, actorUserId, null, null);
+        }
     }
 
     /// Booking → IoT sync (GAP 1): tell the cabinet a box's lifecycle state changed
@@ -36,6 +41,10 @@ public interface IotClient {
 
     record BoxHardwareStatus(Long boxId, Long lockerId, String hwState, LocalDateTime lastReportedAt) {
     }
+
+    /// Toàn bộ bộ điều khiển tủ (kèm `lockerId`, `online`) — tính cờ `online` cho danh sách tủ bằng một lần gọi.
+    @GetMapping("/gateways")
+    ApiResponse<List<GatewayDeviceResponse>> listGateways();
 
     @GetMapping("/gateways/{lockerId}")
     ApiResponse<GatewayDeviceResponse> getGatewayByLockerId(@PathVariable("lockerId") Long lockerId);

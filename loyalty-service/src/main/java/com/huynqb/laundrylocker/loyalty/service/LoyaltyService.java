@@ -17,7 +17,9 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +32,8 @@ public class LoyaltyService {
 
     /// Hạng hiển thị sẵn trong thống kê (0 nếu chưa có ai) theo thứ tự tăng dần.
     private static final List<String> TIERS = List.of("BRONZE", "SILVER", "GOLD", "PLATINUM");
+    /// Loại giao dịch điểm tự cộng khi đơn hoàn tất; DB chỉ cho một dòng loại này mỗi orderId.
+    public static final String ORDER_EARN_TYPE = "ORDER_EARN";
 
     private BusinessTime time = BusinessTime.system();
 
@@ -39,26 +43,55 @@ public class LoyaltyService {
 
     @Transactional
     public LoyaltyAccountResponse adjustPoints(AdjustPointsRequest request) {
+        if (request.userId() == null) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_USER_REQUIRED", "Thiếu userId của tài khoản cần điều chỉnh điểm");
+        }
+        if (ORDER_EARN_TYPE.equalsIgnoreCase(request.type() == null ? "" : request.type().trim())) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_TYPE_RESERVED", "Loại " + ORDER_EARN_TYPE + " chỉ dành cho điểm tự cộng khi đơn hoàn tất");
+        }
+        return applyPoints(request.userId(), request.orderId(), request.points(),
+                StringUtils.hasText(request.type()) ? request.type() : "ADJUSTMENT");
+    }
+
+    /// Cộng điểm khi đơn hoàn tất — mỗi đơn đúng một lần. Sự kiện giao lại/xử lý song song bị chặn bởi kiểm tra
+    /// trước và unique index (order_id) WHERE type = 'ORDER_EARN' (lần ghi thứ hai ném DataIntegrityViolationException,
+    /// transaction rollback cả phần cộng điểm). Số tiền 0đ hoặc dưới mức 1 điểm ⇒ không cộng.
+    @Transactional
+    public Optional<LoyaltyAccountResponse> awardOrderPoints(Long orderId, Long userId, BigDecimal paidAmount) {
+        if (orderId == null || userId == null) {
+            return Optional.empty();
+        }
+        int points = rules.pointsFor(paidAmount);
+        if (points <= 0 || transactionRepository.existsByOrderIdAndType(orderId, ORDER_EARN_TYPE)) {
+            return Optional.empty();
+        }
+        return Optional.of(applyPoints(userId, orderId, points, ORDER_EARN_TYPE));
+    }
+
+    private LoyaltyAccountResponse applyPoints(Long userId, Long orderId, int points, String type) {
         LoyaltyAccount account =
                 accountRepository
-                        .findByUserId(request.userId())
+                        .findByUserId(userId)
                         .orElseGet(
                                 () -> {
                                     LoyaltyAccount created = new LoyaltyAccount();
-                                    created.setUserId(request.userId());
+                                    created.setUserId(userId);
                                     return created;
                                 });
-        account.setPoints(account.getPoints() + request.points());
+        account.setPoints(account.getPoints() + points);
         account.setTier(resolveTier(account.getPoints()));
 
         PointTransaction transaction = new PointTransaction();
-        transaction.setUserId(request.userId());
-        transaction.setOrderId(request.orderId());
-        transaction.setPoints(request.points());
-        transaction.setType(StringUtils.hasText(request.type()) ? request.type() : "ADJUSTMENT");
-        transactionRepository.save(transaction);
-
-        return toResponse(accountRepository.save(account));
+        transaction.setUserId(userId);
+        transaction.setOrderId(orderId);
+        transaction.setPoints(points);
+        transaction.setType(type);
+        LoyaltyAccountResponse response = toResponse(accountRepository.save(account));
+        // Flush ngay để unique index chặn cộng trùng ném lỗi trong lời gọi này (rollback cả phần cộng điểm).
+        transactionRepository.saveAndFlush(transaction);
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -71,15 +104,33 @@ public class LoyaltyService {
         return toResponse(account);
     }
 
+    /// Đổi điểm: số điểm phải dương và không vượt số dư (không để điểm âm).
     @Transactional
     public LoyaltyAccountResponse redeemPoints(RedeemPointsRequest request) {
-        return adjustPoints(new AdjustPointsRequest(request.userId(), null, -Math.abs(request.points()), "REDEEM"));
+        int points = request.points() == null ? 0 : request.points();
+        if (points <= 0) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_POINTS_INVALID", "Số điểm đổi phải lớn hơn 0");
+        }
+        int balance = accountRepository.findByUserId(request.userId()).map(LoyaltyAccount::getPoints).orElse(0);
+        if (balance < points) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_POINTS_INSUFFICIENT", "Không đủ điểm để đổi (hiện có " + balance + " điểm)");
+        }
+        return applyPoints(request.userId(), null, -points, "REDEEM");
     }
 
+    /// Đổi tem: số tem phải dương và không vượt số tem đang có.
     @Transactional
     public LoyaltyAccountResponse redeemStamp(RedeemStampRequest request) {
         LoyaltyAccount account = accountRepository.findByUserId(request.userId()).orElseThrow(() -> new com.huynqb.laundrylocker.common.exception.NotFoundException("LoyaltyAccount", request.userId()));
-        account.setStamps(Math.max(0, account.getStamps() - Math.abs(request.stamps())));
+        int stamps = request.stamps() == null ? 0 : request.stamps();
+        if (stamps <= 0 || account.getStamps() < stamps) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_STAMPS_INSUFFICIENT",
+                    "Không đủ tem để đổi (cần " + Math.max(stamps, 1) + ", hiện có " + account.getStamps() + ")");
+        }
+        account.setStamps(account.getStamps() - stamps);
         return toResponse(accountRepository.save(account));
     }
 

@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.security.SecuritySecrets;
+import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.payment.client.OrderClient;
 import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.payment.client.NotificationClient;
@@ -24,6 +25,7 @@ import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -375,8 +377,12 @@ public class PaymentService {
         return toResponse(saved);
     }
 
-    @Transactional
-    public PaymentResponse handleSepayReturn(Map<String, String> params) {
+    /// Trang quay về sau cổng SePay (`success_url`/`cancel_url`). Tham số trên URL này do trình duyệt mang
+    /// theo và không có chữ ký nên chỉ dùng để tìm giao dịch rồi BÁO trạng thái hiện tại — không đổi trạng
+    /// thái, không cộng ví, không phát sự kiện. Tiền chỉ được ghi nhận qua webhook SePay đã xác thực
+    /// ({@link #handleSepayWebhook}); app sau khi đóng WebView tự poll đơn / giao dịch ví theo txnRef.
+    @Transactional(readOnly = true)
+    public SepayReturnStatusResponse sepayReturnStatus(Map<String, String> params) {
         // SePay PG có thể gửi order_invoice_number, order_id, orderId hoặc referenceId
         String rawRef = params.get("referenceId");
         if (!StringUtils.hasText(rawRef)) rawRef = params.get("order_invoice_number");
@@ -385,33 +391,15 @@ public class PaymentService {
         if (!StringUtils.hasText(rawRef)) {
             throw new BusinessException("SEPAY_RETURN_INVALID", "Thiếu referenceId trong callback SePay");
         }
-        final String refId = rawRef;
+        final String refId = rawRef.trim();
         PaymentRecord payment = repository.findByReferenceId(refId)
                 .orElseThrow(() -> new NotFoundException("Payment with ref: " + refId, -1L));
-
-        String status = params.get("status");
-        if (!"COMPLETED".equals(payment.getStatus())) {
-            if ("cancel".equalsIgnoreCase(status) || "failed".equalsIgnoreCase(status)) {
-                payment.setStatus("FAILED");
-                payment = repository.save(payment);
-                publish(DomainEventNames.PAYMENT_FAILED, payment);
-            } else {
-                payment.setStatus("COMPLETED");
-                PaymentRecord saved = repository.save(payment);
-                if ("SEPAY_TOPUP".equals(saved.getMethod())
-                        || (saved.getOrderId() != null && saved.getOrderId() <= 0)) {
-                    walletService.credit(
-                            saved.getUserId(),
-                            saved.getAmount(),
-                            WalletService.SOURCE_TOPUP,
-                            saved.getReferenceId(),
-                            "Nạp ví qua SePay");
-                }
-                publish(DomainEventNames.PAYMENT_COMPLETED, saved);
-                return toResponse(saved);
-            }
-        }
-        return toResponse(payment);
+        return new SepayReturnStatusResponse(
+                payment.getReferenceId(),
+                payment.getStatus(),
+                "COMPLETED".equals(payment.getStatus()),
+                payment.getMethod(),
+                payment.getAmount());
     }
 
     public String getSepayPayHtml(String referenceId) {
@@ -516,6 +504,8 @@ public class PaymentService {
         if (!rules.isRefundEnabled()) {
             throw new BusinessException("REFUND_DISABLED", "Chức năng hoàn tiền hiện đang tạm khóa bởi quản trị viên");
         }
+        // Chỉ chủ đơn được yêu cầu hoàn tiền cho đơn của mình.
+        assertOrderOwner(request.orderId(), userId);
 
         List<PaymentRecord> payments = repository.findByOrderId(request.orderId());
         PaymentRecord payment = payments.stream()
@@ -757,6 +747,96 @@ public class PaymentService {
     @Transactional(readOnly = true)
     public List<PaymentResponse> listByOrder(Long orderId) {
         return repository.findByOrderId(orderId).stream().map(this::toResponse).toList();
+    }
+
+    /// Thanh toán của một đơn: chủ đơn hoặc ADMIN.
+    @Transactional(readOnly = true)
+    public List<PaymentResponse> listByOrder(Long orderId, Long userId, String roles) {
+        assertOrderOwnerOrAdmin(orderId, userId, roles);
+        return listByOrder(orderId);
+    }
+
+    /// Một giao dịch: người trả, chủ đơn hoặc ADMIN.
+    @Transactional(readOnly = true)
+    public PaymentResponse get(Long id, Long userId, String roles) {
+        PaymentRecord payment = find(id);
+        assertPaymentAccess(payment, userId, roles);
+        return toResponse(payment);
+    }
+
+    /// Yêu cầu hoàn tiền của một đơn: chủ đơn hoặc ADMIN.
+    @Transactional(readOnly = true)
+    public List<RefundResponse> refundsByOrder(Long orderId, Long userId, String roles) {
+        assertOrderOwnerOrAdmin(orderId, userId, roles);
+        return refundsByOrder(orderId);
+    }
+
+    /// Một yêu cầu hoàn tiền (có số tài khoản nhận tiền): người trả, chủ đơn hoặc ADMIN.
+    @Transactional(readOnly = true)
+    public RefundResponse getRefund(Long refundId, Long userId, String roles) {
+        RefundRecord refund = refundRepository.findById(refundId)
+                .orElseThrow(() -> new NotFoundException("Refund", refundId));
+        if (!UserRoles.isAdmin(roles)) {
+            requireCaller(userId);
+            PaymentRecord payment = refund.getPaymentId() == null
+                    ? null
+                    : repository.findById(refund.getPaymentId()).orElse(null);
+            boolean payer = payment != null && userId.equals(payment.getUserId());
+            if (!payer) {
+                assertOrderOwner(refund.getOrderId(), userId);
+            }
+        }
+        return toRefund(refund);
+    }
+
+    private void assertPaymentAccess(PaymentRecord payment, Long userId, String roles) {
+        if (UserRoles.isAdmin(roles)) {
+            return;
+        }
+        requireCaller(userId);
+        if (userId.equals(payment.getUserId())) {
+            return;
+        }
+        if (payment.getOrderId() == null || payment.getOrderId() <= 0) {
+            throw orderForbidden();
+        }
+        assertOrderOwner(payment.getOrderId(), userId);
+    }
+
+    void assertOrderOwnerOrAdmin(Long orderId, Long userId, String roles) {
+        if (!UserRoles.isAdmin(roles)) {
+            assertOrderOwner(orderId, userId);
+        }
+    }
+
+    /// Chủ đơn tra từ order-service (nguồn đúng), không tin id trong request.
+    void assertOrderOwner(Long orderId, Long userId) {
+        requireCaller(userId);
+        if (orderId == null || orderId <= 0) {
+            throw orderForbidden();
+        }
+        OrderSummary order;
+        try {
+            order = orderClient.getOrder(orderId).data();
+        } catch (Exception ex) {
+            throw new BusinessException("ORDER_LOOKUP_FAILED", "Không lấy được thông tin đơn: " + ex.getMessage());
+        }
+        if (order == null) {
+            throw new NotFoundException("Order", orderId);
+        }
+        if (!userId.equals(order.userId())) {
+            throw orderForbidden();
+        }
+    }
+
+    private static void requireCaller(Long userId) {
+        if (userId == null) {
+            throw new BusinessException("AUTH_REQUIRED", "Vui lòng đăng nhập", HttpStatus.UNAUTHORIZED);
+        }
+    }
+
+    private static BusinessException orderForbidden() {
+        return new BusinessException("ORDER_FORBIDDEN", "Đơn hàng không thuộc tài khoản của bạn", HttpStatus.FORBIDDEN);
     }
 
     @Transactional(readOnly = true)

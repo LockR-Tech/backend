@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-/// Tra cứu tủ/ô theo lô cho báo cáo admin bên order-service. Đếm ô bằng một
+/// Tra cứu tủ/ô theo lô cho báo cáo admin bên order-service và danh sách thiết bị của iot-service. Đếm ô bằng một
 /// truy vấn cho cả lô thay vì hai truy vấn count mỗi tủ.
 @Service
 @RequiredArgsConstructor
@@ -42,10 +42,12 @@ public class LockerLookupService {
                     int available = (int) boxes.stream()
                             .filter(box -> Boolean.TRUE.equals(box.getActive()) && "AVAILABLE".equals(box.getStatus()))
                             .count();
+                    // Nội bộ (gateway chặn /internal): kèm KTV phụ trách để iot-service lọc thiết bị theo KTV.
                     return new LockerResponse(
                             locker.getId(), locker.getStoreId(), locker.getCode(), locker.getName(), locker.getStatus(),
                             locker.getAddress(), locker.getLatitude(), locker.getLongitude(),
-                            locker.getLandingPad(), locker.getLandingMarkerId(), boxes.size(), available);
+                            locker.getLandingPad(), locker.getLandingMarkerId(), boxes.size(), available,
+                            locker.getAssignedTechnicianId(), null);
                 })
                 .toList();
     }

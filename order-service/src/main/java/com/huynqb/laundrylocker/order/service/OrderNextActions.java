@@ -15,6 +15,11 @@ public final class OrderNextActions {
             if ("READY_FOR_PICKUP".equals(deliveryStage)) {
                 return "PAID".equalsIgnoreCase(order.getPaymentStatus()) ? "PICKUP" : "PAY_BEFORE_PICKUP";
             }
+            // Đã báo rơi kiện: đơn vẫn AWAITING_DISPATCH nhưng chuyến bay đã dừng — không được hiện như
+            // đang chờ đội bay; khách theo dõi ở mục sự cố (/api/orders/drone-incidents).
+            if ("DROP_REPORTED".equals(deliveryStage) && "AWAITING_DISPATCH".equals(order.getStatus())) {
+                return "INCIDENT_IN_PROGRESS";
+            }
             return switch (order.getStatus()) {
                 // Đội bay chỉ tiếp nhận / chỉ phóng khi đơn đã trả đủ (kể cả phụ thu cân lệch).
                 case "AWAITING_DISPATCH" -> {
@@ -50,6 +55,7 @@ public final class OrderNextActions {
                     "Place the parcel in the drone cell at the source locker and confirm the drop-off.";
             case "PAY_FOR_DRONE" -> "Pay for the drone delivery so the flight team can dispatch it.";
             case "PAY_BEFORE_PICKUP" -> "Pay for the drone delivery before opening the locker.";
+            case "INCIDENT_IN_PROGRESS" -> "A delivery incident is being handled; follow the incident for updates.";
             case "PICKUP" -> "Pick up items from locker.";
             case "CONTACT_STAFF" -> "Items moved to storage; contact staff to retrieve them.";
             default -> order.getStatus();

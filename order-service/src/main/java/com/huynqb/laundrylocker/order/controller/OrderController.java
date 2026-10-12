@@ -13,6 +13,8 @@ import com.huynqb.laundrylocker.order.service.DroneParcelService;
 import com.huynqb.laundrylocker.order.service.DroneRefundService;
 import com.huynqb.laundrylocker.order.service.OrderService;
 import com.huynqb.laundrylocker.order.service.PromotionImageService;
+import com.huynqb.laundrylocker.order.service.ReceiverOrderQueryService;
+import com.huynqb.laundrylocker.order.service.StoreRatingQueryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +34,8 @@ public class OrderController {
     private final DroneParcelService droneParcelService;
     private final OrderService orderService;
     private final PromotionImageService promotionImageService;
+    private final ReceiverOrderQueryService receiverOrderQueryService;
+    private final StoreRatingQueryService storeRatingQueryService;
 
     @PostMapping("/api/orders")
     public ApiResponse<OrderResponse> create(@Valid @RequestBody CreateOrderRequest request) {
@@ -387,10 +391,15 @@ public class OrderController {
 
     /// Đơn STANDARD chưa có telemetry tự báo chặng: điều phối viên đã tiếp nhận xác nhận
     /// drone sang chặng kế tiếp (rời trạm → trên đường → sắp tới → đã tới → hàng vào ô).
+    /// Body tuỳ chọn `{expectedStage}`: chặng app đang hiển thị. Telemetry đã đẩy chặng đi trước
+    /// ⇒ 409 DRONE_STAGE_CHANGED thay vì nhảy thêm một chặng.
     @PostMapping("/api/drone-technician/drone-orders/{orderId}/advance")
     public ApiResponse<DroneDeliveryOrderResponse> advanceDroneOrder(
-            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
-        droneMissionProgressService.advanceByOperator(orderId, userId);
+            @PathVariable Long orderId,
+            @RequestBody(required = false) AdvanceDroneOrderRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        droneMissionProgressService.advanceByOperator(
+                orderId, userId, request == null ? null : request.expectedStage());
         return ApiResponse.ok(
                 "DRONE_STAGE_ADVANCED",
                 "Drone mission advanced to the next stage",
@@ -423,6 +432,25 @@ public class OrderController {
     @GetMapping("/api/orders/my-orders")
     public ApiResponse<List<OrderResponse>> myOrders(@RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(orderService.listByUser(userId));
+    }
+
+    /// Đơn người khác gửi cho tôi (theo tài khoản người nhận hoặc SĐT tài khoản), mới nhất trước.
+    /// PIN/QR chỉ có khi hàng đã sẵn sàng lấy. `limit` mặc định 50, tối đa 100.
+    @GetMapping("/api/orders/incoming")
+    public ApiResponse<List<ReceiverOrderResponse>> incoming(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(defaultValue = "false") boolean activeOnly,
+            @RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(receiverOrderQueryService.incoming(userId, activeOnly, limit));
+    }
+
+    /// Đơn người khác ủy quyền cho tôi lấy hộ (khớp theo SĐT tài khoản), kèm mã mở ô khi sẵn sàng.
+    @GetMapping("/api/orders/delegated-to-me")
+    public ApiResponse<List<ReceiverOrderResponse>> delegatedToMe(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(defaultValue = "false") boolean activeOnly,
+            @RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(receiverOrderQueryService.delegatedToMe(userId, activeOnly, limit));
     }
 
     @PostMapping("/api/orders/{orderId}/rate")
@@ -469,6 +497,12 @@ public class OrderController {
     @GetMapping("/internal/orders/{id}")
     public ApiResponse<OrderSummary> getInternal(@PathVariable Long id) {
         return ApiResponse.ok(orderService.getSummary(id));
+    }
+
+    /// notification-service kiểm quyền đăng ký topic vị trí drone của đơn.
+    @GetMapping("/internal/orders/{id}/participants")
+    public ApiResponse<OrderParticipantsResponse> participants(@PathVariable Long id) {
+        return ApiResponse.ok(orderService.participants(id));
     }
 
     @GetMapping("/api/admin/orders")
@@ -605,7 +639,7 @@ public class OrderController {
 
     @GetMapping("/internal/orders/stores/{storeId}/ratings")
     public ApiResponse<List<Map<String, Object>>> storeRatings(@PathVariable Long storeId) {
-        return ApiResponse.ok(orderService.storeRatings(storeId));
+        return ApiResponse.ok(storeRatingQueryService.storeRatings(storeId));
     }
 
     @PostMapping("/api/admin/scheduler/auto-cancel")

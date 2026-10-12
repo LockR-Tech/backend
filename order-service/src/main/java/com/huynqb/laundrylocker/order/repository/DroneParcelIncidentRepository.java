@@ -19,6 +19,14 @@ public interface DroneParcelIncidentRepository extends JpaRepository<DroneParcel
             Long reportedByUserId, Long recoveryAssignedToUserId);
     List<DroneParcelIncident> findByRecoveryAssignedToUserIdOrderByCreatedAtDesc(Long userId);
 
+    /// Sự cố liên quan tới một KTV drone: người báo, người được giao thu hồi, hoặc người đã tiếp
+    /// nhận chuyến bay có sự cố.
+    @Query("select i from DroneParcelIncident i where i.reportedByUserId = :userId"
+            + " or i.recoveryAssignedToUserId = :userId"
+            + " or i.missionId in (select m.id from DroneMission m where m.assignedByUserId = :userId)"
+            + " order by i.createdAt desc, i.id desc")
+    List<DroneParcelIncident> findVisibleToDroneTechnician(@Param("userId") Long userId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from DroneParcelIncident i where i.id = :id")
     Optional<DroneParcelIncident> findByIdForUpdate(@Param("id") Long id);

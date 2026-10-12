@@ -13,9 +13,12 @@ public interface AuthClient {
     @PostMapping("/accounts")
     ApiResponse<Map<String, Object>> createAccount(@RequestBody Map<String, Object> request);
 
+    /// Body `{currentPassword?, newPassword}`. Trả cặp token mới cho máy đang đổi (AuthResponse dạng map);
+    /// sai/thiếu mật khẩu hiện tại ⇒ 400 AUTH_INVALID_PASSWORD / AUTH_CURRENT_PASSWORD_REQUIRED.
     @PostMapping("/users/{userId}/password")
-    ApiResponse<Void> changePassword(@PathVariable Long userId, @RequestBody Map<String, Object> request);
+    ApiResponse<Map<String, Object>> changePassword(@PathVariable Long userId, @RequestBody Map<String, Object> request);
 
+    /// Mỗi phần tử `{userId, provider, emailVerified, status, hasPassword}`.
     @GetMapping("/accounts/by-users")
     ApiResponse<List<Map<String, Object>>> accountsByUsers(@RequestParam("userIds") List<Long> userIds);
 

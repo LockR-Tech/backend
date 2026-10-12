@@ -78,6 +78,22 @@ public class DroneParcelIncidentController {
         return ApiResponse.ok(service.get(id, userId, roles));
     }
 
+    /// App KTV drone: sự cố rơi kiện trên các chuyến bay của mình (gồm đơn đang DROP_REPORTED).
+    @GetMapping("/api/drone-technician/drone-incidents")
+    public ApiResponse<List<DroneParcelIncidentResponse>> droneTechnicianList(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(service.listForDroneTechnician(userId, roles));
+    }
+
+    @GetMapping("/api/drone-technician/drone-incidents/{id}")
+    public ApiResponse<DroneParcelIncidentResponse> droneTechnicianGet(
+            @PathVariable Long id,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(service.getForDroneTechnician(id, userId, roles));
+    }
+
     @PostMapping("/api/admin/drone-incidents/{id}/recovery/verify")
     public ApiResponse<DroneParcelIncidentResponse> verifyRecovery(
             @PathVariable Long id,

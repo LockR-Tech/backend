@@ -35,6 +35,7 @@ public class DroneDeliveryQueryService {
 
     private static final List<String> TERMINAL_ORDER_STATUSES = List.of("COMPLETED", "CANCELED", "EXPIRED");
     private static final Set<String> PAID_PAYMENT_STATUSES = Set.of("PAID", "REFUND_PENDING", "REFUNDED");
+    static final String DROP_REPORTED = "DROP_REPORTED";
 
     private final LockerOrderRepository orderRepository;
     private final DroneMissionRepository missionRepository;
@@ -101,6 +102,11 @@ public class DroneDeliveryQueryService {
         List<Row> rows = orders.stream()
                 .filter(order -> !StringUtils.hasText(deliveryStage)
                         || deliveryStage.equalsIgnoreCase(order.getDeliveryStage()))
+                // Đơn đã báo rơi kiện không còn là chuyến đang chạy: theo dõi ở danh sách sự cố
+                // (/api/drone-technician/drone-incidents). Lọc đúng deliveryStage=DROP_REPORTED vẫn lấy được.
+                .filter(order -> includeFinished
+                        || StringUtils.hasText(deliveryStage)
+                        || !DROP_REPORTED.equalsIgnoreCase(order.getDeliveryStage()))
                 .map(order -> new Row(order, missionRepository.findByOrderId(order.getId()).orElse(null)))
                 .filter(row -> admin || row.mission() == null
                         || Objects.equals(userId, row.mission().getAssignedByUserId()))
@@ -295,9 +301,10 @@ public class DroneDeliveryQueryService {
                 locker.latitude(), locker.longitude());
     }
 
-    private Integer etaMinutes(String stage) {
+    /// Phút ước tính tới tủ nhận theo chặng. null khi drone chưa phóng (chờ điều phối, đã nhận,
+    /// đang nạp hàng): chưa biết bao giờ bay nên không hứa một con số.
+    static Integer etaMinutes(String stage) {
         return switch (stage == null ? "" : stage.toUpperCase()) {
-            case "AWAITING_DISPATCH", "ACCEPTED" -> 10;
             case "LAUNCHING" -> 9;
             case "DEPARTED" -> 8;
             case "EN_ROUTE" -> 6;

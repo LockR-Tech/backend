@@ -72,6 +72,11 @@ public class LockerReport {
     @Column(name = "sla_extension_reason", length = 1000)
     private String slaExtensionReason;
 
+    /// Số lần KTV đã tự gia hạn SLA (giới hạn bởi `app.maintenance.sla-max-extensions`);
+    /// lần gia hạn của admin không tính.
+    @Column(name = "sla_extension_count", nullable = false)
+    private Integer slaExtensionCount = 0;
+
     /// KTV được báo khi phiếu còn OPEN (KTV phụ trách tủ). NULL = đã báo mọi KTV tủ.
     @Column(name = "routed_to_user_id")
     private Long routedToUserId;
@@ -103,6 +108,9 @@ public class LockerReport {
         }
         if (slaExtendedHours == null) {
             slaExtendedHours = 0;
+        }
+        if (slaExtensionCount == null) {
+            slaExtensionCount = 0;
         }
     }
 

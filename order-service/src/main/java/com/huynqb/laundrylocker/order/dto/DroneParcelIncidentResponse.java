@@ -51,5 +51,12 @@ public record DroneParcelIncidentResponse(
         List<DroneIncidentProposalResponse> proposals,
         /// Mức bồi thường gợi ý theo chính sách của đơn (giá trị khai báo × tỉ lệ, chặn trần) —
         /// cùng công thức dùng khi lập đề xuất; null khi đơn tắt chính sách bồi thường sự cố.
-        BigDecimal suggestedCompensation) {
+        BigDecimal suggestedCompensation,
+        /// Chính sách của đơn cho phép khách yêu cầu xem xét lại đề xuất (REQUEST_REVIEW). Chỉ có
+        /// nghĩa khi đề xuất mới nhất đang AWAITING_CUSTOMER_ACCEPTANCE.
+        boolean disputeAllowed,
+        /// Trạng thái và chặng giao hiện tại của đơn — đơn bị báo rơi kiện có deliveryStage
+        /// DROP_REPORTED và không còn nằm trong hàng chờ điều phối.
+        String orderStatus,
+        String deliveryStage) {
 }

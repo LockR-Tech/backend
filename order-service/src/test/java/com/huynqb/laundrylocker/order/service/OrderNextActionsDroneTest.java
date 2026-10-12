@@ -36,6 +36,15 @@ class OrderNextActionsDroneTest {
     }
 
     @Test
+    void dropReportedOrderPointsToTheIncidentInsteadOfTheFlightTeam() {
+        LockerOrder order = drone("AWAITING_DISPATCH", "DROP_REPORTED", "PAID");
+        order.setParcelDroppedAt(java.time.LocalDateTime.now());
+
+        assertEquals("INCIDENT_IN_PROGRESS", OrderNextActions.nextAction(order));
+        assertFalse(OrderNextActions.paymentRequired(order));
+    }
+
+    @Test
     void paidDroneOrderFirstNeedsTheParcelInTheSourceCell() {
         LockerOrder order = drone("AWAITING_DISPATCH", "AWAITING_DISPATCH", "PAID");
 

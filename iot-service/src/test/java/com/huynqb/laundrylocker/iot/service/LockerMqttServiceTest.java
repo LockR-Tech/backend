@@ -41,6 +41,8 @@ class LockerMqttServiceTest {
     static final String PI_OPEN_RESULT = """
             {"commandId": "%s", "boxId": 12, "slotIndex": 3, "status": "SUCCESS", "hwState": "OPEN",
              "errorCode": null, "errorMessage": "Door opened", "timestamp": "2026-09-27T10:00:03+00:00"}""";
+    static final String PI_RESTART_RESULT = """
+            {"commandId": "%s", "status": "ACCEPTED", "timestamp": "2026-10-11T10:00:01+00:00"}""";
     static final String PI_STATUS = """
             {"slotIndex": 3, "boxId": 12, "hwState": "OPEN", "doorOpen": true, "timestamp": "2026-09-27T10:00:04+00:00"}""";
     static final String PI_STATUS_NO_BOX = """
@@ -113,6 +115,17 @@ class LockerMqttServiceTest {
     }
 
     @Test
+    void restartCommandMatchesContract() throws Exception {
+        service.sendRestartCommandAsync(7L);
+
+        JsonNode payload = published("cabinet/7/command/restart");
+        assertEquals(Set.of("commandId", "action"), Set.copyOf(iterableToList(payload.fieldNames())));
+        assertEquals("RESTART", payload.get("action").asText());
+        assertFalse(payload.get("commandId").asText().isBlank());
+        verify(client, never()).publish(eq("cabinet/7/command/open"), any(MqttMessage.class));
+    }
+
+    @Test
     void boxStateSyncMatchesContract() throws Exception {
         assertTrue(service.publishBoxStateSync(1L, 12L, "OCCUPIED", 99L));
 
@@ -132,6 +145,17 @@ class LockerMqttServiceTest {
 
         JsonNode result = future.get(1, TimeUnit.SECONDS);
         assertEquals("SUCCESS", result.get("status").asText());
+    }
+
+    @Test
+    void restartResultCompletesPendingCommand() throws Exception {
+        CompletableFuture<JsonNode> future = service.sendRestartCommandAsync(7L);
+        String commandId = published("cabinet/7/command/restart").get("commandId").asText();
+
+        service.handleMessage("cabinet/7/command/restart/result", PI_RESTART_RESULT.formatted(commandId));
+
+        JsonNode result = future.get(1, TimeUnit.SECONDS);
+        assertEquals("ACCEPTED", result.get("status").asText());
     }
 
     @Test

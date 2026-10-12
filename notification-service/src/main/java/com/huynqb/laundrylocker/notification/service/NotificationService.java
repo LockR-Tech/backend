@@ -255,6 +255,10 @@ public class NotificationService {
             case DomainEventNames.LOCKER_REPORT_ROUTED -> "Phiếu sự cố mới cần xử lý";
             case DomainEventNames.LOCKER_REPORT_ASSIGNED -> "Bạn được giao việc bảo trì";
             case DomainEventNames.LOCKER_SCHEDULE_DUE -> "Lịch kiểm tra định kỳ tới hạn";
+            // locker-service gửi sự kiện của KTV drone trên cùng routing key locker.*, type riêng drone.*
+            case "drone.report.routed" -> "Phiếu sự cố drone mới cần xử lý";
+            case "drone.report.assigned" -> "Bạn được giao phiếu sự cố drone";
+            case "drone.schedule.due" -> "Lịch kiểm tra drone tới hạn";
             default -> "Notification";
         };
         Object message = payload.getOrDefault("message", event.type() + " event received");

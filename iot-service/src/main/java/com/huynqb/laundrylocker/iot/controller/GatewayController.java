@@ -46,6 +46,13 @@ public class GatewayController {
         return ApiResponse.ok("GATEWAY_DELETED", "Gateway removed");
     }
 
+    /// Toàn bộ bộ điều khiển kèm `lockerId` + `online` — locker-service tính cờ `online` cho danh sách
+    /// tủ bằng một lần gọi thay vì gọi từng tủ.
+    @GetMapping("/internal/iot/gateways")
+    public ApiResponse<List<GatewayDeviceResponse>> listInternal() {
+        return ApiResponse.ok(provisioning.list());
+    }
+
     @GetMapping("/internal/iot/gateways/{lockerId}")
     public ApiResponse<GatewayDeviceResponse> getGatewayByLockerId(@PathVariable Long lockerId) {
         return ApiResponse.ok(provisioning.getByLockerId(lockerId));

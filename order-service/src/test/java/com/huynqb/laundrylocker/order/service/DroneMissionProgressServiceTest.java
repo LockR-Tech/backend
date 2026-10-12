@@ -22,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.util.Optional;
 
@@ -166,6 +167,33 @@ class DroneMissionProgressServiceTest {
         BusinessException error = assertThrows(BusinessException.class, () -> service.advanceByOperator(21L, 77L));
 
         assertEquals("DRONE_MISSION_NOT_ASSIGNED_TO_USER", error.getCode());
+    }
+
+    @Test
+    void advanceIsRefusedWhenTelemetryAlreadyMovedTheStage() {
+        LockerOrder order = order("STANDARD", "APPROACHING");
+        DroneMission mission = mission("APPROACHING", 99L);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.advanceByOperator(21L, 99L, "EN_ROUTE"));
+
+        assertEquals("DRONE_STAGE_CHANGED", error.getCode());
+        assertEquals(HttpStatus.CONFLICT, error.getStatus());
+        assertEquals("APPROACHING", mission.getStatus());
+        verify(missionRepository, never()).save(any());
+    }
+
+    @Test
+    void advanceWithMatchingExpectedStageMovesOneStage() {
+        LockerOrder order = order("STANDARD", "EN_ROUTE");
+        DroneMission mission = mission("EN_ROUTE", 99L);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        assertEquals("APPROACHING", service.advanceByOperator(21L, 99L, "en_route"));
+        assertEquals("APPROACHING", order.getDeliveryStage());
     }
 
     @Test

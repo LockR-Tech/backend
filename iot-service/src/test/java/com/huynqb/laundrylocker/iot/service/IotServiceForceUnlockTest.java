@@ -31,14 +31,18 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/// Mở ô khẩn cấp không được báo "đã mở" khi tủ không xác nhận; GET nhật ký không ghi DB.
+/// Mở ô khẩn cấp không được báo "đã mở" khi tủ không xác nhận; GET nhật ký không ghi DB;
+/// lý do KTV nhập đi vào nhật ký; ô kẹt chốt được báo hỏng sang locker-service.
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class IotServiceForceUnlockTest {
@@ -116,6 +120,70 @@ class IotServiceForceUnlockTest {
         assertEquals(true, result.get("accepted"));
         assertEquals("OPENED", result.get("status"));
         assertEquals("SUCCESS", savedLog().getResult());
+    }
+
+    @Test
+    void reasonAndNoteAreWrittenToTheAccessLog() {
+        ObjectNode node = JsonNodeFactory.instance.objectNode();
+        node.put("status", "SUCCESS");
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 70L)).thenReturn(CompletableFuture.completedFuture(node));
+
+        iotService.forceUnlock(new ForceUnlockRequest(7L, 70L, 3L, "Khách kẹt đồ", "Đã gọi xác nhận"));
+
+        BoxAccessLog log = savedLog();
+        assertEquals("SUCCESS", log.getResult());
+        assertEquals("Mở khẩn cấp · Lý do: Khách kẹt đồ · Ghi chú: Đã gọi xác nhận", log.getMessage());
+    }
+
+    @Test
+    void timeoutLogKeepsReasonAndFitsColumn() {
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 70L))
+                .thenReturn(CompletableFuture.failedFuture(new TimeoutException()));
+
+        iotService.forceUnlock(new ForceUnlockRequest(7L, 70L, 3L, "Lý do dài " + "x".repeat(300), null));
+
+        BoxAccessLog log = savedLog();
+        assertTrue(log.getMessage().contains("Lý do: Lý do dài"));
+        assertTrue(log.getMessage().length() <= 255);
+    }
+
+    @Test
+    void requestWithoutReasonKeepsLegacyMessage() {
+        ObjectNode node = JsonNodeFactory.instance.objectNode();
+        node.put("status", "SUCCESS");
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 70L)).thenReturn(CompletableFuture.completedFuture(node));
+
+        iotService.forceUnlock(request);
+
+        assertNull(savedLog().getMessage());
+    }
+
+    @Test
+    void jammedBoxIsReportedAsFaultToLockerService() {
+        ObjectNode node = JsonNodeFactory.instance.objectNode();
+        node.put("status", "FAILED");
+        node.put("errorCode", "JAMMED");
+        node.put("errorMessage", "Chốt ô bị kẹt");
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 70L)).thenReturn(CompletableFuture.completedFuture(node));
+
+        iotService.forceUnlock(request);
+
+        verify(lockerClient, timeout(2000)).markFault(
+                org.mockito.ArgumentMatchers.eq(70L),
+                org.mockito.ArgumentMatchers.argThat(body -> String.valueOf(body.get("reason")).contains("JAMMED")));
+    }
+
+    @Test
+    void cabinetConfigurationErrorDoesNotFaultTheBox() throws Exception {
+        ObjectNode node = JsonNodeFactory.instance.objectNode();
+        node.put("status", "FAILED");
+        node.put("errorCode", "UNKNOWN_SLOT");
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 70L)).thenReturn(CompletableFuture.completedFuture(node));
+
+        iotService.forceUnlock(request);
+
+        Thread.sleep(200);
+        verify(lockerClient, never()).markFault(anyLong(), any());
     }
 
     @Test

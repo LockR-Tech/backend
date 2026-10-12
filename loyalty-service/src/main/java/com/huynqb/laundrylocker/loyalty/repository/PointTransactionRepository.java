@@ -12,6 +12,8 @@ public interface PointTransactionRepository extends JpaRepository<PointTransacti
 
     List<PointTransaction> findByUserIdOrderByCreatedAtDesc(Long userId);
 
+    boolean existsByOrderIdAndType(Long orderId, String type);
+
     /// Tổng hợp giao dịch điểm cho thống kê admin (một lượt quét bảng). Điểm phát ra là
     /// tổng giao dịch dương; điểm đã dùng là tổng trị tuyệt đối giao dịch âm. Các mốc thời
     /// gian đã quy về múi giờ lưu trữ.

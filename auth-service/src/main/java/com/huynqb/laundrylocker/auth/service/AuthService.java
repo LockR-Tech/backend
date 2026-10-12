@@ -87,7 +87,10 @@ public class AuthService {
         account.setEmail(StringUtils.hasText(request.email()) ? request.email() : user.email());
         account.setPhoneNumber(
                 StringUtils.hasText(request.phoneNumber()) ? request.phoneNumber() : user.phoneNumber());
-        account.setPasswordHash(passwordEncoder.encode(request.password()));
+        // Đăng ký OTP không nhập mật khẩu ⇒ mật khẩu ngẫu nhiên, đánh dấu chưa đặt để app cho đặt lần đầu.
+        boolean passwordProvided = StringUtils.hasText(request.password());
+        account.setPasswordHash(passwordEncoder.encode(passwordProvided ? request.password() : UUID.randomUUID().toString()));
+        account.setPasswordSet(passwordProvided);
         return issue(authAccountRepository.save(account), user.roles());
     }
 
@@ -127,6 +130,7 @@ public class AuthService {
         account.setPhoneNumber(request.phoneNumber());
         String rawPassword = StringUtils.hasText(request.password()) ? request.password() : UUID.randomUUID().toString();
         account.setPasswordHash(passwordEncoder.encode(rawPassword));
+        account.setPasswordSet(StringUtils.hasText(request.password()));
         String status = StringUtils.hasText(request.status()) ? request.status().trim().toUpperCase(Locale.ROOT) : "ACTIVE";
         if (!ACCOUNT_STATUSES.contains(status)) {
             throw new BusinessException("AUTH_STATUS_INVALID", "Trạng thái tài khoản không hợp lệ: " + request.status());
@@ -206,6 +210,7 @@ public class AuthService {
             account.setEmail(email);
             account.setPhoneNumber(phone);
             account.setPasswordHash(passwordEncoder.encode(UUID.randomUUID().toString()));
+            account.setPasswordSet(false);
             account = authAccountRepository.save(account);
         }
 
@@ -275,6 +280,8 @@ public class AuthService {
                             info.put("provider", account.getAuthProvider());
                             info.put("emailVerified", account.getEmailVerified());
                             info.put("status", account.getStatus());
+                            // false = chưa tự đặt mật khẩu (Google/Firebase/OTP) ⇒ app cho đặt lần đầu.
+                            info.put("hasPassword", !Boolean.FALSE.equals(account.getPasswordSet()));
                             return info;
                         })
                 .toList();
@@ -356,7 +363,7 @@ public class AuthService {
                         textOrDefault(request, "firstName", "Customer"),
                         textOrDefault(request, "lastName", ""),
                         Set.of("CUSTOMER"),
-                        textOrDefault(request, "password", UUID.randomUUID().toString())));
+                        text(request, "password")));
     }
 
     @Transactional
@@ -371,7 +378,7 @@ public class AuthService {
                         textOrDefault(request, "firstName", "Khach"),
                         textOrDefault(request, "lastName", ""),
                         Set.of("CUSTOMER"),
-                        textOrDefault(request, "password", UUID.randomUUID().toString())));
+                        text(request, "password")));
     }
 
     @Transactional
@@ -416,7 +423,7 @@ public class AuthService {
                         textOrDefault(request, "firstName", "Customer"),
                         textOrDefault(request, "lastName", ""),
                         Set.of("CUSTOMER"),
-                        textOrDefault(request, "password", UUID.randomUUID().toString())));
+                        text(request, "password")));
     }
 
     @Transactional
@@ -443,22 +450,38 @@ public class AuthService {
                         .findByEmail(email)
                         .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "User not found"));
         account.setPasswordHash(passwordEncoder.encode(password));
+        account.setPasswordSet(true);
         revokeRefreshTokens(account.getId());
     }
 
+    /// Đổi mật khẩu từ app (user-service gọi, body `{currentPassword?, newPassword}`). Tài khoản đã tự đặt
+    /// mật khẩu ⇒ bắt buộc đúng mật khẩu hiện tại; tài khoản chỉ có mật khẩu ngẫu nhiên (Google/OTP) ⇒ đặt
+    /// lần đầu không cần. Thu hồi mọi refresh token (các máy khác phải đăng nhập lại) rồi cấp cặp token mới
+    /// cho máy đang đổi để app không bị đăng xuất.
     @Transactional
-    public void changePassword(Long userId, Map<String, Object> request) {
+    public AuthResponse changePassword(Long userId, Map<String, Object> request) {
         AuthAccount account =
                 authAccountRepository
                         .findByUserId(userId)
                         .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "User not found"));
-        String oldPassword = firstText(request, "oldPassword", "currentPassword");
-        if (StringUtils.hasText(oldPassword) && !passwordEncoder.matches(oldPassword, account.getPasswordHash())) {
-            throw new BusinessException("AUTH_INVALID_PASSWORD", "Current password is invalid");
-        }
         String newPassword = firstText(request, "newPassword", "password");
+        if (!StringUtils.hasText(newPassword)) {
+            throw new BusinessException("AUTH_NEW_PASSWORD_REQUIRED", "Vui lòng nhập mật khẩu mới");
+        }
+        if (!Boolean.FALSE.equals(account.getPasswordSet())) {
+            String currentPassword = firstText(request, "currentPassword", "oldPassword");
+            if (!StringUtils.hasText(currentPassword)) {
+                throw new BusinessException("AUTH_CURRENT_PASSWORD_REQUIRED", "Vui lòng nhập mật khẩu hiện tại");
+            }
+            if (!passwordEncoder.matches(currentPassword, account.getPasswordHash())) {
+                throw new BusinessException("AUTH_INVALID_PASSWORD", "Mật khẩu hiện tại không đúng");
+            }
+        }
         account.setPasswordHash(passwordEncoder.encode(newPassword));
+        account.setPasswordSet(true);
         revokeRefreshTokens(account.getId());
+        UserSummary user = userClient.getUser(account.getUserId()).data();
+        return issue(account, user.roles());
     }
 
     /// Admin khoá/mở người dùng (user-service gọi). Khoá ⇒ thu hồi mọi refresh token để phiên đang mở
@@ -555,6 +578,7 @@ public class AuthService {
         account.setEmailVerified(false);
         account.setPhoneVerified(false);
         account.setPasswordHash(passwordEncoder.encode(UUID.randomUUID().toString()));
+        account.setPasswordSet(false);
         socialIdentityRepository.deleteAll(socialIdentityRepository.findByAccountId(account.getId()));
         result.put("status", DELETED_STATUS);
         result.put("revokedTokens", revokeRefreshTokens(account.getId()));
@@ -575,6 +599,31 @@ public class AuthService {
                     "AUTH_ACCOUNT_ALREADY_DELETED", "Tài khoản đăng nhập của người dùng này đã bị xoá",
                     org.springframework.http.HttpStatus.CONFLICT);
         }
+    }
+
+    /// Đăng nhập kiosk bằng QR: khách xác nhận trên app ⇒ tài khoản đăng nhập phải còn ACTIVE.
+    @Transactional(readOnly = true)
+    public void requireActiveAccount(Long userId) {
+        boolean active = userId != null && authAccountRepository.findByUserId(userId)
+                .map(account -> "ACTIVE".equalsIgnoreCase(account.getStatus()))
+                .orElse(false);
+        if (!active) {
+            throw accountInactive();
+        }
+    }
+
+    /// Cấp token cho kiosk khi kiosk lấy kết quả phiên QR đã được khách xác nhận — cùng đường `issue`
+    /// với đăng nhập OTP tại kiosk (tài khoản không ACTIVE ⇒ AUTH_ACCOUNT_INACTIVE).
+    @Transactional
+    public KioskLoginGrant issueKioskLogin(Long userId) {
+        AuthAccount account = authAccountRepository.findByUserId(userId).orElseThrow(AuthService::accountInactive);
+        UserSummary user = userClient.getUser(account.getUserId()).data();
+        AuthResponse auth = issue(account, user.roles());
+        account.setLastLoginAt(LocalDateTime.now());
+        return new KioskLoginGrant(auth, user);
+    }
+
+    public record KioskLoginGrant(AuthResponse auth, UserSummary user) {
     }
 
     @Transactional
@@ -646,8 +695,7 @@ public class AuthService {
     private AuthResponse issue(AuthAccount account, Set<String> roles) {
         // Mọi đường cấp token (mật khẩu, OTP, Firebase, refresh) đều chặn tài khoản đã bị admin khoá.
         if (!"ACTIVE".equalsIgnoreCase(account.getStatus())) {
-            throw new BusinessException(
-                    "AUTH_ACCOUNT_INACTIVE", "Tài khoản đã bị khoá", org.springframework.http.HttpStatus.FORBIDDEN);
+            throw accountInactive();
         }
         Set<String> effectiveRoles = defaultRoles(roles);
         JwtService.TokenPair tokenPair = jwtService.issue(account.getId(), account.getUserId(), effectiveRoles);
@@ -664,6 +712,11 @@ public class AuthService {
                 "Bearer",
                 tokenPair.accessExpiresAt(),
                 effectiveRoles);
+    }
+
+    private static BusinessException accountInactive() {
+        return new BusinessException(
+                "AUTH_ACCOUNT_INACTIVE", "Tài khoản đã bị khoá", org.springframework.http.HttpStatus.FORBIDDEN);
     }
 
     private Set<String> defaultRoles(Set<String> roles) {

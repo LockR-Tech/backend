@@ -20,7 +20,10 @@ class WebSocketConfigTest {
     void sockJsEndpointLeavesCorsHeadersToGateway() {
         JwtStompPrincipalChannelInterceptor interceptor =
                 new JwtStompPrincipalChannelInterceptor("notification-test-secret-with-enough-entropy-2026", "test");
-        WebSocketConfig config = new WebSocketConfig(interceptor, new JwtHandshakePrincipalHandler(interceptor));
+        WebSocketConfig config = new WebSocketConfig(
+                interceptor,
+                new JwtHandshakePrincipalHandler(interceptor),
+                new DeliveryTopicSubscriptionInterceptor(orderId -> null));
         WebMvcStompEndpointRegistry registry = new WebMvcStompEndpointRegistry(
                 new SubProtocolWebSocketHandler(new ExecutorSubscribableChannel(), new ExecutorSubscribableChannel()),
                 new WebSocketTransportRegistration(),
