@@ -16,7 +16,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
@@ -41,11 +40,9 @@ class PaymentServiceAdminStatusTest {
     @Mock private RefundRepository refundRepository;
     @Mock private com.huynqb.laundrylocker.payment.repository.UserBankAccountRepository userBankAccountRepository;
     @Mock private RabbitTemplate rabbitTemplate;
-    @Mock private Environment environment;
     @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
     @Mock private com.huynqb.laundrylocker.payment.client.NotificationClient notificationClient;
-    @Mock private MomoService momoService;
     @Mock private SepayService sepayService;
 
     private PaymentService paymentService;
@@ -53,8 +50,8 @@ class PaymentServiceAdminStatusTest {
     @BeforeEach
     void setUp() {
         paymentService = new PaymentService(
-                repository, refundRepository, userBankAccountRepository, rabbitTemplate, environment,
-                walletService, orderClient, notificationClient, momoService, sepayService,
+                repository, refundRepository, userBankAccountRepository, rabbitTemplate,
+                walletService, orderClient, notificationClient, sepayService,
                 TestPaymentRules.defaults());
         when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }

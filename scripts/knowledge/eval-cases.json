@@ -1,7 +1,7 @@
 [
   {"question": "Làm sao để gửi hàng cho người khác qua tủ?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
   {"question": "Tôi có thể trả tiền mặt trong ứng dụng không?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
-  {"question": "Đã thanh toán MoMo mà đơn chưa cập nhật thì làm gì?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
+  {"question": "Đã chuyển khoản VietQR mà đơn chưa cập nhật thì làm gì?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
   {"question": "Người nhận lấy mã mở tủ ở đâu?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
   {"question": "Thuê ô theo giờ thì có mở lại ô nhiều lần được không?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
   {"question": "Hết giờ thuê mà đồ vẫn còn trong ô thì sao?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},

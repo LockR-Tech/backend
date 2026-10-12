@@ -18,6 +18,7 @@ public interface RefundRepository extends JpaRepository<RefundRecord, Long>, Jpa
     @org.springframework.data.jpa.repository.Query("SELECT r FROM RefundRecord r LEFT JOIN PaymentRecord p ON r.paymentId = p.id WHERE r.userId = :userId OR (r.userId IS NULL AND p.userId = :userId) ORDER BY r.requestedAt DESC")
     List<RefundRecord> findByUserIdOrderByRequestedAtDesc(@org.springframework.data.repository.query.Param("userId") Long userId);
 
+    /// VNPAY% chỉ còn ở giao dịch cũ (VNPay đã ngừng hỗ trợ) — vẫn tính để số dư rút được đúng.
     @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(r.amount), 0) FROM RefundRecord r, PaymentRecord p WHERE r.paymentId = p.id AND p.userId = :userId AND r.status = 'COMPLETED' AND (p.method LIKE 'SEPAY%' OR p.method LIKE 'VNPAY%')")
     java.math.BigDecimal sumRealRefundsByUserId(@org.springframework.data.repository.query.Param("userId") Long userId);
 }

@@ -31,7 +31,7 @@ class PaymentControllerAccessTest {
     @Test
     void directPaymentCreationIsAdminOnly() {
         CreatePaymentRequest request = new CreatePaymentRequest(
-                55L, 44L, BigDecimal.ONE, "CASH", null, null, null, null);
+                55L, 44L, BigDecimal.ONE, "CASH", null, null);
 
         BusinessException error = assertThrows(BusinessException.class, () -> controller.create(request, "CUSTOMER"));
         assertEquals("PAYMENT_CREATE_FORBIDDEN", error.getCode());

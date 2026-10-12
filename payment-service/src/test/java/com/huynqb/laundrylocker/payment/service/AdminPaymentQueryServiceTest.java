@@ -132,6 +132,29 @@ class AdminPaymentQueryServiceTest {
         assertEquals(List.of(3L), detail.orderPayments().stream().map(AdminPaymentResponse::id).toList());
     }
 
+    /// Nạp ví hiện qua SePay (SEPAY_TOPUP); VNPAY_TOPUP chỉ còn ở dữ liệu cũ — cả hai đều hiện khoản cộng ví.
+    @Test
+    void topupDetailShowsWalletCreditForCurrentAndLegacyTopups() {
+        for (String method : new String[]{"SEPAY_TOPUP", "VNPAY_TOPUP"}) {
+            PaymentRecord topup = payment(2L, 0L, method, "COMPLETED");
+            WalletTransaction credit = new WalletTransaction();
+            credit.setId(81L);
+            credit.setUserId(44L);
+            credit.setType("CREDIT");
+            credit.setSource("TOPUP");
+            credit.setReferenceId("REF-2");
+            when(paymentRepository.findById(2L)).thenReturn(Optional.of(topup));
+            when(walletTransactionRepository.findFirstBySourceAndReferenceId("TOPUP", "REF-2"))
+                    .thenReturn(Optional.of(credit));
+
+            AdminPaymentDetailResponse detail = service.paymentDetail(2L);
+
+            assertEquals("TOPUP", detail.payment().kind(), method);
+            assertEquals(1, detail.walletTransactions().size(), method);
+            assertTrue(detail.orderPayments().isEmpty(), method);
+        }
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void refundAndWalletListsResolveCustomersInOneBatch() {

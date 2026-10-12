@@ -18,6 +18,8 @@ public record SettingView(
         String max,
         String unit,
         List<String> allowedValues,
+        /// Khác rỗng ⇒ giá trị là danh sách cách nhau bởi dấu phẩy, mỗi phần tử thuộc danh sách này.
+        List<String> allowedItems,
         boolean publicValue,
         Long updatedByUserId,
         LocalDateTime updatedAt) {

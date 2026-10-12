@@ -149,6 +149,68 @@ class BusinessSettingsTest {
         assertThrows(BusinessException.class, () -> new BusinessSettings("x", List.of(broken), store, environment, clock));
     }
 
+    private static final String METHODS = "app.payment.enabled-methods";
+    private static final SettingsCatalog LIST_CATALOG = () -> List.of(
+            SettingDefinition.stringList(METHODS, "Thanh toán", "Phương thức", "", "CASH,WALLET", List.of("CASH", "WALLET", "SEPAY"))
+                    .asPublic());
+
+    private BusinessSettings listSettings() {
+        return new BusinessSettings("payment", List.of(LIST_CATALOG), store, environment, clock);
+    }
+
+    @Test
+    void itemListAcceptsOnlyAllowedItemsAndNormalizesThem() {
+        BusinessSettings list = listSettings();
+
+        list.update(Map.of(METHODS, " sepay ,cash,,SEPAY"), 1L);
+        assertEquals("SEPAY,CASH", list.getString(METHODS));
+        assertEquals("SEPAY,CASH", store.values.get(METHODS).value());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> list.update(Map.of(METHODS, "CASH,BITCOIN"), 1L));
+        assertEquals("SETTING_INVALID", ex.getCode());
+        assertEquals("SEPAY,CASH", store.values.get(METHODS).value());
+
+        list.update(Map.of(METHODS, ""), 1L);
+        assertEquals("", list.getString(METHODS));
+
+        SettingView view = list.list().get(0);
+        assertEquals(List.of("CASH", "WALLET", "SEPAY"), view.allowedItems());
+        assertEquals(List.of(), view.allowedValues());
+    }
+
+    /// Giá trị lưu từ trước khi bỏ một phần tử khỏi danh sách hỗ trợ: đọc vẫn chạy, chỉ bỏ phần tử đó.
+    @Test
+    void storedItemListDropsUnsupportedItemsOnRead() {
+        store.values.put(METHODS, new SettingsStore.StoredSetting(METHODS, "WALLET,BITCOIN,cash", 1L, LocalDateTime.now()));
+        BusinessSettings list = listSettings();
+
+        assertEquals("WALLET,CASH", list.getString(METHODS));
+        assertEquals("WALLET,CASH", list.publicValues().get(METHODS));
+        SettingView view = list.list().get(0);
+        assertEquals("WALLET,CASH", view.value());
+        assertTrue(view.overridden());
+    }
+
+    @Test
+    void storedItemListWithNothingSupportedFallsBackToDefault() {
+        store.values.put(METHODS, new SettingsStore.StoredSetting(METHODS, "BITCOIN", 1L, LocalDateTime.now()));
+        assertEquals("CASH,WALLET", listSettings().getString(METHODS));
+
+        store.values.remove(METHODS);
+        environment.setProperty(METHODS, "BITCOIN,SEPAY");
+        assertEquals("SEPAY", listSettings().getString(METHODS));
+    }
+
+    @Test
+    void itemListDefaultMustUseAllowedItems() {
+        SettingsCatalog broken = () -> List.of(
+                SettingDefinition.stringList("a", "g", "A", "", "CASH,BITCOIN", List.of("CASH")));
+        assertThrows(BusinessException.class, () -> new BusinessSettings("x", List.of(broken), store, environment, clock));
+        assertThrows(IllegalArgumentException.class,
+                () -> SettingDefinition.stringList("a", "g", "A", "", "", List.of()));
+    }
+
     private SettingView view(String key) {
         return settings.list().stream().filter(v -> v.key().equals(key)).findFirst().orElseThrow();
     }

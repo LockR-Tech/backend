@@ -17,9 +17,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /// Quy tắc nghiệp vụ admin chỉnh được (ADR-0005).
@@ -43,6 +46,8 @@ public class BusinessSettings {
 
     private volatile Map<String, SettingsStore.StoredSetting> cache = Map.of();
     private volatile Instant loadedAt = Instant.EPOCH;
+    /// Giá trị đã báo log "bỏ phần tử không hỗ trợ" — mỗi giá trị chỉ báo một lần, không lặp mỗi lần đọc.
+    private final Set<String> reportedDroppedItems = ConcurrentHashMap.newKeySet();
 
     @Autowired
     public BusinessSettings(
@@ -122,7 +127,7 @@ public class BusinessSettings {
         for (SettingDefinition definition : definitions.values()) {
             SettingsStore.StoredSetting override = stored.get(definition.key());
             String effective = effectiveValue(definition, override);
-            boolean overridden = override != null && effective.equals(safeNormalize(definition, override.value()));
+            boolean overridden = override != null && effective.equals(readStored(definition, override.value()));
             views.add(new SettingView(
                     scope,
                     definition.key(),
@@ -137,6 +142,7 @@ public class BusinessSettings {
                     definition.max(),
                     definition.unit(),
                     definition.allowedValues(),
+                    definition.allowedItems(),
                     definition.publicValue(),
                     overridden ? override.updatedByUserId() : null,
                     overridden ? override.updatedAt() : null));
@@ -218,7 +224,7 @@ public class BusinessSettings {
 
     private String effectiveValue(SettingDefinition definition, SettingsStore.StoredSetting override) {
         if (override != null) {
-            String value = safeNormalize(definition, override.value());
+            String value = readStored(definition, override.value());
             if (value != null) {
                 return value;
             }
@@ -230,7 +236,7 @@ public class BusinessSettings {
     private String defaultValue(SettingDefinition definition) {
         String fromEnvironment = environment.getProperty(definition.key());
         if (fromEnvironment != null) {
-            String value = safeNormalize(definition, fromEnvironment);
+            String value = readStored(definition, fromEnvironment);
             if (value != null) {
                 return value;
             }
@@ -278,6 +284,45 @@ public class BusinessSettings {
             return String.join(",", parts);
         }
         return String.valueOf(value);
+    }
+
+    /// Đọc giá trị đã lưu (DB/biến môi trường): sai ⇒ null để dùng mặc định. Riêng danh sách có
+    /// `allowedItems`: chỉ bỏ các phần tử nay không còn hỗ trợ, giữ phần còn lại; bỏ hết ⇒ null.
+    private String readStored(SettingDefinition definition, String raw) {
+        if (!isItemList(definition) || raw == null || raw.length() > MAX_STRING_LENGTH) {
+            return safeNormalize(definition, raw);
+        }
+        List<String> items = new ArrayList<>();
+        List<String> dropped = new ArrayList<>();
+        for (String token : splitItems(raw)) {
+            String item = matchItem(definition, token);
+            if (item == null) {
+                dropped.add(token);
+            } else if (!items.contains(item)) {
+                items.add(item);
+            }
+        }
+        if (!dropped.isEmpty() && reportedDroppedItems.add(definition.key() + "=" + raw)) {
+            log.warn("Ignoring unsupported items {} in setting {} (allowed: {})",
+                    dropped, definition.key(), definition.allowedItems());
+        }
+        if (items.isEmpty() && !dropped.isEmpty()) {
+            return null;
+        }
+        return String.join(",", items);
+    }
+
+    private static boolean isItemList(SettingDefinition definition) {
+        return definition.type() == SettingType.STRING && !definition.allowedItems().isEmpty();
+    }
+
+    private static List<String> splitItems(String raw) {
+        return Arrays.stream(raw.split(",")).map(String::trim).filter(part -> !part.isEmpty()).toList();
+    }
+
+    /// Phần tử khớp không phân biệt hoa thường, trả đúng cách viết trong `allowedItems`; không khớp ⇒ null.
+    private static String matchItem(SettingDefinition definition, String token) {
+        return definition.allowedItems().stream().filter(item -> item.equalsIgnoreCase(token)).findFirst().orElse(null);
     }
 
     private static String safeNormalize(SettingDefinition definition, String raw) {
@@ -328,6 +373,18 @@ public class BusinessSettings {
                 }
                 if (!definition.allowedValues().isEmpty() && !definition.allowedValues().contains(value)) {
                     throw invalid(definition, "must be one of " + definition.allowedValues());
+                }
+                if (isItemList(definition)) {
+                    Set<String> items = new LinkedHashSet<>();
+                    for (String token : splitItems(value)) {
+                        String item = matchItem(definition, token);
+                        if (item == null) {
+                            throw invalid(definition, "có giá trị không được hỗ trợ: " + token
+                                    + " (chỉ nhận: " + String.join(", ", definition.allowedItems()) + ")");
+                        }
+                        items.add(item);
+                    }
+                    yield String.join(",", items);
                 }
                 yield value;
             }

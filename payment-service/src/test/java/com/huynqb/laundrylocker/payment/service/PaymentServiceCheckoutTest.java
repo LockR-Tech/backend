@@ -6,8 +6,10 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.payment.client.OrderClient;
 import com.huynqb.laundrylocker.payment.dto.CheckoutRequest;
+import com.huynqb.laundrylocker.payment.dto.CreatePaymentRequest;
 import com.huynqb.laundrylocker.payment.dto.CreateTopupRequest;
 import com.huynqb.laundrylocker.payment.dto.PaymentResponse;
+import com.huynqb.laundrylocker.payment.dto.TopupResponse;
 import com.huynqb.laundrylocker.payment.model.PaymentRecord;
 import com.huynqb.laundrylocker.payment.repository.PaymentRepository;
 import com.huynqb.laundrylocker.payment.repository.RefundRepository;
@@ -20,15 +22,13 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.core.env.Environment;
+import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,11 +43,9 @@ class PaymentServiceCheckoutTest {
     @Mock private RefundRepository refundRepository;
     @Mock private com.huynqb.laundrylocker.payment.repository.UserBankAccountRepository userBankAccountRepository;
     @Mock private RabbitTemplate rabbitTemplate;
-    @Mock private Environment environment;
     @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
     @Mock private com.huynqb.laundrylocker.payment.client.NotificationClient notificationClient;
-    @Mock private MomoService momoService;
     @Mock private SepayService sepayService;
 
     private PaymentService paymentService;
@@ -59,11 +57,9 @@ class PaymentServiceCheckoutTest {
                 refundRepository,
                 userBankAccountRepository,
                 rabbitTemplate,
-                environment,
                 walletService,
                 orderClient,
                 notificationClient,
-                momoService,
                 sepayService,
                 TestPaymentRules.defaults());
     }
@@ -79,7 +75,7 @@ class PaymentServiceCheckoutTest {
         when(repository.findByOrderId(55L)).thenReturn(List.of(completed));
         when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        PaymentResponse response = paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null));
+        PaymentResponse response = paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null));
 
         assertEquals(BigDecimal.valueOf(5000), response.amount());
 
@@ -103,7 +99,7 @@ class PaymentServiceCheckoutTest {
         when(repository.findByOrderId(55L)).thenReturn(List.of(completed));
         when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null));
+        paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null));
 
         ArgumentCaptor<PaymentRecord> captor = ArgumentCaptor.forClass(PaymentRecord.class);
         verify(repository).save(captor.capture());
@@ -161,18 +157,18 @@ class PaymentServiceCheckoutTest {
 
         BusinessException error = assertThrows(
                 BusinessException.class,
-                () -> paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null)));
+                () -> paymentService.checkout(44L, new CheckoutRequest(55L, "CASH", null, null)));
 
         assertEquals("ORDER_ALREADY_PAID", error.getCode());
     }
 
     @Test
     void checkoutRejectsMethodDisabledByAdminBeforeLookingUpOrder() {
-        PaymentService service = serviceWith(Map.of("app.payment.enabled-methods", "WALLET, vnpay"));
+        PaymentService service = serviceWith(Map.of("app.payment.enabled-methods", "WALLET, sepay"));
 
         BusinessException error = assertThrows(
                 BusinessException.class,
-                () -> service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null)));
+                () -> service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null)));
 
         assertEquals("PAYMENT_METHOD_DISABLED", error.getCode());
         verify(orderClient, never()).getOrder(any());
@@ -185,7 +181,7 @@ class PaymentServiceCheckoutTest {
         when(repository.findByOrderId(55L)).thenReturn(List.of());
         when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        PaymentResponse response = service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null, null, null));
+        PaymentResponse response = service.checkout(44L, new CheckoutRequest(55L, "CASH", null, null));
 
         assertEquals("PENDING", response.status());
         verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(Object.class));
@@ -199,22 +195,80 @@ class PaymentServiceCheckoutTest {
 
         assertEquals("TOPUP_AMOUNT_OUT_OF_RANGE", assertThrows(
                 BusinessException.class,
-                () -> service.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(5_000), null, null, null)))
+                () -> service.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(5_000), null, null)))
                 .getCode());
         assertEquals("TOPUP_AMOUNT_OUT_OF_RANGE", assertThrows(
                 BusinessException.class,
-                () -> service.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(3_000_000), null, null, null)))
+                () -> service.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(3_000_000), null, null)))
                 .getCode());
         verify(repository, never()).save(any(PaymentRecord.class));
     }
 
+    /// VNPay/MoMo đã ngừng hỗ trợ: thanh toán đơn bằng hai phương thức này bị từ chối 400 trước khi tra đơn,
+    /// kể cả khi giá trị cấu hình cũ còn liệt kê chúng.
     @Test
-    void enabledMethodsIgnoreUnknownTokens() {
-        PaymentRules rules = TestPaymentRules.of(Map.of("app.payment.enabled-methods", " momo ,BITCOIN,,Cash"));
+    void checkoutRejectsRetiredMethodsBeforeLookingUpOrder() {
+        for (String method : new String[]{"VNPAY", "momo", " MoMo"}) {
+            BusinessException error = assertThrows(
+                    BusinessException.class,
+                    () -> paymentService.checkout(44L, new CheckoutRequest(55L, method, null, null)),
+                    method);
 
-        assertEquals(Set.of("MOMO", "CASH"), rules.enabledMethods());
-        assertTrue(rules.isMethodEnabled("cash"));
-        assertFalse(rules.isMethodEnabled("WALLET"));
+            assertEquals("PAYMENT_METHOD_UNSUPPORTED", error.getCode(), method);
+            assertEquals(HttpStatus.BAD_REQUEST, error.getStatus(), method);
+            assertTrue(error.getMessage().contains("không còn được hỗ trợ"), error.getMessage());
+        }
+        verify(orderClient, never()).getOrder(any());
+        verify(repository, never()).save(any(PaymentRecord.class));
+    }
+
+    @Test
+    void directPaymentCreationRejectsRetiredMethods() {
+        for (String method : new String[]{"VNPAY", "MOMO", "vnpay_topup"}) {
+            BusinessException error = assertThrows(
+                    BusinessException.class,
+                    () -> paymentService.create(new CreatePaymentRequest(55L, 44L, BigDecimal.TEN, method, null, null)),
+                    method);
+
+            assertEquals("PAYMENT_METHOD_UNSUPPORTED", error.getCode(), method);
+            assertEquals(HttpStatus.BAD_REQUEST, error.getStatus(), method);
+        }
+        verify(repository, never()).save(any(PaymentRecord.class));
+    }
+
+    @Test
+    void topupRejectsRetiredMethods() {
+        for (String method : new String[]{"VNPAY", "momo"}) {
+            BusinessException error = assertThrows(
+                    BusinessException.class,
+                    () -> paymentService.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(50_000), null, method)),
+                    method);
+
+            assertEquals("PAYMENT_METHOD_UNSUPPORTED", error.getCode(), method);
+            assertEquals(HttpStatus.BAD_REQUEST, error.getStatus(), method);
+        }
+        assertEquals("PAYMENT_METHOD_INVALID", assertThrows(
+                BusinessException.class,
+                () -> paymentService.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(50_000), null, "WALLET")))
+                .getCode());
+        verify(repository, never()).save(any(PaymentRecord.class));
+        verify(sepayService, never()).createPayment(any(), any());
+    }
+
+    /// Bỏ trống `method` ⇒ nạp qua SePay (trước đây mặc định VNPay).
+    @Test
+    void topupWithoutMethodGoesThroughSepay() {
+        when(sepayService.createPayment(any(PaymentRecord.class), any())).thenReturn("https://pay.example/sepay");
+
+        TopupResponse response = paymentService.createTopupUrl(
+                44L, new CreateTopupRequest(BigDecimal.valueOf(50_000), null, null));
+
+        assertEquals("https://pay.example/sepay", response.paymentUrl());
+        ArgumentCaptor<PaymentRecord> captor = ArgumentCaptor.forClass(PaymentRecord.class);
+        verify(repository).save(captor.capture());
+        assertEquals("SEPAY_TOPUP", captor.getValue().getMethod());
+        assertEquals(0L, captor.getValue().getOrderId());
+        assertEquals(44L, captor.getValue().getUserId());
     }
 
     @Test
@@ -278,7 +332,7 @@ class PaymentServiceCheckoutTest {
 
     private PaymentService serviceWith(Map<String, ?> overrides) {
         return new PaymentService(
-                repository, refundRepository, userBankAccountRepository, rabbitTemplate, environment,
-                walletService, orderClient, notificationClient, momoService, sepayService, TestPaymentRules.of(overrides));
+                repository, refundRepository, userBankAccountRepository, rabbitTemplate,
+                walletService, orderClient, notificationClient, sepayService, TestPaymentRules.of(overrides));
     }
 }

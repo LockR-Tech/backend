@@ -300,10 +300,8 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
                 || path.startsWith("/swagger-ui")
                 || path.equals("/swagger-ui.html")
                 || path.startsWith("/webjars")
-                || path.startsWith("/api/payments/vnpay")
-                || path.startsWith("/api/payments/momo")
+                // Cổng SePay gọi webhook / trình duyệt quay về sau thanh toán — không có JWT.
                 || path.startsWith("/api/payments/sepay")
-                || path.startsWith("/payments/vnpay/callback")
                 || path.startsWith("/payments/sepay/callback")) {
             return true;
         }

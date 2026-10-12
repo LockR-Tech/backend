@@ -111,7 +111,7 @@ class OrderPaymentEventListenerTest {
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        // Sự kiện lặp lại của lần trả đầu (VNPay return + IPN) không được lật đơn về PAID.
+        // Sự kiện lặp lại của lần trả đầu (cổng thanh toán gửi lại callback) không được lật đơn về PAID.
         listener.onPaymentEvent(paid(501L, "15000"));
         assertEquals("UNPAID", order.getPaymentStatus());
         assertEquals(0, new java.math.BigDecimal("15000").compareTo(order.getPaidAmount()));
