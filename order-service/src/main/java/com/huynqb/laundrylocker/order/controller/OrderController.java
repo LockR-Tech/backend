@@ -9,7 +9,11 @@ import com.huynqb.laundrylocker.order.model.Promotion;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
 import com.huynqb.laundrylocker.order.service.DroneDeliveryQueryService;
 import com.huynqb.laundrylocker.order.service.DroneMissionProgressService;
+import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
+import com.huynqb.laundrylocker.order.service.DroneDeliveryFailureService;
+import com.huynqb.laundrylocker.order.service.DroneOrderBookingService;
 import com.huynqb.laundrylocker.order.service.DroneParcelService;
+import com.huynqb.laundrylocker.order.service.DronePickupService;
 import com.huynqb.laundrylocker.order.service.DroneRefundService;
 import com.huynqb.laundrylocker.order.service.OrderService;
 import com.huynqb.laundrylocker.order.service.PromotionImageService;
@@ -32,6 +36,9 @@ public class OrderController {
     private final DroneMissionProgressService droneMissionProgressService;
     private final DroneRefundService droneRefundService;
     private final DroneParcelService droneParcelService;
+    private final DroneOrderBookingService droneOrderBookingService;
+    private final DronePickupService dronePickupService;
+    private final DroneDeliveryFailureService droneDeliveryFailureService;
     private final OrderService orderService;
     private final PromotionImageService promotionImageService;
     private final ReceiverOrderQueryService receiverOrderQueryService;
@@ -62,7 +69,14 @@ public class OrderController {
         return ApiResponse.ok(
                 "ORDER_CREATED",
                 "Drone delivery order created",
-                orderService.createDroneDelivery(request, userId, idempotencyKey));
+                droneOrderBookingService.create(request, userId, idempotencyKey));
+    }
+
+    /// Trước khi đặt: từ điểm lấy hàng này tới tủ nhận kia thì drone cất cánh ở tủ nào, phí bao nhiêu.
+    @PostMapping("/api/orders/drone-deliveries/quote")
+    public ApiResponse<DroneDeliveryQuoteResponse> quoteDroneDelivery(
+            @Valid @RequestBody DroneDeliveryQuoteRequest request) {
+        return ApiResponse.ok(droneOrderBookingService.quote(request));
     }
 
     @PostMapping("/api/orders/{orderId}/extend-rental")
@@ -174,6 +188,10 @@ public class OrderController {
             @RequestParam(required = false) Integer reason,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         OrderResponse canceled = orderService.cancel(orderId, reason, userId);
+        if ("DRONE_DELIVERY".equalsIgnoreCase(canceled.type())) {
+            // KTV drone đang được mời/đang tới lấy hàng không còn việc này nữa.
+            dronePickupService.closeForOrder(orderId);
+        }
         // Đơn drone đã trả tiền mà huỷ trước khi bay ⇒ tạo yêu cầu hoàn tiền. Chạy sau khi huỷ
         // đã commit; tạo được thì trả lại bản đơn mới nhất (paymentStatus = REFUND_PENDING).
         if (droneRefundService.refundCanceledOrder(orderId, userId)) {
@@ -364,29 +382,141 @@ public class OrderController {
         return ApiResponse.ok("DRONE_ORDER_CANCELED", "Drone order canceled", canceled);
     }
 
-    /// Chuyến bay không giao được hàng sau khi đã phóng: đóng đơn, nhả ô nhận, cho drone nghỉ
-    /// và tạo yêu cầu hoàn tiền (chạy sau khi việc đóng đơn đã commit).
+    /**
+     * KTV drone đang giữ đơn xác nhận đơn "giao không hoàn tất": đơn đang bị sự cố chặn mà không khắc
+     * phục được, hoặc sự cố lúc bay. Đóng đơn, nhả drone/ô nhận, báo người gửi (và người nhận), rồi tạo
+     * yêu cầu hoàn tiền sau khi việc đóng đơn đã commit.
+     */
     @PostMapping("/api/drone-technician/drone-orders/{orderId}/fail")
-    public ApiResponse<DroneMissionResponse> failDroneOrder(
+    public ApiResponse<DroneDeliveryOrderResponse> failDroneOrder(
             @PathVariable Long orderId,
-            @Valid @RequestBody CancelDroneOrderRequest request,
+            @Valid @RequestBody(required = false) DroneDeliveryFailRequest request,
             @RequestHeader("X-User-Id") Long userId) {
-        DroneMissionResponse failed =
-                droneOrderMaintenanceService.reportFlightFailure(orderId, userId, false, request);
+        droneDeliveryFailureService.fail(
+                orderId, userId, DroneDeliveryFailureService.Actor.TECHNICIAN,
+                failureReason(request), request == null ? null : request.note(), null);
         droneRefundService.refundCanceledOrder(orderId, userId);
-        return ApiResponse.ok("DRONE_FLIGHT_FAILED", "Drone flight reported as failed", failed);
+        return ApiResponse.ok(
+                "DRONE_DELIVERY_FAILED",
+                "Drone delivery closed as not completed",
+                droneDeliveryQueryService.getForTechnician(orderId, userId));
     }
 
-    /// Như trên cho admin, khi điều phối viên đã nhận nhiệm vụ không còn thao tác được.
+    /// Như trên cho admin, với bất kỳ đơn drone nào chưa vào ô nhận.
     @PostMapping("/api/admin/drone-orders/{orderId}/fail")
-    public ApiResponse<DroneMissionResponse> adminFailDroneOrder(
+    public ApiResponse<DroneDeliveryOrderResponse> adminFailDroneOrder(
             @PathVariable Long orderId,
-            @Valid @RequestBody CancelDroneOrderRequest request,
+            @Valid @RequestBody(required = false) DroneDeliveryFailRequest request,
             @RequestHeader("X-User-Id") Long userId) {
-        DroneMissionResponse failed =
-                droneOrderMaintenanceService.reportFlightFailure(orderId, userId, true, request);
+        droneDeliveryFailureService.fail(
+                orderId, userId, DroneDeliveryFailureService.Actor.ADMIN,
+                failureReason(request), request == null ? null : request.note(), null);
         droneRefundService.refundCanceledOrder(orderId, userId);
-        return ApiResponse.ok("DRONE_FLIGHT_FAILED", "Drone flight reported as failed", failed);
+        return ApiResponse.ok(
+                "DRONE_DELIVERY_FAILED",
+                "Drone delivery closed as not completed",
+                droneDeliveryQueryService.getForAdmin(orderId));
+    }
+
+    private static String failureReason(DroneDeliveryFailRequest request) {
+        if (request == null) {
+            return null;
+        }
+        if (org.springframework.util.StringUtils.hasText(request.reason())) {
+            return request.reason().trim().toUpperCase();
+        }
+        return request.reasonCode() == null ? null : DroneFailureReasons.fromLegacyCancelCode(request.reasonCode());
+    }
+
+    // ------------------------------------------------------------------ lấy hàng tận nhà
+
+    /// KTV drone xem mình đang trong ca không, vị trí gần nhất và có đang bận không.
+    @GetMapping("/api/drone-technician/drone-orders/presence")
+    public ApiResponse<DronePickupService.Presence> droneTechnicianPresence(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(dronePickupService.presence(userId));
+    }
+
+    /// KTV drone vào/ra ca và gửi vị trí — cơ sở để hệ thống mời người rảnh gần người gửi nhất.
+    @PutMapping("/api/drone-technician/drone-orders/presence")
+    public ApiResponse<DronePickupService.Presence> updateDroneTechnicianPresence(
+            @Valid @RequestBody DroneTechnicianPresenceRequest request, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "DRONE_TECHNICIAN_PRESENCE_UPDATED",
+                "Presence updated",
+                dronePickupService.updatePresence(userId, request.onDuty(), request.latitude(), request.longitude()));
+    }
+
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/pickup/accept")
+    public ApiResponse<DroneDeliveryOrderResponse> acceptDronePickup(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        dronePickupService.accept(orderId, userId);
+        return ApiResponse.ok(
+                "DRONE_PICKUP_ACCEPTED", "Pickup accepted", droneDeliveryQueryService.getForTechnician(orderId, userId));
+    }
+
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/pickup/decline")
+    public ApiResponse<Void> declineDronePickup(@PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        dronePickupService.decline(orderId, userId);
+        return ApiResponse.ok("DRONE_PICKUP_DECLINED", "Pickup declined", null);
+    }
+
+    /// KTV đã cầm kiện tại nhà người gửi (đúng mã lấy hàng, đúng kiện đã khai báo).
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/pickup/confirm")
+    public ApiResponse<DroneDeliveryOrderResponse> confirmDronePickup(
+            @PathVariable Long orderId,
+            @Valid @RequestBody DronePickupConfirmRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        dronePickupService.confirmPickedUp(orderId, userId, request.pickupCode(), request.parcelMatched(), request.note());
+        return ApiResponse.ok(
+                "DRONE_PARCEL_PICKED_UP", "Parcel picked up", droneDeliveryQueryService.getForTechnician(orderId, userId));
+    }
+
+    /// KTV tới nơi nhưng không lấy được kiện: đơn giao không hoàn tất, hoàn tiền.
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/pickup/fail")
+    public ApiResponse<DroneDeliveryOrderResponse> failDronePickup(
+            @PathVariable Long orderId,
+            @Valid @RequestBody DroneDeliveryFailRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        dronePickupService.failPickup(orderId, userId, failureReason(request), request.note());
+        droneRefundService.refundCanceledOrder(orderId, userId);
+        return ApiResponse.ok(
+                "DRONE_PICKUP_FAILED", "Pickup reported as failed", droneDeliveryQueryService.getForAdmin(orderId));
+    }
+
+    /// Drone đã gán gặp sự cố trước khi phóng: đổi sang drone rảnh khác tại tủ gửi.
+    @PostMapping("/api/drone-technician/drone-orders/{orderId}/change-drone")
+    public ApiResponse<DroneMissionResponse> changeDroneOfOrder(
+            @PathVariable Long orderId,
+            @Valid @RequestBody AcceptDroneOrderRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "DRONE_CHANGED", "Drone changed", droneOrderMaintenanceService.changeDrone(orderId, userId, request));
+    }
+
+    /// Admin xem KTV drone nào đang trong ca, rảnh và gần điểm lấy hàng để gán tay.
+    @GetMapping("/api/admin/drone-orders/{orderId}/pickup/candidates")
+    public ApiResponse<List<DroneTechnicianCandidate>> dronePickupCandidates(@PathVariable Long orderId) {
+        return ApiResponse.ok(dronePickupService.candidates(orderId));
+    }
+
+    @PostMapping("/api/admin/drone-orders/{orderId}/pickup/assign")
+    public ApiResponse<DroneDeliveryOrderResponse> assignDronePickup(
+            @PathVariable Long orderId,
+            @Valid @RequestBody AssignDronePickupRequest request,
+            @RequestHeader("X-User-Id") Long userId) {
+        dronePickupService.assignByAdmin(orderId, request.technicianId(), userId);
+        return ApiResponse.ok(
+                "DRONE_PICKUP_ASSIGNED", "Technician assigned", droneDeliveryQueryService.getForAdmin(orderId));
+    }
+
+    /// Phiếu sự cố này đang chặn hoặc đã làm hỏng những đơn drone nào — cho admin và KTV xử lý phiếu.
+    @GetMapping({
+        "/api/admin/drone-orders/by-ticket/{ticketId}",
+        "/api/drone-technician/drone-orders/by-ticket/{ticketId}",
+        "/api/locker-technician/drone-orders/by-ticket/{ticketId}"
+    })
+    public ApiResponse<List<DroneDeliveryOrderResponse>> droneOrdersByTicket(@PathVariable Long ticketId) {
+        return ApiResponse.ok(droneDeliveryQueryService.byTicket(ticketId));
     }
 
     /// Đơn STANDARD chưa có telemetry tự báo chặng: điều phối viên đã tiếp nhận xác nhận
