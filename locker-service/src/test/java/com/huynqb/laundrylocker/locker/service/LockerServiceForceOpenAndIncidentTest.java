@@ -259,10 +259,19 @@ class LockerServiceForceOpenAndIncidentTest {
 
         List<LockerResponse> lockers = service.listLockers(null);
 
-        assertTrue(lockers.get(0).online());
-        assertFalse(lockers.get(1).online());
+        assertEquals(Boolean.TRUE, lockers.get(0).online());
+        // Tủ B chưa gắn bộ điều khiển: chưa biết (null), không phải mất kết nối.
+        assertNull(lockers.get(1).online());
         verify(iotClient, times(1)).listGateways();
         verify(iotClient, never()).getGatewayByLockerId(any());
+    }
+
+    @Test
+    void lockerWithOfflineControllerIsReportedOffline() {
+        when(lockerRepository.findAll()).thenReturn(List.of(locker));
+        when(iotClient.listGateways()).thenReturn(ApiResponse.ok(List.of(gateway(LOCKER_ID, false))));
+
+        assertEquals(Boolean.FALSE, service.listLockers(null).getFirst().online());
     }
 
     @Test
@@ -273,7 +282,7 @@ class LockerServiceForceOpenAndIncidentTest {
         List<LockerResponse> lockers = service.listLockers(null);
 
         assertEquals(1, lockers.size());
-        assertFalse(lockers.getFirst().online());
+        assertNull(lockers.getFirst().online());
     }
 
     @Test

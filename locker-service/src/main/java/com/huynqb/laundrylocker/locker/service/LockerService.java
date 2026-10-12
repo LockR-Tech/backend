@@ -2817,13 +2817,14 @@ public class LockerService {
     }
 
     /// Cờ `online` của một tủ — cùng nguồn với `layout()`: bộ điều khiển gắn với tủ còn tín hiệu.
-    private boolean gatewayOnline(Long lockerId) {
+    /// `null` khi tủ chưa gắn bộ điều khiển hoặc không tra được iot-service (chưa biết, không phải mất kết nối).
+    private Boolean gatewayOnline(Long lockerId) {
         try {
             var response = iotClient.getGatewayByLockerId(lockerId);
-            return response != null && response.data() != null && response.data().online();
+            return response == null || response.data() == null ? null : response.data().online();
         } catch (Exception ex) {
             log.debug("Could not fetch gateway online status for locker {}: {}", lockerId, ex.getMessage());
-            return false;
+            return null;
         }
     }
 
@@ -2852,11 +2853,12 @@ public class LockerService {
         }
         Map<Long, Boolean> online = gatewayOnlineByLocker();
         return lockers.stream()
-                .map(locker -> toResponse(locker, technicianNames, online.getOrDefault(locker.getId(), false)))
+                // Tủ không có trong danh sách bộ điều khiển ⇒ null (chưa gắn), không phải mất kết nối.
+                .map(locker -> toResponse(locker, technicianNames, online.get(locker.getId())))
                 .toList();
     }
 
-    private LockerResponse toResponse(LockerUnit locker, Map<Long, String> technicianNames, boolean online) {
+    private LockerResponse toResponse(LockerUnit locker, Map<Long, String> technicianNames, Boolean online) {
         int totalBoxes = (int) boxRepository.countByLockerId(locker.getId());
         // Tủ đang bảo trì không nhận đơn ⇒ app không được thấy còn ô trống.
         int availableBoxes = isBookable(locker)
