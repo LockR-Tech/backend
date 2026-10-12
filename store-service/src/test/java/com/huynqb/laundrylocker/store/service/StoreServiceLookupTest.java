@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.store.service;
 
+import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.store.client.OrderClient;
 import com.huynqb.laundrylocker.store.dto.StoreResponse;
@@ -13,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.never;
@@ -43,6 +45,23 @@ class StoreServiceLookupTest {
         when(repository.findAll()).thenReturn(List.of(store(3L, "A"), store(4L, "B")));
 
         assertEquals(2, service.getMany(null).size());
+    }
+
+    @Test
+    void ratingsPassThroughOrderServiceResult() {
+        Map<String, Object> rating = Map.of("id", 1L, "rating", 5, "userName", "Khach A");
+        when(orderClient.storeRatings(3L)).thenReturn(ApiResponse.ok(List.of(rating)));
+
+        assertEquals(List.of(rating), service.ratings(3L));
+    }
+
+    @Test
+    void ratingsFallBackToEmptyListWhenOrderServiceFailsOrReturnsNoData() {
+        when(orderClient.storeRatings(3L)).thenThrow(new IllegalStateException("order-service down"));
+        when(orderClient.storeRatings(4L)).thenReturn(ApiResponse.ok(null));
+
+        assertEquals(List.of(), service.ratings(3L));
+        assertEquals(List.of(), service.ratings(4L));
     }
 
     private StoreLocation store(Long id, String name) {

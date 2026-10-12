@@ -11,8 +11,11 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
 
 import javax.crypto.SecretKey;
+import java.security.Principal;
 import java.time.Instant;
 import java.util.Date;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -87,6 +90,45 @@ class JwtStompPrincipalChannelInterceptorTest {
         Message<byte[]> subscribeMessage = stompMessage(StompCommand.SUBSCRIBE, "Authorization", null);
 
         assertSame(subscribeMessage, interceptor.preSend(subscribeMessage, null));
+    }
+
+    @Test
+    void connectPrincipalCarriesRolesFromToken() {
+        Message<?> result = interceptor.preSend(connectMessage("Authorization", tokenWithRoles(List.of("DRONE_TECHNICIAN"))), null);
+
+        StompPrincipal principal = assertInstanceOf(StompPrincipal.class, StompHeaderAccessor.wrap(result).getUser());
+        assertEquals(List.of("DRONE_TECHNICIAN"), principal.roles());
+    }
+
+    /// Luồng thật của Spring: header CONNECT còn mutable và Spring nhớ user qua callback cho cả phiên.
+    @Test
+    void connectOnMutableHeadersStoresUserForTheSession() {
+        StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
+        accessor.setNativeHeader("Authorization", "Bearer " + tokenWithRoles("ADMIN,DRONE_TECHNICIAN"));
+        AtomicReference<Principal> sessionUser = new AtomicReference<>();
+        accessor.setUserChangeCallback(sessionUser::set);
+        accessor.setLeaveMutable(true);
+        Message<byte[]> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+
+        Message<?> result = interceptor.preSend(message, null);
+
+        assertSame(message, result);
+        StompPrincipal principal = assertInstanceOf(StompPrincipal.class, sessionUser.get());
+        assertEquals(SUBJECT, principal.getName());
+        assertEquals(List.of("ADMIN", "DRONE_TECHNICIAN"), principal.roles());
+    }
+
+    private String tokenWithRoles(Object roles) {
+        SecretKey key = SecuritySecrets.hmacShaKeyFor(SECRET, "app.security.jwt.secret", "test");
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(SUBJECT)
+                .claim("tokenUse", "access")
+                .claim("roles", roles)
+                .issuedAt(Date.from(now.minusSeconds(10)))
+                .expiration(Date.from(now.plusSeconds(3600)))
+                .signWith(key)
+                .compact();
     }
 
     private String accessToken() {

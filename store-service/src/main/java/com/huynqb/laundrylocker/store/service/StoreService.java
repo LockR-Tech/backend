@@ -15,6 +15,7 @@ import com.huynqb.laundrylocker.store.model.StoreLocation;
 import com.huynqb.laundrylocker.store.repository.StoreRepository;
 import com.huynqb.laundrylocker.store.settings.StoreRules;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class StoreService {
@@ -167,11 +169,15 @@ public class StoreService {
         return updateImage(id, (String) null);
     }
 
+    /// Trang cửa hàng vẫn hiển thị được khi order-service lỗi (trả danh sách rỗng), nhưng ghi log
+    /// để lỗi không bị nuốt mất.
     @Transactional(readOnly = true)
     public List<Map<String, Object>> ratings(Long storeId) {
         try {
-            return orderClient.storeRatings(storeId).data();
+            ApiResponse<List<Map<String, Object>>> response = orderClient.storeRatings(storeId);
+            return response == null || response.data() == null ? List.of() : response.data();
         } catch (Exception ex) {
+            log.warn("Could not load ratings of store {}: {}", storeId, ex.getMessage());
             return List.of();
         }
     }

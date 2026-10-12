@@ -20,12 +20,17 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -888,6 +893,11 @@ public class OrderService {
         if (StringUtils.hasText(request.name())) {
             order.setReceiverName(request.name());
         }
+        // Lưu riêng người lấy hộ để họ thấy đơn ở GET /api/orders/delegated-to-me.
+        order.setDelegatePhone(request.phone().trim());
+        order.setDelegateName(StringUtils.hasText(request.name()) ? request.name().trim() : null);
+        order.setDelegateNote(StringUtils.hasText(request.note()) ? truncate(request.note().trim(), 500) : null);
+        order.setDelegatedAt(LocalDateTime.now());
         LockerOrder saved = orderRepository.save(order);
         addHistory(
                 saved.getId(),
@@ -909,7 +919,28 @@ public class OrderService {
         } catch (Exception ex) {
             log.warn("Could not notify delegation for order {}: {}", saved.getId(), ex.getMessage());
         }
+        notifyDelegateQuietly(saved);
         return toResponse(saved);
+    }
+
+    /// Người lấy hộ có tài khoản Lock.R ⇒ báo trong app; mã mở ô xem ở mục "Được ủy quyền".
+    private void notifyDelegateQuietly(LockerOrder order) {
+        try {
+            var delegate = userClient.getUserByPhone(order.getDelegatePhone()).data();
+            if (delegate == null || delegate.id() == null || delegate.id().equals(order.getUserId())) {
+                return;
+            }
+            notificationClient.requestNotification(new NotificationRequest(
+                    delegate.id(),
+                    "Bạn được ủy quyền lấy hộ",
+                    "Bạn được ủy quyền lấy hộ đơn " + order.getOrderCode()
+                            + ". Mở mục \"Được ủy quyền\" trong app để xem mã mở tủ.",
+                    "ORDER_DELEGATED_TO_YOU",
+                    order.getId(),
+                    "ORDER"));
+        } catch (Exception ex) {
+            log.info("Delegate of order {} not notified in-app: {}", order.getId(), ex.getMessage());
+        }
     }
 
 
@@ -1066,6 +1097,13 @@ public class OrderService {
     @Transactional(readOnly = true)
     public OrderSummary getSummary(Long id) {
         return toSummary(find(id));
+    }
+
+    @Transactional(readOnly = true)
+    public OrderParticipantsResponse participants(Long id) {
+        LockerOrder order = find(id);
+        return new OrderParticipantsResponse(
+                order.getId(), order.getUserId(), firstNonNull(order.getReceiverUserId(), order.getReceiverId()));
     }
 
     @Transactional(readOnly = true)
@@ -1521,24 +1559,6 @@ public class OrderService {
         return promotionRepository.findByStatus("ACTIVE").stream().filter(Promotion::activeNow).toList();
     }
 
-    @Transactional(readOnly = true)
-    public List<Map<String, Object>> storeRatings(Long storeId) {
-        return ratingRepository.findAll().stream()
-                .filter(rating -> find(rating.getOrderId()).getStoreId().equals(storeId))
-                .map(
-                        rating -> {
-                            Map<String, Object> result = new HashMap<>();
-                            result.put("id", rating.getId());
-                            result.put("orderId", rating.getOrderId());
-                            result.put("userId", rating.getUserId());
-                            result.put("rating", rating.getRating());
-                            result.put("comment", rating.getComment());
-                            result.put("createdAt", rating.getCreatedAt());
-                            return result;
-                        })
-                .toList();
-    }
-
     // Reservation TTL: an unconfirmed (INITIALIZED) order keeps its send cell in
     // RESERVED. If the customer never drops their items within the hold window,
     // sweep the order to CANCELED *and release the cell* — otherwise the cell
@@ -1810,9 +1830,16 @@ public class OrderService {
         if (receiveBoxId != null) {
             order.setReceiveBoxId(receiveBoxId);
         }
+        boolean justCompleted = "COMPLETED".equals(order.getStatus()) && !"COMPLETED".equalsIgnoreCase(oldStatus);
+        if (justCompleted && order.getCompletedAt() == null) {
+            order.setCompletedAt(LocalDateTime.now());
+        }
         LockerOrder saved = orderRepository.save(order);
         addHistory(saved.getId(), oldStatus, saved.getStatus(), actorId, note);
         publishStatusChanged(saved, oldStatus);
+        if (justCompleted) {
+            publishCompletedAfterCommit(saved);
+        }
         notifyStatus(saved, oldStatus);
         return toResponse(saved);
     }
@@ -2328,6 +2355,33 @@ public class OrderService {
         publish(DomainEventNames.ORDER_STATUS_CHANGED, order, payload);
     }
 
+    /// `order.completed` — mọi đường hoàn tất đơn đều đi qua transition() nên chỉ phát ở đây. Bên
+    /// nhận (loyalty cộng điểm) chống trùng theo orderId. Phát sau khi giao dịch commit để đơn bị
+    /// rollback không sinh sự kiện. Số tiền chỉ nằm ở sự kiện này, không thêm vào
+    /// order.status.changed (sự kiện đó dùng cho cập nhật realtime trên app/web).
+    private void publishCompletedAfterCommit(LockerOrder order) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderId", order.getId());
+        payload.put("orderCode", order.getOrderCode());
+        payload.put("userId", order.getUserId());
+        payload.put("type", order.getType());
+        payload.put("paidAmount", paidAmountOf(order));
+        payload.put("totalPrice", order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice());
+        payload.put("paymentStatus", order.getPaymentStatus());
+        payload.put("completedAt", order.getCompletedAt() == null ? null : order.getCompletedAt().toString());
+        Runnable send = () -> publish(DomainEventNames.ORDER_COMPLETED, order, payload);
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            send.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                send.run();
+            }
+        });
+    }
+
     private void notifyStatus(LockerOrder order, String oldStatus) {
         try {
             notificationClient.requestNotification(
@@ -2362,6 +2416,10 @@ public class OrderService {
         // 36^6 vượt quá Integer.MAX_VALUE nên phải sinh bằng long
         String randomPart = Long.toString(RANDOM.nextLong(2_176_782_336L), 36).toUpperCase();
         return "ORD-" + LocalDate.now().toString().replace("-", "") + "-" + randomPart;
+    }
+
+    private static String truncate(String value, int maxLength) {
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 
     private Long firstNonNull(Long primary, Long fallback) {
@@ -2437,15 +2495,35 @@ public class OrderService {
     @Transactional
     public OrderResponse directHandover(Long orderId, String otp) {
         LockerOrder order = find(orderId);
-        if (StringUtils.hasText(order.getPinCode()) && StringUtils.hasText(otp)) {
-            if (!order.getPinCode().trim().equalsIgnoreCase(otp.trim())) {
-                throw new BusinessException("INVALID_OTP", "Mã xác nhận bàn giao không chính xác");
-            }
-        }
+        assertHandoverVerified(order, otp);
         order.setPinCode(null);
         addHistory(order.getId(), order.getStatus(), "COMPLETED", null,
                 "KTV đã bàn giao hàng trực tiếp cho khách hàng tại Kiosk do sự cố");
         return transition(order, "COMPLETED", null, order.getReceiveBoxId(), "KTV bàn giao hàng trực tiếp cho khách tại Kiosk");
+    }
+
+    /// KTV trao hàng tận tay thay cho việc khách tự mở ô, nên phải chắc đó là người nhận: luôn đòi
+    /// mã mở ô hiện hành của đơn (PIN 6 số, hoặc mã QR trong app) do khách đọc/đưa cho KTV.
+    private void assertHandoverVerified(LockerOrder order, String otp) {
+        if (!StringUtils.hasText(otp)) {
+            throw new BusinessException(
+                    "HANDOVER_OTP_REQUIRED", "Cần mã mở tủ của khách (PIN hoặc QR) để bàn giao trực tiếp.");
+        }
+        if (!StringUtils.hasText(order.getPinCode())) {
+            throw new BusinessException(
+                    "HANDOVER_OTP_UNAVAILABLE",
+                    "Đơn không còn mã mở tủ hiệu lực nên không xác minh được người nhận.",
+                    HttpStatus.CONFLICT);
+        }
+        String code = otp.trim();
+        boolean matches = code.startsWith(QrTokenService.PREFIX)
+                ? qrTokenService.matches(code, order.getId(), order.getPinCode())
+                : MessageDigest.isEqual(
+                        code.getBytes(StandardCharsets.UTF_8),
+                        order.getPinCode().trim().getBytes(StandardCharsets.UTF_8));
+        if (!matches) {
+            throw new BusinessException("INVALID_OTP", "Mã xác nhận bàn giao không chính xác");
+        }
     }
 
     @Transactional

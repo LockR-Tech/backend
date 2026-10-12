@@ -40,6 +40,21 @@ public class LockerOrder {
     @Column(name = "receiver_email")
     private String receiverEmail;
 
+    /// Người được chủ đơn ủy quyền lấy hộ (V23). Lúc ủy quyền receiverPhone/receiverName vẫn bị
+    /// ghi đè như trước (kiosk, KTV đọc hai field đó); các cột này giữ riêng thông tin ủy quyền để
+    /// người lấy hộ thấy đơn trong app.
+    @Column(name = "delegate_phone")
+    private String delegatePhone;
+
+    @Column(name = "delegate_name")
+    private String delegateName;
+
+    @Column(name = "delegate_note", length = 500)
+    private String delegateNote;
+
+    @Column(name = "delegated_at")
+    private LocalDateTime delegatedAt;
+
     @Column(name = "locker_id")
     private Long lockerId;
 

@@ -159,6 +159,39 @@ class DroneDeliveryQueryServiceTest {
     }
 
     @Test
+    void dropReportedOrderLeavesTheActiveQueueButCanStillBeFiltered() {
+        LockerOrder active = order();
+        LockerOrder dropped = order();
+        dropped.setId(24L);
+        dropped.setDeliveryStage("DROP_REPORTED");
+        when(orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc(any(), any()))
+                .thenReturn(List.of(active, dropped));
+        DroneMission droppedMission = mission(77L);
+        droppedMission.setOrderId(24L);
+        droppedMission.setStatus("DROP_REPORTED");
+        lenient().when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission(77L)));
+        when(missionRepository.findByOrderId(24L)).thenReturn(Optional.of(droppedMission));
+
+        List<DroneDeliveryOrderResponse> queue = service.operations(null, 77L, false);
+        List<DroneDeliveryOrderResponse> incidents = service.operations("DROP_REPORTED", 77L, false);
+
+        assertEquals(List.of(21L), queue.stream().map(DroneDeliveryOrderResponse::orderId).toList());
+        assertEquals(List.of(24L), incidents.stream().map(DroneDeliveryOrderResponse::orderId).toList());
+        assertEquals("DROP_REPORTED", incidents.getFirst().deliveryStage());
+        assertEquals("DROP_REPORTED", incidents.getFirst().missionStatus());
+        assertNull(incidents.getFirst().etaMinutes());
+    }
+
+    @Test
+    void etaIsUnknownBeforeLaunch() {
+        assertNull(DroneDeliveryQueryService.etaMinutes("AWAITING_DISPATCH"));
+        assertNull(DroneDeliveryQueryService.etaMinutes("ACCEPTED"));
+        assertNull(DroneDeliveryQueryService.etaMinutes(null));
+        assertEquals(9, DroneDeliveryQueryService.etaMinutes("LAUNCHING"));
+        assertEquals(0, DroneDeliveryQueryService.etaMinutes("READY_FOR_PICKUP"));
+    }
+
+    @Test
     void adminCanFilterDroneOrdersByDroneUnit() {
         LockerOrder unassigned = order();
         unassigned.setId(22L);
