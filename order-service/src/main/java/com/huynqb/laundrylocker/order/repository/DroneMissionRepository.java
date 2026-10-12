@@ -14,6 +14,9 @@ public interface DroneMissionRepository extends JpaRepository<DroneMission, Long
 
     List<DroneMission> findByOrderIdIn(java.util.Collection<Long> orderIds);
 
+    /// KTV còn nhiệm vụ đang chạy (chờ nạp → đang bay) thì chưa rảnh để đi lấy hàng.
+    boolean existsByAssignedByUserIdAndStatusIn(Long assignedByUserId, java.util.Collection<String> statuses);
+
     /// Nhiệm vụ đang bay của một drone — telemetry chỉ biết mã drone, không biết đơn.
     Optional<DroneMission> findFirstByDroneCodeAndStatusInOrderByIdDesc(String droneCode, List<String> statuses);
 }
