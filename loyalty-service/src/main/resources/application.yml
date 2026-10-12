@@ -30,6 +30,21 @@ spring:
     create-schemas: true
     schemas: loyalty_schema
     default-schema: loyalty_schema
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        # Cộng điểm lỗi (DB tạm không truy cập được...) thì thử lại vài lần rồi bỏ message,
+        # không requeue vô hạn. Cộng trùng đã bị chặn theo orderId nên thử lại an toàn.
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 4
+          initial-interval: 2s
+          multiplier: 3
 app:
   # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005) — /api/admin/settings/loyalty.
   settings:

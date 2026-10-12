@@ -488,6 +488,25 @@ class JwtGatewayFilterTest {
         assertNull(forwarded.get().getRequest().getHeaders().getFirst("X-User-Id"));
     }
 
+    // Đăng nhập kiosk bằng QR: kiosk tạo/poll phiên không cần JWT; bước xác nhận của app khách chỉ có
+    // X-User-Id khi gửi kèm access token hợp lệ (auth-service từ chối khi thiếu header).
+    @Test
+    void kioskQrLoginIsPublicButConfirmCarriesIdentityOnlyFromToken() {
+        assertPublicGet("/api/auth/kiosk/qr-sessions/abc");
+
+        MockServerWebExchange spoofed = MockServerWebExchange.from(
+                MockServerHttpRequest.post("/api/auth/kiosk/qr-sessions/abc/confirm").header("X-User-Id", "1").build());
+        AtomicReference<ServerWebExchange> anonymous = new AtomicReference<>();
+        filter.filter(spoofed, captureExchange(anonymous)).block();
+        assertNull(anonymous.get().getRequest().getHeaders().getFirst("X-User-Id"));
+
+        MockServerWebExchange signedIn = exchangeWithBearer(
+                MockServerHttpRequest.post("/api/auth/kiosk/qr-sessions/abc/confirm"), token("access", "CUSTOMER"));
+        AtomicReference<ServerWebExchange> customer = new AtomicReference<>();
+        filter.filter(signedIn, captureExchange(customer)).block();
+        assertEquals("42", customer.get().getRequest().getHeaders().getFirst("X-User-Id"));
+    }
+
     private JwtGatewayFilter newFilter(AccountStatusChecker checker) {
         JwtGatewayFilter created = new JwtGatewayFilter(new MockEnvironment(), checker);
         ReflectionTestUtils.setField(created, "secret", SECRET);

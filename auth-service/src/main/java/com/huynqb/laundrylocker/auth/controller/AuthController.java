@@ -134,11 +134,12 @@ public class AuthController {
         return ApiResponse.ok(authService.accountsByUsers(userIds));
     }
 
+    /// user-service gọi cho `PUT /api/user/password`. Trả cặp token mới cho máy đang đổi (refresh token
+    /// cũ của mọi máy đã bị thu hồi).
     @PostMapping("/internal/auth/users/{userId}/password")
-    public ApiResponse<Void> changePassword(
+    public ApiResponse<AuthResponse> changePassword(
             @PathVariable Long userId, @RequestBody Map<String, Object> request) {
-        authService.changePassword(userId, request);
-        return ApiResponse.ok("PASSWORD_CHANGED", "Password changed");
+        return ApiResponse.ok("PASSWORD_CHANGED", "Password changed", authService.changePassword(userId, request));
     }
 
     /// Admin khoá/mở người dùng (user-service gọi). INACTIVE ⇒ không đăng nhập/làm mới token được nữa.

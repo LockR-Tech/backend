@@ -18,6 +18,7 @@ public class LoyaltySettingsCatalog implements SettingsCatalog {
     public static final String STAMPS_PER_REWARD = "app.loyalty.stamps-per-reward";
     public static final String POINTS_REWARD_COST = "app.loyalty.points-reward-cost";
     public static final String STAMP_INCREMENT = "app.loyalty.stamp-increment";
+    public static final String VND_PER_POINT = "app.loyalty.vnd-per-point";
 
     private static final String LOYALTY = "Hạng thành viên & phần thưởng";
 
@@ -37,6 +38,10 @@ public class LoyaltySettingsCatalog implements SettingsCatalog {
                 integer(POINTS_REWARD_COST, LOYALTY, "Số điểm đổi một phần thưởng",
                         "Số điểm bị trừ khi đổi phần thưởng điểm.", 1000, 1, 10_000_000, "điểm").asPublic(),
                 integer(STAMP_INCREMENT, LOYALTY, "Số tem cộng mỗi lần",
-                        "Số tem cộng cho khách khi lệnh cộng tem không ghi rõ số lượng.", 1, 1, 10, "tem"));
+                        "Số tem cộng cho khách khi lệnh cộng tem không ghi rõ số lượng.", 1, 1, 10, "tem"),
+                integer(VND_PER_POINT, LOYALTY, "Số tiền cho 1 điểm thưởng",
+                        "Đơn hoàn tất được cộng 1 điểm cho mỗi khoản tiền này khách đã thanh toán, làm tròn xuống. "
+                                + "Đơn 0đ hoặc bị huỷ không được cộng điểm.",
+                        1000, 1, 10_000_000, "đ").asPublic());
     }
 }
