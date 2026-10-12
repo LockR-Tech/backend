@@ -23,6 +23,9 @@ public class RefundRecord {
     @Column(name = "order_id", nullable = false)
     private Long orderId;
 
+    @Column(name = "user_id")
+    private Long userId;
+
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal amount;
 
@@ -52,6 +55,12 @@ public class RefundRecord {
 
     @Column(name = "bank_transfer_ref", length = 100)
     private String bankTransferRef;
+
+    @Column(name = "proof_image_url", columnDefinition = "TEXT")
+    private String proofImageUrl;
+
+    @Column(name = "customer_attachment_url", columnDefinition = "TEXT")
+    private String customerAttachmentUrl;
 
     @Column(name = "processed_by_user_id")
     private Long processedByUserId;

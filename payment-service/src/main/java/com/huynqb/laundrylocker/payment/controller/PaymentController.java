@@ -170,6 +170,11 @@ public class PaymentController {
         return ApiResponse.ok(paymentService.refundsByOrder(orderId));
     }
 
+    @GetMapping("/api/payments/my-refunds")
+    public ApiResponse<List<RefundResponse>> myRefunds(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(paymentService.myRefunds(userId));
+    }
+
     @GetMapping("/api/payments/refund/{refundId}")
     public ApiResponse<RefundResponse> refundStatus(@PathVariable Long refundId) {
         return ApiResponse.ok(paymentService.getRefund(refundId));

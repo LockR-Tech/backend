@@ -18,6 +18,8 @@ public record AdminRefundResponse(
         String accountHolderName,
         String rejectionReason,
         String bankTransferRef,
+        String proofImageUrl,
+        String customerAttachmentUrl,
         Long processedByUserId,
         LocalDateTime requestedAt,
         LocalDateTime processedAt,

@@ -566,8 +566,10 @@ public class PaymentService {
         RefundRecord refund = new RefundRecord();
         refund.setPaymentId(payment.getId());
         refund.setOrderId(payment.getOrderId());
+        refund.setUserId(userId != null ? userId : payment.getUserId());
         refund.setAmount(refundAmount);
         refund.setReason(request.reason());
+        refund.setCustomerAttachmentUrl(request.customerAttachmentUrl());
         refund.setStatus("PENDING");
         refund.setBankName(bankName);
         refund.setBankCode(bankCode);
@@ -603,6 +605,9 @@ public class PaymentService {
         refund.setProcessedAt(LocalDateTime.now());
         if (request != null && StringUtils.hasText(request.bankTransferRef())) {
             refund.setBankTransferRef(request.bankTransferRef().trim());
+        }
+        if (request != null && StringUtils.hasText(request.proofImageUrl())) {
+            refund.setProofImageUrl(request.proofImageUrl().trim());
         }
         RefundRecord saved = refundRepository.save(refund);
 
@@ -720,6 +725,7 @@ public class PaymentService {
             RefundRecord refund = new RefundRecord();
             refund.setPaymentId(payment.getId());
             refund.setOrderId(payment.getOrderId());
+            refund.setUserId(payment.getUserId());
             refund.setAmount(payment.getAmount());
             refund.setReason(reason);
             refund.setProcessedByUserId(processedByUserId);
@@ -813,11 +819,22 @@ public class PaymentService {
                 payment.getUpdatedAt());
     }
 
+    @Transactional(readOnly = true)
+    public List<RefundResponse> myRefunds(Long userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        return refundRepository.findByUserIdOrderByRequestedAtDesc(userId).stream()
+                .map(this::toRefund)
+                .toList();
+    }
+
     private RefundResponse toRefund(RefundRecord refund) {
         return new RefundResponse(
                 refund.getId(),
                 refund.getPaymentId(),
                 refund.getOrderId(),
+                refund.getUserId(),
                 refund.getAmount(),
                 refund.getStatus(),
                 refund.getReason(),
@@ -828,6 +845,8 @@ public class PaymentService {
                 refund.getAccountHolderName(),
                 refund.getRejectionReason(),
                 refund.getBankTransferRef(),
+                refund.getProofImageUrl(),
+                refund.getCustomerAttachmentUrl(),
                 refund.getProcessedByUserId(),
                 refund.getRequestedAt(),
                 refund.getProcessedAt());
