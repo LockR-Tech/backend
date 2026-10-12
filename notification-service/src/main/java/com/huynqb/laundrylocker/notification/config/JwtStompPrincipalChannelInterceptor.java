@@ -14,10 +14,13 @@ import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageBuilder;
+import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.security.Principal;
+import java.util.Arrays;
+import java.util.List;
 
 @Component
 public class JwtStompPrincipalChannelInterceptor implements ChannelInterceptor {
@@ -42,6 +45,16 @@ public class JwtStompPrincipalChannelInterceptor implements ChannelInterceptor {
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
+        // Header còn mutable (luồng thật của Spring) thì đặt user ngay trên accessor gốc: Spring
+        // nhớ user đó cho cả phiên, nên các frame SUBSCRIBE sau mang đúng người dùng — cần cho việc
+        // kiểm quyền topic. Bản bọc lại (wrap) chỉ đổi header của riêng frame CONNECT.
+        StompHeaderAccessor mutable = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
+        if (mutable != null && mutable.isMutable()) {
+            if (StompCommand.CONNECT.equals(mutable.getCommand())) {
+                mutable.setUser(authenticate(mutable));
+            }
+            return message;
+        }
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(message);
         if (!StompCommand.CONNECT.equals(accessor.getCommand())) {
             return message;
@@ -65,7 +78,19 @@ public class JwtStompPrincipalChannelInterceptor implements ChannelInterceptor {
         if (subject == null || subject.isBlank()) {
             throw new MessagingException("STOMP bearer token must include a subject");
         }
-        return () -> subject;
+        return new StompPrincipal(subject, roles(claims));
+    }
+
+    /// Claim `roles` dạng mảng hoặc chuỗi "A,B" — cùng cách đọc với gateway.
+    private static List<String> roles(Claims claims) {
+        Object value = claims.get("roles");
+        if (value instanceof List<?> list) {
+            return list.stream().filter(String.class::isInstance).map(String.class::cast).toList();
+        }
+        if (value instanceof String roles && !roles.isBlank()) {
+            return Arrays.stream(roles.split(",")).map(String::trim).filter(role -> !role.isBlank()).toList();
+        }
+        return List.of();
     }
 
     private Principal authenticate(StompHeaderAccessor accessor) {
