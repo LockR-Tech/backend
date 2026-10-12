@@ -43,7 +43,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -73,9 +75,11 @@ class AuthServiceDeleteAccountTest {
 
     @BeforeEach
     void setUp() {
-        service = new AuthService(
+        service = spy(new AuthService(
                 authAccountRepository, refreshTokenRepository, socialIdentityRepository, passwordEncoder,
-                jwtService, userClient, emailOtpService, TestAuthRules.defaults());
+                jwtService, userClient, emailOtpService, TestAuthRules.defaults()));
+        // Không gọi Firebase thật: coi idToken trong test chính là số điện thoại đã xác minh.
+        doAnswer(inv -> inv.getArgument(0)).when(service).verifiedFirebasePhone(anyString());
 
         account = new AuthAccount();
         account.setId(1L);
@@ -178,7 +182,7 @@ class AuthServiceDeleteAccountTest {
         when(emailOtpService.verifyOtp(EMAIL, "EMAIL_LOGIN", "123456")).thenReturn(true);
 
         Map<String, Object> byEmail = service.verifyEmailOtp(Map.of("email", EMAIL, "otp", "123456"));
-        Map<String, Object> byPhone = service.phoneLogin(Map.of("phoneNumber", PHONE));
+        Map<String, Object> byPhone = service.phoneLogin(Map.of("idToken", PHONE));
 
         assertEquals(true, byEmail.get("isNewUser"));
         assertEquals(true, byPhone.get("isNewUser"));
