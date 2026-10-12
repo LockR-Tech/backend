@@ -78,6 +78,33 @@ public class OrderRules {
         return settings.getInt(DRONE_DISPATCH_TIMEOUT_MINUTES);
     }
 
+    public int dronePickupOfferSeconds() {
+        return settings.getInt(DRONE_PICKUP_OFFER_SECONDS);
+    }
+
+    /// 0 = KTV đã nhận việc không bị thu hồi dù chưa tới lấy.
+    public int dronePickupTimeoutMinutes() {
+        return settings.getInt(DRONE_PICKUP_TIMEOUT_MINUTES);
+    }
+
+    /// 0 = không đánh dấu sự cố khi đã lấy hàng mà chậm phóng.
+    public int droneLaunchTimeoutMinutes() {
+        return settings.getInt(DRONE_LAUNCH_TIMEOUT_MINUTES);
+    }
+
+    /// 0 = đơn đang gặp sự cố chỉ đóng khi điều phối/admin xác nhận.
+    public int droneBlockedTimeoutMinutes() {
+        return settings.getInt(DRONE_BLOCKED_TIMEOUT_MINUTES);
+    }
+
+    public int droneMaxPickupMeters() {
+        return settings.getInt(DRONE_MAX_PICKUP_METERS);
+    }
+
+    public int droneTechnicianLocationMaxAgeMinutes() {
+        return settings.getInt(DRONE_TECHNICIAN_LOCATION_MAX_AGE_MINUTES);
+    }
+
     /// 0 = không tự huỷ đơn drone nợ phụ thu cân lệch.
     public int droneSurchargeTimeoutMinutes() {
         return settings.getInt(DRONE_SURCHARGE_TIMEOUT_MINUTES);

@@ -31,6 +31,13 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_UNPAID_CANCEL_MINUTES = "app.order.drone-unpaid-cancel-minutes";
     public static final String DRONE_DISPATCH_TIMEOUT_MINUTES = "app.order.drone-dispatch-timeout-minutes";
     public static final String DRONE_SURCHARGE_TIMEOUT_MINUTES = "app.order.drone-surcharge-timeout-minutes";
+    public static final String DRONE_PICKUP_OFFER_SECONDS = "app.order.drone-pickup-offer-seconds";
+    public static final String DRONE_PICKUP_TIMEOUT_MINUTES = "app.order.drone-pickup-timeout-minutes";
+    public static final String DRONE_LAUNCH_TIMEOUT_MINUTES = "app.order.drone-launch-timeout-minutes";
+    public static final String DRONE_BLOCKED_TIMEOUT_MINUTES = "app.order.drone-blocked-timeout-minutes";
+    public static final String DRONE_MAX_PICKUP_METERS = "app.order.drone-max-pickup-meters";
+    public static final String DRONE_TECHNICIAN_LOCATION_MAX_AGE_MINUTES =
+            "app.order.drone-technician-location-max-age-minutes";
     public static final String DRONE_FLIGHTS_SUSPENDED = "app.order.drone-flights-suspended";
     public static final String DRONE_FLIGHT_START_HOUR = "app.order.drone-flight-start-hour";
     public static final String DRONE_FLIGHT_END_HOUR = "app.order.drone-flight-end-hour";
@@ -114,11 +121,26 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(AUTO_CANCEL_HOURS, DEADLINES, "Tự huỷ đơn chưa bỏ hàng sau",
                         "Đơn INITIALIZED không xác nhận bỏ hàng sẽ bị huỷ và nhả ô. Nên ≤ thời gian giữ ô RESERVED bên locker.", 24, 1, 720, "giờ"),
                 integer(DRONE_UNPAID_CANCEL_MINUTES, DEADLINES, "Tự huỷ đơn drone chưa thanh toán sau",
-                        "Đơn drone chưa trả tiền giữ ô ở cả tủ gửi lẫn tủ nhận; quá thời gian này thì huỷ và nhả ô. "
+                        "Đơn drone chưa trả tiền vẫn giữ ô ở tủ nhận; quá thời gian này thì huỷ và nhả ô. "
                                 + "0 = không tự huỷ.", 30, 0, 10_080, "phút").asPublic(),
-                integer(DRONE_DISPATCH_TIMEOUT_MINUTES, DEADLINES, "Tự huỷ đơn drone đã trả tiền mà chưa được tiếp nhận sau",
-                        "Tính từ lúc người gửi bỏ kiện vào ô gửi (chưa bỏ kiện thì từ lúc thanh toán). Đơn bị huỷ và "
-                                + "tạo yêu cầu hoàn tiền. 0 = không tự huỷ.", 120, 0, 10_080, "phút").asPublic(),
+                integer(DRONE_DISPATCH_TIMEOUT_MINUTES, DEADLINES, "Tự đóng đơn drone đã trả tiền mà không có KTV nhận lấy hàng sau",
+                        "Tính từ lúc thanh toán: không kỹ thuật viên drone nào nhận lấy hàng thì đơn kết thúc "
+                                + "\"giao không hoàn tất\" và được hoàn tiền. 0 = không tự đóng.",
+                        120, 0, 10_080, "phút").asPublic(),
+                integer(DRONE_PICKUP_OFFER_SECONDS, DEADLINES, "Thời gian KTV drone trả lời lời mời lấy hàng",
+                        "Quá thời gian này mà KTV chưa nhận thì hệ thống mời người rảnh gần kế tiếp.",
+                        180, 30, 3600, "giây").asPublic(),
+                integer(DRONE_PICKUP_TIMEOUT_MINUTES, DEADLINES, "Hạn KTV drone tới lấy hàng sau khi nhận việc",
+                        "Quá hạn mà chưa xác nhận đã lấy hàng thì việc được chuyển cho KTV khác. 0 = không giới hạn.",
+                        60, 0, 1440, "phút"),
+                integer(DRONE_LAUNCH_TIMEOUT_MINUTES, DEADLINES, "Hạn phóng drone sau khi đã lấy hàng",
+                        "Quá hạn mà drone chưa cất cánh thì đơn bị đánh dấu đang gặp sự cố để điều phối và admin xử lý. "
+                                + "0 = không giới hạn.", 120, 0, 1440, "phút"),
+                integer(DRONE_BLOCKED_TIMEOUT_MINUTES, DEADLINES, "Tự đóng đơn drone đang gặp sự cố sau",
+                        "Đơn đã thanh toán nhưng không phục vụ được (phiếu sự cố drone/tủ/bãi đáp, tạm dừng bay). "
+                                + "Quá thời gian này mà chưa hết sự cố và chưa ai xử lý thì đơn kết thúc "
+                                + "\"giao không hoàn tất\" và được hoàn tiền. 0 = chỉ đóng khi có người xác nhận.",
+                        30, 0, 10_080, "phút").asPublic(),
                 integer(DRONE_SURCHARGE_TIMEOUT_MINUTES, DEADLINES, "Tự huỷ đơn drone nợ phụ thu cân lệch sau",
                         "Tính từ lúc nạp hàng. Quá hạn thì huỷ, nhả drone, hoàn phần đã trả và trả kiện cho người gửi. "
                                 + "0 = không tự huỷ.", 60, 0, 10_080, "phút").asPublic(),
@@ -196,7 +218,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Mỗi nấc vượt khối lượng cơ bản cộng một lần phụ phí.", 250, 1, 100_000, "gram").asPublic(),
                 integerList(DRONE_WEIGHT_OPTIONS, DRONE, "Các mức khối lượng khách chọn khi đặt drone",
                         "Danh sách gram hiển thị trên app, phân tách bằng dấu phẩy. Mức vượt tải tối đa bị ẩn.",
-                        "500,750,1000,1500,2000,3000", 1, 100_000, "gram").asPublic(),
+                        "500,1000,2000,3000,4000,5000", 1, 100_000, "gram").asPublic(),
                 integer(DRONE_WEIGHT_TOLERANCE, DRONE, "Sai số cân cho phép khi nạp hàng drone",
                         "Cân thực tế vượt khối lượng khai báo không quá mức này thì không thu thêm.",
                         50, 0, 10_000, "gram").asPublic(),
@@ -210,6 +232,12 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_MAX_ROUTE_METERS, DRONE, "Tầm bay tối đa giữa hai tủ",
                         "Khoảng cách đường chim bay tủ gửi → tủ nhận vượt mức này thì không đặt được đơn. "
                                 + "0 = không giới hạn.", 5000, 0, 100_000, "mét").asPublic(),
+                integer(DRONE_MAX_PICKUP_METERS, DRONE, "Bán kính lấy hàng tận nhà",
+                        "Điểm lấy hàng phải cách một tủ có bãi đáp không quá mức này (đường chim bay).",
+                        5000, 100, 100_000, "mét").asPublic(),
+                integer(DRONE_TECHNICIAN_LOCATION_MAX_AGE_MINUTES, DRONE, "Vị trí KTV drone còn hiệu lực trong",
+                        "KTV đang trong ca nhưng app không gửi vị trí quá thời gian này thì không được mời lấy hàng.",
+                        10, 1, 720, "phút"),
                 integer(DRONE_MAX_OPEN_ORDERS, DRONE, "Số đơn drone đang mở tối đa mỗi khách",
                         "Mỗi đơn drone chưa giao xong giữ ô ở hai tủ. 0 = không giới hạn.", 3, 0, 100, "đơn").asPublic(),
                 integer(DRONE_MAX_PARCEL_LENGTH, DRONE, "Chiều dài kiện tối đa", "Theo khoang hàng của drone.",

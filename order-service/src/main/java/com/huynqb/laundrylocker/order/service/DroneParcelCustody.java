@@ -33,7 +33,7 @@ public final class DroneParcelCustody {
     }
 
     public static String heldAt(LockerOrder order, DroneMission mission) {
-        return loaded(mission) ? FLIGHT_TEAM : SOURCE_BOX;
+        return inSourceBox(order, mission) ? SOURCE_BOX : FLIGHT_TEAM;
     }
 
     private static boolean loaded(DroneMission mission) {
