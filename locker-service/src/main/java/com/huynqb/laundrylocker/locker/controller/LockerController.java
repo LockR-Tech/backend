@@ -987,6 +987,14 @@ public class LockerController {
                 lockerService.assignLockerTechnician(id, request.technicianId()));
     }
 
+    @PutMapping("/api/admin/lockers/{id}/location")
+    public ApiResponse<LockerResponse> adminUpdateLocation(
+            @PathVariable Long id, @RequestBody LockerLocationRequest request) {
+        return ApiResponse.ok(
+                "LOCKER_LOCATION_UPDATED", "Locker location updated",
+                lockerService.updateLockerLocation(id, request));
+    }
+
     @PutMapping("/api/admin/lockers/{id}")
     public ApiResponse<LockerResponse> adminUpdate(@PathVariable Long id, @Valid @RequestBody LockerRequest request) {
         return ApiResponse.ok("LOCKER_UPDATED", "Locker updated", lockerService.updateLocker(id, request));
