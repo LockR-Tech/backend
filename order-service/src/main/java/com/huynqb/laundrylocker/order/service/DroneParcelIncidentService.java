@@ -28,6 +28,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -209,29 +210,35 @@ public class DroneParcelIncidentService {
         }
         DroneTelemetryFrame frame = telemetryRegistry.latest(mission.getDroneCode()).orElse(null);
         boolean telemetryLive = telemetryRegistry.isLive(mission.getDroneCode());
+        // Số đo bay luôn đi kèm, kể cả khi chưa cấu hình luồng camera: KTV vẫn cần pin, chế độ bay
+        // và toạ độ để quyết định báo rơi kiện. Giữ quy ước cũ: -1 / "UNKNOWN" / 0 / "" khi thiếu.
+        Map<String, Object> result = new HashMap<>();
+        result.put("droneCode", mission.getDroneCode());
+        result.put("journeyStatus", String.valueOf(order.getDeliveryStage()));
+        result.put("telemetryLive", telemetryLive);
+        result.put("telemetryAvailable", frame != null);
+        result.put("batteryPercent", frame == null || frame.batteryPercent() == null ? -1 : frame.batteryPercent());
+        result.put("flightMode", frame == null || frame.flight() == null || frame.flight().mode() == null
+                ? "UNKNOWN" : frame.flight().mode());
+        result.put("latitude", frame == null || frame.lat() == null ? 0D : frame.lat());
+        result.put("longitude", frame == null || frame.lng() == null ? 0D : frame.lng());
+        result.put("observedAt", frame == null || frame.observedAt() == null ? "" : frame.observedAt());
+        result.put("gpsFix", frame != null && frame.hasPosition());
+        result.put("gpsFixType", frame == null || frame.gps() == null ? null : frame.gps().fixType());
+        result.put("satellites", frame == null || frame.gps() == null ? null : frame.gps().satellites());
+        result.put("altitudeM", frame == null || frame.position() == null ? null : frame.position().relativeAltM());
+        result.put("headingDeg", frame == null ? null : frame.headingDeg());
+        result.put("groundSpeedMs", frame == null ? null : frame.groundSpeedMs());
         if (!StringUtils.hasText(cameraStreamUrlTemplate)) {
-            return Map.of(
-                    "status", "UNAVAILABLE",
-                    "integrationAvailable", false,
-                    "droneCode", mission.getDroneCode(),
-                    "journeyStatus", String.valueOf(order.getDeliveryStage()),
-                    "telemetryLive", telemetryLive);
+            result.put("status", "UNAVAILABLE");
+            result.put("integrationAvailable", false);
+            return result;
         }
-        String streamUrl = cameraStreamUrlTemplate.replace("{droneCode}", mission.getDroneCode());
-        return Map.ofEntries(
-                Map.entry("status", "CONNECTING"),
-                Map.entry("integrationAvailable", true),
-                Map.entry("streamType", "HLS"),
-                Map.entry("streamUrl", streamUrl),
-                Map.entry("droneCode", mission.getDroneCode()),
-                Map.entry("journeyStatus", String.valueOf(order.getDeliveryStage())),
-                Map.entry("telemetryLive", telemetryLive),
-                Map.entry("batteryPercent", frame == null || frame.batteryPercent() == null ? -1 : frame.batteryPercent()),
-                Map.entry("flightMode", frame == null || frame.flight() == null || frame.flight().mode() == null
-                        ? "UNKNOWN" : frame.flight().mode()),
-                Map.entry("latitude", frame == null || frame.lat() == null ? 0D : frame.lat()),
-                Map.entry("longitude", frame == null || frame.lng() == null ? 0D : frame.lng()),
-                Map.entry("observedAt", frame == null || frame.observedAt() == null ? "" : frame.observedAt()));
+        result.put("status", "CONNECTING");
+        result.put("integrationAvailable", true);
+        result.put("streamType", "HLS");
+        result.put("streamUrl", cameraStreamUrlTemplate.replace("{droneCode}", mission.getDroneCode()));
+        return result;
     }
 
     @Transactional(readOnly = true)
@@ -255,6 +262,32 @@ public class DroneParcelIncidentService {
                     .toList();
         }
         return incidents.stream().map(this::toResponse).toList();
+    }
+
+    /// Danh sách sự cố cho app KTV drone: sự cố mình báo, mình được giao thu hồi, hoặc xảy ra trên
+    /// chuyến bay mình đã tiếp nhận (kể cả khi admin báo thay). Chỉ vai trò DRONE_TECHNICIAN.
+    @Transactional(readOnly = true)
+    public List<DroneParcelIncidentResponse> listForDroneTechnician(Long actorUserId, String roles) {
+        requireDroneTechnician(roles);
+        return incidentRepository.findVisibleToDroneTechnician(actorUserId).stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public DroneParcelIncidentResponse getForDroneTechnician(Long incidentId, Long actorUserId, String roles) {
+        requireDroneTechnician(roles);
+        DroneParcelIncident incident = find(incidentId);
+        boolean involved = actorUserId.equals(incident.getReportedByUserId())
+                || actorUserId.equals(incident.getRecoveryAssignedToUserId())
+                || (incident.getMissionId() != null && missionRepository.findById(incident.getMissionId())
+                        .map(mission -> actorUserId.equals(mission.getAssignedByUserId()))
+                        .orElse(false));
+        if (!involved) {
+            throw new BusinessException(
+                    "INCIDENT_FORBIDDEN", "Sự cố này không thuộc chuyến bay của bạn", HttpStatus.FORBIDDEN);
+        }
+        return toResponse(incident);
     }
 
     @Transactional(readOnly = true)
@@ -613,7 +646,10 @@ public class DroneParcelIncidentService {
                 incident.getCreatedAt(), incident.getUpdatedAt(), evidence, timeline, proposals,
                 order != null && Boolean.TRUE.equals(order.getIncidentCompensationEnabled())
                         ? suggestedCompensation(order)
-                        : null);
+                        : null,
+                order != null && Boolean.TRUE.equals(order.getIncidentDisputeAllowed()),
+                order == null ? null : order.getStatus(),
+                order == null ? null : order.getDeliveryStage());
     }
 
     private void requestCompensation(DroneParcelIncident incident, LockerOrder order,
@@ -749,6 +785,13 @@ public class DroneParcelIncidentService {
     private static void requireAdmin(String roles) {
         if (!UserRoles.isAdmin(roles)) {
             throw new BusinessException("ADMIN_REQUIRED", "Admin role is required", HttpStatus.FORBIDDEN);
+        }
+    }
+
+    private static void requireDroneTechnician(String roles) {
+        if (!UserRoles.parse(roles).contains("DRONE_TECHNICIAN")) {
+            throw new BusinessException(
+                    "DRONE_TECHNICIAN_REQUIRED", "Chỉ KTV drone dùng được chức năng này", HttpStatus.FORBIDDEN);
         }
     }
 

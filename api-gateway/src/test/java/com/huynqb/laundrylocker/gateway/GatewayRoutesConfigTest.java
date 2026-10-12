@@ -35,6 +35,24 @@ class GatewayRoutesConfigTest {
         assertRoutedTo("/api/admin/dashboard/peak-hours", "lb://order-service");
     }
 
+    /// /api/drone-technician/** mặc định về locker-service; các đường của order-service phải đứng
+    /// trước để gateway (khớp route đầu tiên) đưa đúng chỗ.
+    @Test
+    void droneTechnicianOrderPathsRouteToOrderServiceFirst() {
+        assertFirstRoutedTo("/api/drone-technician/drone-orders/21/advance", "lb://order-service");
+        assertFirstRoutedTo("/api/drone-technician/drone-incidents", "lb://order-service");
+        assertFirstRoutedTo("/api/drone-technician/drone-incidents/7", "lb://order-service");
+        assertFirstRoutedTo("/api/drone-technician/drones", "lb://locker-service");
+        assertFirstRoutedTo("/api/orders/incoming", "lb://order-service");
+        assertFirstRoutedTo("/api/orders/delegated-to-me", "lb://order-service");
+    }
+
+    private void assertFirstRoutedTo(String path, String expectedUri) {
+        List<String> uris = matchingRouteUris(path);
+        assertTrue(!uris.isEmpty(), path + " must match a route");
+        assertEquals(expectedUri, uris.get(0), path);
+    }
+
     private void assertRoutedTo(String path, String expectedUri) {
         List<String> uris = matchingRouteUris(path);
         assertEquals(1, uris.size(), path + " must match exactly one route but matched " + uris);

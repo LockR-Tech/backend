@@ -8,6 +8,8 @@ import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.DroneIncidentCustomerResponseRequest;
 import com.huynqb.laundrylocker.order.dto.DroneIncidentProposalRequest;
+import com.huynqb.laundrylocker.order.dto.DroneParcelIncidentResponse;
+import com.huynqb.laundrylocker.order.dto.DroneTelemetryFrame;
 import com.huynqb.laundrylocker.order.dto.DroneRecoverySubmitRequest;
 import com.huynqb.laundrylocker.order.dto.DroneRecoveryUpdateRequest;
 import com.huynqb.laundrylocker.order.dto.ReturnFlightUpdateRequest;
@@ -177,6 +179,95 @@ class DroneParcelIncidentServiceTest {
         assertEquals("UNAVAILABLE", camera.get("status"));
         assertEquals(false, camera.get("integrationAvailable"));
         assertFalse(camera.containsKey("streamUrl"));
+    }
+
+    @Test
+    void cameraWithoutStreamStillCarriesLatestTelemetry() {
+        LockerOrder order = policyOrder();
+        order.setType("DRONE_DELIVERY");
+        order.setDeliveryStage("EN_ROUTE");
+        DroneMission mission = new DroneMission();
+        mission.setOrderId(21L);
+        mission.setDroneCode("DRONE-09");
+        mission.setAssignedByUserId(99L);
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(telemetryRegistry.latest("DRONE-09")).thenReturn(Optional.of(new DroneTelemetryFrame(
+                1, "DRONE-09", 7L, "2026-10-11T03:00:00Z",
+                new DroneTelemetryFrame.Link("connected", 200L),
+                new DroneTelemetryFrame.Position(10.85, 106.77, 32.5, 90.0, 200L, false),
+                new DroneTelemetryFrame.Gps(3, 14, 200L, false),
+                new DroneTelemetryFrame.Battery(76, 15.4, 3.1, 200L, false),
+                new DroneTelemetryFrame.Velocity(8.2, 0.1, 200L, false),
+                new DroneTelemetryFrame.Flight("AUTO", true, "ACTIVE", 200L, false),
+                new DroneTelemetryFrame.Landed("IN_AIR", 200L, false))));
+        when(telemetryRegistry.isLive("DRONE-09")).thenReturn(true);
+
+        Map<String, Object> camera = service.camera(21L, 99L, "DRONE_TECHNICIAN");
+
+        assertEquals("UNAVAILABLE", camera.get("status"));
+        assertEquals(true, camera.get("telemetryAvailable"));
+        assertEquals(76, camera.get("batteryPercent"));
+        assertEquals("AUTO", camera.get("flightMode"));
+        assertEquals(10.85, camera.get("latitude"));
+        assertEquals(106.77, camera.get("longitude"));
+        assertEquals(true, camera.get("gpsFix"));
+        assertEquals(14, camera.get("satellites"));
+        assertEquals("2026-10-11T03:00:00Z", camera.get("observedAt"));
+    }
+
+    @Test
+    void droneTechnicianIncidentListRequiresDroneTechnicianRole() {
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.listForDroneTechnician(99L, "CUSTOMER"));
+
+        assertEquals("DRONE_TECHNICIAN_REQUIRED", error.getCode());
+        verifyNoInteractions(incidentRepository);
+    }
+
+    @Test
+    void droneTechnicianIncidentListShowsDropReportedOrderStageAndDisputePolicy() {
+        LockerOrder order = policyOrder();
+        order.setStatus("AWAITING_DISPATCH");
+        order.setDeliveryStage("DROP_REPORTED");
+        when(incidentRepository.findVisibleToDroneTechnician(99L)).thenReturn(List.of(incident("ASSIGNED")));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+
+        List<DroneParcelIncidentResponse> result = service.listForDroneTechnician(99L, "DRONE_TECHNICIAN");
+
+        assertEquals(1, result.size());
+        assertEquals("DROP_REPORTED", result.getFirst().deliveryStage());
+        assertEquals("AWAITING_DISPATCH", result.getFirst().orderStatus());
+        assertTrue(result.getFirst().disputeAllowed());
+    }
+
+    @Test
+    void droneTechnicianDetailAllowsTheMissionOperatorEvenIfAdminReported() {
+        DroneParcelIncident incident = incident("ASSIGNED");
+        incident.setReportedByUserId(1L);
+        incident.setRecoveryAssignedToUserId(44L);
+        DroneMission mission = new DroneMission();
+        mission.setAssignedByUserId(99L);
+        when(incidentRepository.findById(7L)).thenReturn(Optional.of(incident));
+        when(missionRepository.findById(31L)).thenReturn(Optional.of(mission));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        assertEquals("DPI-21-1", service.getForDroneTechnician(7L, 99L, "DRONE_TECHNICIAN").incidentCode());
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.getForDroneTechnician(7L, 77L, "DRONE_TECHNICIAN"));
+        assertEquals("INCIDENT_FORBIDDEN", error.getCode());
+    }
+
+    @Test
+    void customerIncidentResponseReportsWhetherReviewCanBeRequested() {
+        LockerOrder order = policyOrder();
+        order.setUserId(55L);
+        when(incidentRepository.findById(7L)).thenReturn(Optional.of(incident("VERIFIED")));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+
+        assertTrue(service.get(7L, 55L, "CUSTOMER").disputeAllowed());
+        order.setIncidentDisputeAllowed(false);
+        assertFalse(service.get(7L, 55L, "CUSTOMER").disputeAllowed());
     }
 
     @Test

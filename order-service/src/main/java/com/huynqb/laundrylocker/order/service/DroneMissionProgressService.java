@@ -18,6 +18,7 @@ import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -76,6 +77,14 @@ public class DroneMissionProgressService {
      */
     @Transactional
     public String advanceByOperator(Long orderId, Long userId) {
+        return advanceByOperator(orderId, userId, null);
+    }
+
+    /// Như trên; `expectedStage` (tuỳ chọn) là chặng app đang hiển thị. Telemetry có thể đã đẩy
+    /// nhiệm vụ sang chặng sau trong lúc điều phối viên bấm — khi đó từ chối (409) thay vì nhảy
+    /// thêm một chặng mà người bấm chưa thấy.
+    @Transactional
+    public String advanceByOperator(Long orderId, Long userId, String expectedStage) {
         LockerOrder order = orderRepository
                 .findByIdForUpdate(orderId)
                 .orElseThrow(() -> new NotFoundException("Order", orderId));
@@ -93,6 +102,13 @@ public class DroneMissionProgressService {
         if ("DEMO".equalsIgnoreCase(order.getFulfillmentMode())) {
             throw new BusinessException(
                     "DRONE_STAGE_AUTOMATED", "Demo missions advance automatically and cannot be advanced by hand");
+        }
+        if (StringUtils.hasText(expectedStage)
+                && !expectedStage.trim().equalsIgnoreCase(String.valueOf(mission.getStatus()))) {
+            throw new BusinessException(
+                    "DRONE_STAGE_CHANGED",
+                    "Chặng bay đã đổi sang " + mission.getStatus() + ", vui lòng tải lại trước khi xác nhận.",
+                    HttpStatus.CONFLICT);
         }
         String next = nextStage(mission.getStatus());
         if (next == null) {

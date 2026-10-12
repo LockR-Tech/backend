@@ -5,6 +5,9 @@ public final class DomainEventNames {
     public static final String EXCHANGE = "laundry.events";
     public static final String ORDER_CREATED = "order.created";
     public static final String ORDER_STATUS_CHANGED = "order.status.changed";
+    /// Đơn vừa chuyển sang COMPLETED (một lần mỗi đơn). Payload: orderId, orderCode, userId, type,
+    /// paidAmount, totalPrice, paymentStatus, completedAt — loyalty-service cộng điểm từ sự kiện này.
+    public static final String ORDER_COMPLETED = "order.completed";
     public static final String PAYMENT_COMPLETED = "payment.completed";
     public static final String PAYMENT_FAILED = "payment.failed";
     public static final String NOTIFICATION_REQUESTED = "notification.requested";
