@@ -19,5 +19,7 @@ public record CreateRefundRequest(
 
         String accountHolderName,
 
+        String customerAttachmentUrl,
+
         Boolean saveAsDefault
 ) {}
