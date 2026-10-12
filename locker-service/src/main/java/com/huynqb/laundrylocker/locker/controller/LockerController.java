@@ -571,6 +571,18 @@ public class LockerController {
         return ApiResponse.ok(lockerService.listDroneUnits());
     }
 
+    /// order-service chọn tủ gửi cho đơn drone: cần biết tủ nào còn drone dùng được.
+    @GetMapping("/internal/drones")
+    public ApiResponse<List<DroneUnitResponse>> internalDrones(@RequestParam(required = false) Long lockerId) {
+        return ApiResponse.ok(lockerService.listDroneUnits(null, lockerId));
+    }
+
+    /// order-service gắn đơn drone đang bị sự cố chặn với đúng phiếu còn mở.
+    @GetMapping("/internal/reports/open")
+    public ApiResponse<List<LockerReportResponse>> internalOpenReports() {
+        return ApiResponse.ok(lockerService.openReports());
+    }
+
     @GetMapping("/internal/drones/{id}")
     public ApiResponse<DroneUnitResponse> internalDrone(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.getDroneUnit(id));
