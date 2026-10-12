@@ -243,6 +243,13 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      # SePay (chuyển khoản VietQR) — khoá webhook + tài khoản nhận đặt trong .env của VM.
+      SEPAY_API_KEY: ${SEPAY_API_KEY:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
+      SEPAY_BANK_BIN: ${SEPAY_BANK_BIN:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
+      SEPAY_BANK_ACCOUNT_NO: ${SEPAY_BANK_ACCOUNT_NO:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
+      SEPAY_ACCOUNT_NAME: ${SEPAY_ACCOUNT_NAME:-LaundryLocker}
+      SEPAY_MERCHANT_ID: ${SEPAY_MERCHANT_ID:-}
+      SEPAY_SECRET_KEY: ${SEPAY_SECRET_KEY:-}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
     depends_on:
       postgres:

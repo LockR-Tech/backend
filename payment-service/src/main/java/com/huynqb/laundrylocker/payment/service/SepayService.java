@@ -44,13 +44,14 @@ public class SepayService {
             "order_id"
     );
 
-    @Value("${sepay.merchant-id:DEMO}")
+    // Khoá SePay chỉ lấy từ biến môi trường (.env của VM) — không có giá trị mặc định.
+    @Value("${sepay.merchant-id:}")
     private String merchantId;
 
-    @Value("${sepay.secret-key:demo-secret}")
+    @Value("${sepay.secret-key:}")
     private String secretKey;
 
-    @Value("${sepay.api-key:demo-api-key}")
+    @Value("${sepay.api-key:}")
     private String apiKey;
 
     @Value("${sepay.checkout-url:https://pay-sandbox.sepay.vn/v1/checkout/init}")
@@ -128,6 +129,11 @@ public class SepayService {
      * Chuẩn bị danh sách tham số và chữ ký HMAC-SHA256 để POST sang SePay Checkout.
      */
     public Map<String, String> buildCheckoutFields(PaymentRecord payment, String overrideReturnUrl) {
+        if (!isConfigured() || !StringUtils.hasText(secretKey)) {
+            throw new BusinessException("SEPAY_GATEWAY_NOT_CONFIGURED",
+                    "Cổng thanh toán SePay chưa được cấu hình; vui lòng quét mã VietQR.",
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+        }
         String effectiveReturn = StringUtils.hasText(overrideReturnUrl) ? overrideReturnUrl : returnUrl;
         String effectiveCancel = StringUtils.hasText(overrideReturnUrl) ? overrideReturnUrl + "?status=cancel" : cancelUrl;
 
@@ -211,34 +217,39 @@ public class SepayService {
      * Xác thực Webhook nhận được từ SePay.
      * Hỗ trợ 2 kiểu:
      * 1. SePay Bank Transfer Webhook: kiểm tra header `Authorization: Apikey {apiKey}`.
-     * 2. SePay PG Callback: kiểm tra chữ ký signature nếu có.
+     * 2. SePay PG Callback: kiểm tra chữ ký signature (chỉ khi đã cấu hình merchant + secret).
+     * Chưa cấu hình khoá ⇒ từ chối mọi webhook.
      */
     public boolean verifyWebhook(Map<String, Object> body, String authHeader) {
         // Kiểm tra qua API Key (Webhook biến động số dư ngân hàng)
-        if (StringUtils.hasText(authHeader)) {
+        if (StringUtils.hasText(apiKey) && StringUtils.hasText(authHeader)) {
             String token = authHeader.replace("Apikey ", "").replace("apikey ", "").trim();
-            if (StringUtils.hasText(apiKey) && apiKey.equals(token)) {
+            if (constantTimeEquals(apiKey, token)) {
                 return true;
             }
         }
 
         // Kiểm tra signature nếu là SePay PG Callback
         Object sigObj = body.get("signature");
-        if (sigObj != null && StringUtils.hasText(sigObj.toString())) {
+        if (isConfigured() && StringUtils.hasText(secretKey)
+                && sigObj != null && StringUtils.hasText(sigObj.toString())) {
             Map<String, String> strMap = new HashMap<>();
             body.forEach((k, v) -> strMap.put(k, v == null ? null : v.toString()));
             strMap.remove("signature");
             String expected = signFields(strMap);
-            return expected.equals(sigObj.toString());
+            return constantTimeEquals(expected, sigObj.toString());
         }
 
-        // Cho phép chế độ demo khi chưa cấu hình key nghiêm ngặt
-        if (!isConfigured() || "demo-api-key".equals(apiKey)) {
-            log.warn("SePay webhook verified in DEMO/permissive mode");
-            return true;
+        if (!StringUtils.hasText(apiKey)) {
+            log.warn("SePay webhook rejected: SEPAY_API_KEY is not configured");
         }
-
         return false;
+    }
+
+    private static boolean constantTimeEquals(String expected, String actual) {
+        return java.security.MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                actual.getBytes(StandardCharsets.UTF_8));
     }
 
     private static final java.util.regex.Pattern TOPUP_PATTERN =
