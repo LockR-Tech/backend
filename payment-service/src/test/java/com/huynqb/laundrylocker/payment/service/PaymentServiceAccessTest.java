@@ -232,6 +232,6 @@ class PaymentServiceAccessTest {
     }
 
     private static CreateRefundRequest refundRequest() {
-        return new CreateRefundRequest(ORDER, null, "Đổi ý", "VCB", "VCB", "0011", "NGUYEN AN", false);
+        return new CreateRefundRequest(ORDER, null, "Đổi ý", "VCB", "VCB", "0011", "NGUYEN AN", null, false);
     }
 }

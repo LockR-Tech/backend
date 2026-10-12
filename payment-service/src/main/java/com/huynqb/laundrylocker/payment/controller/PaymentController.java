@@ -203,6 +203,11 @@ public class PaymentController {
         return ApiResponse.ok(paymentService.refundsByOrder(orderId, userId, roles));
     }
 
+    @GetMapping("/api/payments/my-refunds")
+    public ApiResponse<List<RefundResponse>> myRefunds(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(paymentService.myRefunds(userId));
+    }
+
     /// Người trả, chủ đơn hoặc ADMIN (khác ⇒ 403 ORDER_FORBIDDEN).
     @GetMapping("/api/payments/refund/{refundId}")
     public ApiResponse<RefundResponse> refundStatus(
