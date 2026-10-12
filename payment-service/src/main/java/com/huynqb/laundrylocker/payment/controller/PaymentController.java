@@ -8,7 +8,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -37,12 +36,6 @@ public class PaymentController {
             @Valid @RequestBody CreateTopupRequest request,
             @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("TOPUP_URL_CREATED", "Topup URL created", paymentService.createTopupUrl(userId, request));
-    }
-
-    // Alias callback path that matches what the mobile WebView detects
-    @GetMapping("/payments/vnpay/callback")
-    public ApiResponse<PaymentResponse> vnpayCallback(@RequestParam Map<String, String> params) {
-        return ApiResponse.ok("PAYMENT_RETURN_PROCESSED", "VNPay callback processed", paymentService.handleVnPayReturn(params));
     }
 
     @PostMapping("/api/payments/checkout")
@@ -117,31 +110,6 @@ public class PaymentController {
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return listByOrder(orderId, userId, roles);
-    }
-
-    @GetMapping("/api/payments/vnpay/return")
-    public ApiResponse<PaymentResponse> vnpayReturn(@RequestParam Map<String, String> params) {
-        return ApiResponse.ok("PAYMENT_RETURN_PROCESSED", "VNPay return processed", paymentService.handleVnPayReturn(params));
-    }
-
-    @GetMapping("/api/payments/vnpay/ipn")
-    public Map<String, String> vnpayIpn(@RequestParam Map<String, String> params) {
-        paymentService.handleVnPayReturn(params);
-        return Map.of("RspCode", "00", "Message", "Success");
-    }
-
-    @PostMapping("/api/payments/momo/callback")
-    public ApiResponse<PaymentResponse> momoCallback(@RequestBody Map<String, Object> params) {
-        Map<String, String> stringParams = new HashMap<>();
-        params.forEach((k, v) -> stringParams.put(k, v == null ? null : v.toString()));
-        return ApiResponse.ok(
-                "MOMO_CALLBACK_PROCESSED", "MoMo callback processed", paymentService.handleMomoCallback(stringParams));
-    }
-
-    @GetMapping("/api/payments/momo/return")
-    public ApiResponse<PaymentResponse> momoReturn(@RequestParam Map<String, String> params) {
-        return ApiResponse.ok(
-                "MOMO_RETURN_PROCESSED", "MoMo return processed", paymentService.handleMomoCallback(params));
     }
 
     @GetMapping(value = "/api/payments/sepay/pay", produces = org.springframework.http.MediaType.TEXT_HTML_VALUE)

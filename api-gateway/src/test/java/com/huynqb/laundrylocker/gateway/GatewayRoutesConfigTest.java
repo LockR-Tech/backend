@@ -35,6 +35,14 @@ class GatewayRoutesConfigTest {
         assertRoutedTo("/api/admin/dashboard/peak-hours", "lb://order-service");
     }
 
+    /// Callback SePay ngoài /api vẫn tới payment-service; đường VNPay cũ không còn route nào.
+    @Test
+    void paymentCallbackRoutesKeepOnlySepay() {
+        assertRoutedTo("/payments/sepay/callback", "lb://payment-service");
+        assertRoutedTo("/api/payments/sepay/webhook", "lb://payment-service");
+        assertTrue(matchingRouteUris("/payments/vnpay/callback").isEmpty());
+    }
+
     /// /api/drone-technician/** mặc định về locker-service; các đường của order-service phải đứng
     /// trước để gateway (khớp route đầu tiên) đưa đúng chỗ.
     @Test

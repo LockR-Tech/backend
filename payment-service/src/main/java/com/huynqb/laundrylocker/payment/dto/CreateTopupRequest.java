@@ -5,14 +5,9 @@ import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 
 /// `amount` giới hạn theo cấu hình admin (app.payment.topup-min-amount / topup-max-amount), kiểm trong PaymentService.
+/// `method` chỉ nhận SEPAY (bỏ trống ⇒ SEPAY).
 public record CreateTopupRequest(
         @NotNull BigDecimal amount,
         String returnUrl,
-        String bankCode,
-        String locale,
         String method) {
-
-    public CreateTopupRequest(BigDecimal amount, String returnUrl, String bankCode, String locale) {
-        this(amount, returnUrl, bankCode, locale, null);
-    }
 }

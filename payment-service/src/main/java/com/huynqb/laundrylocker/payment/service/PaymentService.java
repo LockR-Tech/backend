@@ -5,7 +5,6 @@ import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
-import com.huynqb.laundrylocker.common.security.SecuritySecrets;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.payment.client.OrderClient;
 import com.huynqb.laundrylocker.common.dto.NotificationRequest;
@@ -18,30 +17,22 @@ import com.huynqb.laundrylocker.payment.repository.PaymentRepository;
 import com.huynqb.laundrylocker.payment.repository.RefundRepository;
 import com.huynqb.laundrylocker.payment.repository.UserBankAccountRepository;
 import com.huynqb.laundrylocker.payment.settings.PaymentRules;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.TreeMap;
 
 @Slf4j
 @Service
@@ -54,39 +45,12 @@ public class PaymentService {
     private final RefundRepository refundRepository;
     private final UserBankAccountRepository userBankAccountRepository;
     private final RabbitTemplate rabbitTemplate;
-    private final Environment environment;
     private final WalletService walletService;
     private final OrderClient orderClient;
     private final NotificationClient notificationClient;
-    private final MomoService momoService;
     private final SepayService sepayService;
     /// Hạn mức nạp ví, phương thức đang bật, tự hoàn tất tiền mặt… admin cấu hình (ADR-0005).
     private final PaymentRules rules;
-
-    @Value("${vnpay.pay-url:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}")
-    private String vnpayPayUrl;
-
-    @Value("${vnpay.tmn-code:DEMO}")
-    private String vnpayTmnCode;
-
-    @Value("${vnpay.hash-secret:demo-secret}")
-    private String vnpayHashSecret;
-
-    @Value("${vnpay.return-url:http://localhost:8080/api/payments/vnpay/return}")
-    private String vnpayReturnUrl;
-
-    @Value("${momo.redirect-url:http://localhost:8080/api/payments/momo/return}")
-    private String momoRedirectUrl;
-
-    @PostConstruct
-    void validateProductionPaymentConfig() {
-        String[] activeProfiles = environment.getActiveProfiles();
-        SecuritySecrets.requireProductionSafeValue(vnpayTmnCode, "vnpay.tmn-code", activeProfiles);
-        SecuritySecrets.requireProductionSafeValue(vnpayHashSecret, "vnpay.hash-secret", activeProfiles);
-        SecuritySecrets.requireProductionSafeValue(vnpayPayUrl, "vnpay.pay-url", activeProfiles);
-        SecuritySecrets.requireProductionSafeValue(vnpayReturnUrl, "vnpay.return-url", activeProfiles);
-        SecuritySecrets.requireProductionSafeValue(momoRedirectUrl, "momo.redirect-url", activeProfiles);
-    }
 
     @Transactional
     public PaymentResponse create(CreatePaymentRequest request) {
@@ -95,15 +59,12 @@ public class PaymentService {
         payment.setUserId(request.userId());
         payment.setAmount(request.amount());
         payment.setMethod(StringUtils.hasText(request.method()) ? request.method().toUpperCase() : "CASH");
+        assertMethodNotRetired(payment.getMethod());
         assertMethodEnabled(payment.getMethod());
         payment.setReferenceId(StringUtils.hasText(request.referenceId()) ? request.referenceId() : generateReference(request.orderId()));
         payment.setDescription(request.description());
         payment.setContent("Payment for order " + request.orderId());
-        if ("VNPAY".equals(payment.getMethod())) {
-            payment.setUrl(buildVnPayUrl(payment, request.bankCode(), request.language()));
-        } else if ("MOMO".equals(payment.getMethod())) {
-            momoService.createPayment(payment, null);
-        } else if ("SEPAY".equals(payment.getMethod())) {
+        if ("SEPAY".equals(payment.getMethod())) {
             sepayService.createPayment(payment, null);
         } else if ("CASH".equals(payment.getMethod()) && rules.cashAutoComplete()) {
             payment.setStatus("COMPLETED");
@@ -119,9 +80,10 @@ public class PaymentService {
      * Pay for an existing order with the chosen method.
      * WALLET settles immediately (status COMPLETED + event); CASH too unless admin turned off
      * {@code app.payment.cash-auto-complete} (then it stays PENDING for staff confirmation);
-     * VNPAY/MOMO return a redirect URL and settle later via the provider callback. The amount is
-     * taken from the order (authoritative), not the client. Methods not in
-     * {@code app.payment.enabled-methods} are rejected with PAYMENT_METHOD_DISABLED.
+     * SEPAY returns a pay URL and settles later via the SePay webhook. The amount is taken from
+     * the order (authoritative), not the client. Retired methods (VNPAY, MOMO) are rejected with
+     * PAYMENT_METHOD_UNSUPPORTED; methods not in {@code app.payment.enabled-methods} are rejected
+     * with PAYMENT_METHOD_DISABLED.
      */
     /// Mô tả để khách phân biệt nhiều lần trả trên cùng một đơn: thuê rồi gia hạn, hoặc
     /// bị tính thêm phí quá hạn. Trước đây mọi lần đều ghi "Thanh toán đơn #N" nên chi
@@ -143,6 +105,7 @@ public class PaymentService {
     @Transactional
     public PaymentResponse checkout(Long userId, CheckoutRequest request) {
         String method = request.method() == null ? "" : request.method().toUpperCase();
+        assertMethodNotRetired(method);
         assertMethodEnabled(method);
         OrderSummary order;
         try {
@@ -189,9 +152,6 @@ public class PaymentService {
                     payment.setStatus("COMPLETED");
                 }
             }
-            case "VNPAY" ->
-                    payment.setUrl(buildVnPayUrl(payment, request.bankCode(), request.language(), request.returnUrl()));
-            case "MOMO" -> momoService.createPayment(payment, request.returnUrl());
             case "SEPAY" -> sepayService.createPayment(payment, request.returnUrl());
             default ->
                     throw new BusinessException("PAYMENT_METHOD_INVALID", "Phương thức thanh toán không hợp lệ: " + method);
@@ -248,43 +208,6 @@ public class PaymentService {
             publish(DomainEventNames.PAYMENT_FAILED, payment);
         }
         return response;
-    }
-
-    @Transactional
-    public PaymentResponse handleVnPayReturn(Map<String, String> params) {
-        String txnRef = params.get("vnp_TxnRef");
-        PaymentRecord payment =
-                repository.findByReferenceId(txnRef)
-                        .orElseThrow(() -> new NotFoundException("Payment", -1L));
-        payment.setReferenceTransactionId(params.get("vnp_TransactionNo"));
-        boolean success = verifyVnPay(params) && "00".equals(params.get("vnp_ResponseCode"));
-        payment.setStatus(success ? "COMPLETED" : "FAILED");
-        PaymentRecord saved = repository.save(payment);
-        // Wallet top-up: credit the user's balance once VNPay confirms (idempotent by txnRef,
-        // so VNPay return + IPN both firing won't double-credit).
-        if (success && "VNPAY_TOPUP".equals(saved.getMethod())) {
-            walletService.credit(
-                    saved.getUserId(),
-                    saved.getAmount(),
-                    WalletService.SOURCE_TOPUP,
-                    saved.getReferenceId(),
-                    "Nạp ví qua VNPay");
-        }
-        publish(success ? DomainEventNames.PAYMENT_COMPLETED : DomainEventNames.PAYMENT_FAILED, saved);
-        return toResponse(saved);
-    }
-
-    @Transactional
-    public PaymentResponse handleMomoCallback(Map<String, String> params) {
-        String momoOrderId = params.get("orderId"); // MoMo orderId == our referenceId
-        PaymentRecord payment =
-                repository.findByReferenceId(momoOrderId).orElseThrow(() -> new NotFoundException("Payment", -1L));
-        payment.setReferenceTransactionId(params.get("transId"));
-        boolean success = momoService.verifyIpn(params) && momoService.isSuccess(params);
-        payment.setStatus(success ? "COMPLETED" : "FAILED");
-        PaymentRecord saved = repository.save(payment);
-        publish(success ? DomainEventNames.PAYMENT_COMPLETED : DomainEventNames.PAYMENT_FAILED, saved);
-        return toResponse(saved);
     }
 
     @Transactional
@@ -408,58 +331,30 @@ public class PaymentService {
         return sepayService.generateAutoSubmitHtml(payment, null);
     }
 
+    /// Nạp ví chỉ qua SePay (VietQR); không gửi `method` ⇒ SEPAY. VNPAY/MOMO đã ngừng hỗ trợ ⇒
+    /// 400 PAYMENT_METHOD_UNSUPPORTED; phương thức khác ⇒ 400 PAYMENT_METHOD_INVALID.
     @Transactional
     public TopupResponse createTopupUrl(Long userId, CreateTopupRequest request) {
+        String method = StringUtils.hasText(request.method())
+                ? request.method().trim().toUpperCase(Locale.ROOT)
+                : "SEPAY";
+        assertMethodNotRetired(method);
+        if (!"SEPAY".equals(method)) {
+            throw new BusinessException("PAYMENT_METHOD_INVALID", "Phương thức nạp ví không hợp lệ: " + method);
+        }
         assertTopupAmount(request.amount());
-        String method = StringUtils.hasText(request.method()) ? request.method().toUpperCase() : "VNPAY";
         String txnRef = "TOPUP_" + userId + "_" + System.currentTimeMillis();
 
-        if ("SEPAY".equals(method)) {
-            String effectiveReturnUrl = StringUtils.hasText(request.returnUrl()) ? request.returnUrl() : null;
-            PaymentRecord payment = new PaymentRecord();
-            payment.setOrderId(0L);
-            payment.setUserId(userId);
-            payment.setAmount(request.amount());
-            payment.setMethod("SEPAY_TOPUP");
-            payment.setReferenceId(txnRef);
-            payment.setDescription("Nạp tiền ví qua SePay");
-            String paymentUrl = sepayService.createPayment(payment, effectiveReturnUrl);
-            repository.save(payment);
-            return new TopupResponse(paymentUrl, txnRef);
-        }
-
-        String effectiveReturnUrl = StringUtils.hasText(request.returnUrl()) ? request.returnUrl() : vnpayReturnUrl;
-
-        Map<String, String> params = new TreeMap<>();
-        params.put("vnp_Version", "2.1.0");
-        params.put("vnp_Command", "pay");
-        params.put("vnp_TmnCode", vnpayTmnCode);
-        params.put("vnp_Amount", request.amount().multiply(BigDecimal.valueOf(100)).toBigInteger().toString());
-        params.put("vnp_CurrCode", "VND");
-        params.put("vnp_TxnRef", txnRef);
-        params.put("vnp_OrderInfo", "Nap tien vao vi " + request.amount().toPlainString() + " VND");
-        params.put("vnp_OrderType", "other");
-        params.put("vnp_Locale", StringUtils.hasText(request.locale()) ? request.locale() : "vn");
-        params.put("vnp_ReturnUrl", effectiveReturnUrl);
-        params.put("vnp_IpAddr", "127.0.0.1");
-        params.put("vnp_CreateDate", DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now()));
-        if (StringUtils.hasText(request.bankCode())) {
-            params.put("vnp_BankCode", request.bankCode());
-        }
-        String hashData = query(params);
-        params.put("vnp_SecureHash", hmac("HmacSHA512", vnpayHashSecret, hashData));
-        String paymentUrl = vnpayPayUrl + "?" + query(params);
-
+        String effectiveReturnUrl = StringUtils.hasText(request.returnUrl()) ? request.returnUrl() : null;
         PaymentRecord payment = new PaymentRecord();
         payment.setOrderId(0L);
         payment.setUserId(userId);
         payment.setAmount(request.amount());
-        payment.setMethod("VNPAY_TOPUP");
+        payment.setMethod("SEPAY_TOPUP");
         payment.setReferenceId(txnRef);
-        payment.setUrl(paymentUrl);
-        payment.setDescription("Nạp tiền ví qua VNPay");
+        payment.setDescription("Nạp tiền ví qua SePay");
+        String paymentUrl = sepayService.createPayment(payment, effectiveReturnUrl);
         repository.save(payment);
-
         return new TopupResponse(paymentUrl, txnRef);
     }
 
@@ -857,6 +752,16 @@ public class PaymentService {
                 .orElseThrow(() -> new NotFoundException("Refund", refundId));
     }
 
+    /// Phương thức đã ngừng hỗ trợ (VNPAY, MOMO, kể cả dạng `*_TOPUP`) ⇒ 400 PAYMENT_METHOD_UNSUPPORTED.
+    /// Chỉ chặn tạo giao dịch mới; giao dịch cũ mang các phương thức này vẫn đọc và hiển thị bình thường.
+    private static void assertMethodNotRetired(String method) {
+        if (PaymentRules.isRetiredMethod(method)) {
+            throw new BusinessException(
+                    "PAYMENT_METHOD_UNSUPPORTED",
+                    "Phương thức thanh toán " + method + " không còn được hỗ trợ, vui lòng chọn phương thức khác");
+        }
+    }
+
     /// Phương thức thanh toán đơn đã biết nhưng admin đang tắt ⇒ từ chối. Phương thức lạ để luồng cũ xử lý.
     private void assertMethodEnabled(String method) {
         if (PaymentRules.SUPPORTED_METHODS.contains(method) && !rules.isMethodEnabled(method)) {
@@ -930,68 +835,6 @@ public class PaymentService {
                 refund.getProcessedByUserId(),
                 refund.getRequestedAt(),
                 refund.getProcessedAt());
-    }
-
-    private String buildVnPayUrl(PaymentRecord payment, String bankCode, String language) {
-        return buildVnPayUrl(payment, bankCode, language, null);
-    }
-
-    private String buildVnPayUrl(
-            PaymentRecord payment, String bankCode, String language, String returnUrl) {
-        Map<String, String> params = new TreeMap<>();
-        params.put("vnp_Version", "2.1.0");
-        params.put("vnp_Command", "pay");
-        params.put("vnp_TmnCode", vnpayTmnCode);
-        params.put("vnp_Amount", payment.getAmount().multiply(BigDecimal.valueOf(100)).toBigInteger().toString());
-        params.put("vnp_CurrCode", "VND");
-        params.put("vnp_TxnRef", payment.getReferenceId());
-        params.put("vnp_OrderInfo", "Thanh toan don hang " + payment.getOrderId());
-        params.put("vnp_OrderType", "other");
-        params.put("vnp_Locale", StringUtils.hasText(language) ? language : "vn");
-        params.put("vnp_ReturnUrl", StringUtils.hasText(returnUrl) ? returnUrl : vnpayReturnUrl);
-        params.put("vnp_IpAddr", "127.0.0.1");
-        params.put("vnp_CreateDate", DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now()));
-        if (StringUtils.hasText(bankCode)) {
-            params.put("vnp_BankCode", bankCode);
-        }
-        String hashData = query(params);
-        params.put("vnp_SecureHash", hmac("HmacSHA512", vnpayHashSecret, hashData));
-        return vnpayPayUrl + "?" + query(params);
-    }
-
-    private boolean verifyVnPay(Map<String, String> params) {
-        String received = params.get("vnp_SecureHash");
-        Map<String, String> verify = new TreeMap<>(params);
-        verify.remove("vnp_SecureHash");
-        verify.remove("vnp_SecureHashType");
-        return received != null && received.equalsIgnoreCase(hmac("HmacSHA512", vnpayHashSecret, query(verify)));
-    }
-
-    private String query(Map<String, String> params) {
-        return params.entrySet().stream()
-                .filter(e -> e.getValue() != null)
-                .map(e -> url(e.getKey()) + "=" + url(e.getValue()))
-                .reduce((a, b) -> a + "&" + b)
-                .orElse("");
-    }
-
-    private String hmac(String algorithm, String secret, String data) {
-        try {
-            Mac mac = Mac.getInstance(algorithm);
-            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), algorithm));
-            byte[] bytes = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
-            StringBuilder result = new StringBuilder();
-            for (byte b : bytes) {
-                result.append(String.format("%02x", b));
-            }
-            return result.toString();
-        } catch (Exception ex) {
-            throw new IllegalStateException("Could not sign payment payload", ex);
-        }
-    }
-
-    private String url(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private String generateReference(Long orderId) {

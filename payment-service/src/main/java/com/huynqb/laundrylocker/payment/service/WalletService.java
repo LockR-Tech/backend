@@ -67,7 +67,7 @@ public class WalletService {
         BigDecimal balance = getBalance(userId).balance();
         List<WalletTransaction> transactions = transactionRepository.findByUserIdOrderByCreatedAtDesc(userId);
 
-        // Lấy các giao dịch thanh toán trực tiếp (SePay, VNPay, MoMo...) của đơn hàng mà không trừ vào số dư ví
+        // Lấy các giao dịch thanh toán trực tiếp (SePay, tiền mặt; dữ liệu cũ còn VNPay/MoMo) của đơn hàng mà không trừ vào số dư ví
         List<com.huynqb.laundrylocker.payment.model.PaymentRecord> directPayments = paymentRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
                 .filter(p -> "COMPLETED".equalsIgnoreCase(p.getStatus()))
                 .filter(p -> p.getMethod() != null && !"WALLET".equalsIgnoreCase(p.getMethod()))
@@ -123,6 +123,7 @@ public class WalletService {
         if (src.contains("SEPAY") || ref.contains("SEPAY") || desc.contains("SEPAY") || ref.startsWith("FT")) {
             return "SEPAY";
         }
+        // VNPay/MoMo đã ngừng hỗ trợ; giữ nhận diện để lịch sử cũ vẫn xếp đúng phương thức.
         if (src.contains("VNPAY") || ref.contains("VNPAY") || desc.contains("VNPAY")) {
             return "VNPAY";
         }
@@ -146,6 +147,7 @@ public class WalletService {
         return switch (method.toUpperCase()) {
             case "WALLET" -> "Ví Lock.R";
             case "SEPAY" -> "Cổng SePay";
+            // Chỉ còn ở giao dịch cũ (đã ngừng hỗ trợ).
             case "VNPAY" -> "Cổng VNPay";
             case "MOMO" -> "Ví MoMo";
             case "WITHDRAW" -> "Rút tiền về STK";
@@ -194,10 +196,9 @@ public class WalletService {
         }).toList();
 
         Map<String, BigDecimal> summary = new java.util.LinkedHashMap<>();
+        // Phương thức đang hỗ trợ luôn có mặt (kể cả 0đ); VNPAY/MOMO… của giao dịch cũ chỉ xuất hiện khi có dữ liệu.
         summary.put("WALLET", BigDecimal.ZERO);
         summary.put("SEPAY", BigDecimal.ZERO);
-        summary.put("VNPAY", BigDecimal.ZERO);
-        summary.put("MOMO", BigDecimal.ZERO);
         summary.put("WITHDRAW", BigDecimal.ZERO);
 
         Map<String, BigDecimal> expenseByMethod = new java.util.LinkedHashMap<>();
@@ -289,8 +290,6 @@ public class WalletService {
 
         byMethod.put("WALLET", BigDecimal.ZERO);
         byMethod.put("SEPAY", BigDecimal.ZERO);
-        byMethod.put("VNPAY", BigDecimal.ZERO);
-        byMethod.put("MOMO", BigDecimal.ZERO);
         byMethod.put("WITHDRAW", BigDecimal.ZERO);
 
         for (WalletTransactionResponse tx : filtered) {
@@ -349,7 +348,7 @@ public class WalletService {
             Long userId, BigDecimal amount, String source, String referenceId, String description) {
         requirePositive(amount);
         if (referenceId != null && transactionRepository.existsBySourceAndReferenceId(source, referenceId)) {
-            return null; // already credited (e.g. duplicate VNPay callback)
+            return null; // already credited (e.g. duplicate payment-gateway webhook)
         }
         Wallet wallet = getOrCreate(userId);
         BigDecimal newBalance = wallet.getBalance().add(amount);

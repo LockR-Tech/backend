@@ -110,7 +110,7 @@ public class AdminPaymentQueryService {
 
         List<RefundRecord> refunds = refundRepository.findByPaymentIdIn(List.of(payment.getId()));
         List<WalletTransaction> walletTransactions = new ArrayList<>();
-        if (PaymentReportRules.METHOD_TOPUP.equalsIgnoreCase(payment.getMethod()) && payment.getReferenceId() != null) {
+        if (PaymentReportRules.isTopupMethod(payment.getMethod()) && payment.getReferenceId() != null) {
             walletTransactionRepository.findFirstBySourceAndReferenceId(WalletService.SOURCE_TOPUP, payment.getReferenceId())
                     .ifPresent(walletTransactions::add);
         } else if ("WALLET".equalsIgnoreCase(payment.getMethod())) {

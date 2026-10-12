@@ -392,6 +392,30 @@ class JwtGatewayFilterTest {
         assertFalse(chainCalled.get());
     }
 
+    /// Webhook và trang quay về của SePay không mang JWT nên phải mở; đường VNPay/MoMo đã gỡ
+    /// (ngừng hỗ trợ) nên không còn công khai — gọi không token ⇒ 401, không tới payment-service.
+    @Test
+    void onlySepayPaymentCallbacksArePublic() {
+        assertPublicGet("/payments/sepay/callback");
+        assertPublicGet("/api/payments/sepay/return");
+        assertPublicGet("/api/payments/sepay/pay");
+        MockServerWebExchange webhook =
+                MockServerWebExchange.from(MockServerHttpRequest.post("/api/payments/sepay/webhook").build());
+        AtomicBoolean webhookForwarded = new AtomicBoolean(false);
+        filter.filter(webhook, chainThatMarks(webhookForwarded)).block();
+        assertTrue(webhookForwarded.get());
+
+        for (String path : new String[]{
+                "/api/payments/vnpay/return", "/api/payments/vnpay/ipn", "/payments/vnpay/callback",
+                "/api/payments/momo/return", "/api/payments/momo/callback"}) {
+            MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
+            AtomicBoolean chainCalled = new AtomicBoolean(false);
+            filter.filter(exchange, chainThatMarks(chainCalled)).block();
+            assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode(), path);
+            assertFalse(chainCalled.get(), path);
+        }
+    }
+
     @Test
     void keepsCatalogueGetPublicButRequiresJwtForCatalogueMutation() {
         assertPublicGet("/api/lockers/2/layout");
