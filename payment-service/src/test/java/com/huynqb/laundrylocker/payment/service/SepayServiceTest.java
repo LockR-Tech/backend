@@ -101,4 +101,36 @@ class SepayServiceTest {
         assertTrue(html.contains("100000"));
         assertTrue(html.contains("name=\"signature\""));
     }
+
+    @Test
+    void bankTransferCarriesReceiverAccountAndTransferContentForSepay() {
+        ReflectionTestUtils.setField(sepayService, "bankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "bankAccountNo", "0123456789");
+        ReflectionTestUtils.setField(sepayService, "accountName", "LOCKR");
+        com.huynqb.laundrylocker.payment.model.PaymentRecord payment = new com.huynqb.laundrylocker.payment.model.PaymentRecord();
+        payment.setMethod("SEPAY");
+        payment.setAmount(new java.math.BigDecimal("15000.40"));
+        payment.setReferenceId("PAY-42-ABC");
+
+        var transfer = sepayService.bankTransfer(payment);
+
+        org.junit.jupiter.api.Assertions.assertEquals("970422", transfer.bankBin());
+        org.junit.jupiter.api.Assertions.assertEquals("0123456789", transfer.accountNo());
+        org.junit.jupiter.api.Assertions.assertEquals("LOCKR", transfer.accountName());
+        org.junit.jupiter.api.Assertions.assertEquals(new java.math.BigDecimal("15000"), transfer.amount());
+        org.junit.jupiter.api.Assertions.assertEquals("PAY-42-ABC", transfer.transferContent());
+    }
+
+    @Test
+    void bankTransferIsAbsentForOtherMethodsOrWithoutReceiverAccount() {
+        com.huynqb.laundrylocker.payment.model.PaymentRecord payment = new com.huynqb.laundrylocker.payment.model.PaymentRecord();
+        payment.setMethod("SEPAY");
+        payment.setAmount(java.math.BigDecimal.TEN);
+        org.junit.jupiter.api.Assertions.assertNull(sepayService.bankTransfer(payment), "chưa cấu hình tài khoản nhận");
+
+        ReflectionTestUtils.setField(sepayService, "bankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "bankAccountNo", "0123456789");
+        payment.setMethod("WALLET");
+        org.junit.jupiter.api.Assertions.assertNull(sepayService.bankTransfer(payment));
+    }
 }

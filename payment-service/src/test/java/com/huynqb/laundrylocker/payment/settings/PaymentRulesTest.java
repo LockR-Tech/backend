@@ -18,11 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PaymentRulesTest {
 
     @Test
-    void defaultEnabledMethodsNoLongerListRetiredMethods() {
+    void defaultEnabledMethodsIsSepayOnly() {
         BusinessSettings settings = TestPaymentRules.settings(Map.of());
 
-        assertEquals(List.of("CASH", "WALLET", "SEPAY"), List.copyOf(new PaymentRules(settings).enabledMethods()));
-        assertEquals("CASH,WALLET,SEPAY", settings.publicValues().get(ENABLED_METHODS));
+        assertEquals(List.of("SEPAY"), List.copyOf(new PaymentRules(settings).enabledMethods()));
+        assertEquals("SEPAY", settings.publicValues().get(ENABLED_METHODS));
 
         SettingView view = settings.list().stream().filter(v -> v.key().equals(ENABLED_METHODS)).findFirst().orElseThrow();
         assertEquals(List.of("CASH", "WALLET", "SEPAY"), view.allowedItems());
@@ -65,7 +65,7 @@ class PaymentRulesTest {
         PaymentRules rules = new PaymentRules(
                 TestPaymentRules.preexisting(Map.of(ENABLED_METHODS, "VNPAY,MOMO"), Map.of()));
 
-        assertEquals(List.of("CASH", "WALLET", "SEPAY"), List.copyOf(rules.enabledMethods()));
+        assertEquals(List.of("SEPAY"), List.copyOf(rules.enabledMethods()));
     }
 
     @Test

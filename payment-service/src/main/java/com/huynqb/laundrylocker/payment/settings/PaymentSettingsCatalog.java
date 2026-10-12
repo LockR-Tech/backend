@@ -54,8 +54,9 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
 
                 stringList(ENABLED_METHODS, METHODS, "Phương thức thanh toán đang bật",
                         "Danh sách cách nhau bởi dấu phẩy, nhận CASH, WALLET, SEPAY. "
-                                + "Thanh toán đơn bằng phương thức không có trong danh sách bị từ chối.",
-                        String.join(",", PAYMENT_METHODS), PAYMENT_METHODS).asPublic(),
+                                + "Thanh toán đơn bằng phương thức không có trong danh sách bị từ chối. "
+                                + "Mặc định chỉ SePay (chuyển khoản VietQR).",
+                        "SEPAY", PAYMENT_METHODS).asPublic(),
                 bool(CASH_AUTO_COMPLETE, METHODS, "Tự hoàn tất thanh toán tiền mặt",
                         "Bật: thanh toán CASH được ghi nhận COMPLETED ngay. Tắt: giữ PENDING chờ nhân viên xác nhận.",
                         true),

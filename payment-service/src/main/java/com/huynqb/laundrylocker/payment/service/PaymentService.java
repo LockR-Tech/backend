@@ -801,7 +801,8 @@ public class PaymentService {
                 payment.getDescription(),
                 payment.getContent(),
                 payment.getCreatedAt(),
-                payment.getUpdatedAt());
+                payment.getUpdatedAt(),
+                sepayService.bankTransfer(payment));
     }
 
     @Transactional(readOnly = true)

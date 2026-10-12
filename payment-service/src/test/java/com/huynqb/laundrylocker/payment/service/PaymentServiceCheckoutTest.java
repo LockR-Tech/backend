@@ -61,8 +61,12 @@ class PaymentServiceCheckoutTest {
                 orderClient,
                 notificationClient,
                 sepayService,
-                TestPaymentRules.defaults());
+                TestPaymentRules.of(ALL_METHODS));
     }
+
+    // Mặc định production chỉ bật SePay; các ca kiểm thử ví / tiền mặt bật tường minh cả ba.
+    private static final Map<String, Object> ALL_METHODS =
+            Map.of(com.huynqb.laundrylocker.payment.settings.PaymentSettingsCatalog.ENABLED_METHODS, "CASH,WALLET,SEPAY");
 
     @Test
     void checkoutChargesOnlyOutstandingBalanceAfterRentalExtension() {
@@ -333,6 +337,12 @@ class PaymentServiceCheckoutTest {
     private PaymentService serviceWith(Map<String, ?> overrides) {
         return new PaymentService(
                 repository, refundRepository, userBankAccountRepository, rabbitTemplate,
-                walletService, orderClient, notificationClient, sepayService, TestPaymentRules.of(overrides));
+                walletService, orderClient, notificationClient, sepayService, TestPaymentRules.of(withAllMethods(overrides)));
+    }
+
+    private static Map<String, Object> withAllMethods(Map<String, ?> overrides) {
+        Map<String, Object> merged = new java.util.HashMap<>(ALL_METHODS);
+        merged.putAll(overrides);
+        return merged;
     }
 }

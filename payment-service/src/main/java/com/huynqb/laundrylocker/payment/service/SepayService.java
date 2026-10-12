@@ -92,6 +92,22 @@ public class SepayService {
         return payment.getUrl();
     }
 
+    /// Thông tin chuyển khoản cho app (mở app ngân hàng điền sẵn). `null` khi không phải SePay hoặc chưa
+    /// cấu hình tài khoản nhận. Nội dung chuyển khoản trùng `addInfo` của ảnh QR (referenceId).
+    public com.huynqb.laundrylocker.payment.dto.PaymentResponse.BankTransfer bankTransfer(PaymentRecord payment) {
+        if (payment == null || payment.getMethod() == null
+                || !payment.getMethod().toUpperCase(java.util.Locale.ROOT).startsWith("SEPAY")
+                || !StringUtils.hasText(bankBin) || !StringUtils.hasText(bankAccountNo)) {
+            return null;
+        }
+        java.math.BigDecimal amount = payment.getAmount() == null
+                ? java.math.BigDecimal.ZERO
+                : payment.getAmount().setScale(0, java.math.RoundingMode.HALF_UP);
+        return new com.huynqb.laundrylocker.payment.dto.PaymentResponse.BankTransfer(
+                bankBin, bankAccountNo, accountName, amount,
+                payment.getReferenceId() != null ? payment.getReferenceId() : "");
+    }
+
     /**
      * Sinh URL ảnh VietQR (img.vietqr.io) để mobile hiển thị inline.
      * Nội dung chuyển khoản (addInfo) chứa referenceId để SePay webhook nhận diện.
