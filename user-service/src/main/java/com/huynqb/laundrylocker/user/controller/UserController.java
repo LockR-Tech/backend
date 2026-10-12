@@ -12,6 +12,7 @@ import com.huynqb.laundrylocker.user.dto.AdminCreateUserRequest;
 import com.huynqb.laundrylocker.user.dto.AdminUserView;
 import com.huynqb.laundrylocker.user.dto.UserGrowthPoint;
 import com.huynqb.laundrylocker.user.dto.UserProfileRequest;
+import com.huynqb.laundrylocker.user.dto.UserProfileView;
 import com.huynqb.laundrylocker.user.service.UserProfileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 
 @Slf4j
 @RestController
@@ -59,7 +61,7 @@ public class UserController {
             @RequestHeader(value = "X-User-Id", required = false) Long callerId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         requireSelfOrAdmin(id, callerId, roles);
-        return ApiResponse.ok("USER_UPDATED", "User updated", userProfileService.update(id, withoutAdminFields(request)));
+        return ApiResponse.ok("USER_UPDATED", "User updated", updateSyncingLogin(id, withoutAdminFields(request)));
     }
 
     private static void requireAdmin(String roles) {
@@ -85,7 +87,8 @@ public class UserController {
                 request.birthday(),
                 request.imageUrl(),
                 null,
-                null);
+                null,
+                request.fullName());
     }
 
     @GetMapping("/api/users/{id}")
@@ -119,15 +122,34 @@ public class UserController {
     }
 
     @GetMapping("/api/user/profile")
-    public ApiResponse<UserSummary> profile(@RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok("USER_PROFILE_OK", "User profile", userProfileService.get(userId));
+    public ApiResponse<UserProfileView> profile(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok("USER_PROFILE_OK", "User profile", userProfileService.getProfileView(userId, hasPassword(userId)));
     }
 
+    /// Body `{firstName?, lastName?, fullName? (app cũ), email?, phoneNumber?, birthday?}` — field thiếu/rỗng = giữ nguyên.
+    /// Đổi email/số điện thoại: kiểm trùng rồi đồng bộ sang tài khoản đăng nhập như đường admin, để đăng nhập
+    /// bằng định danh mới vẫn được và không trùng tài khoản khác (409 USER_*_TAKEN / AUTH_*_TAKEN).
     @PutMapping("/api/user/profile")
     public ApiResponse<UserSummary> updateProfile(
             @RequestHeader("X-User-Id") Long userId, @RequestBody UserProfileRequest request) {
         return ApiResponse.ok(
-                "PROFILE_UPDATED", "Profile updated", userProfileService.update(userId, withoutAdminFields(request)));
+                "PROFILE_UPDATED", "Profile updated", updateSyncingLogin(userId, withoutAdminFields(request)));
+    }
+
+    /// `hasPassword` lấy từ tài khoản đăng nhập. auth-service lỗi ⇒ true (app hỏi mật khẩu hiện tại như cũ;
+    /// auth-service vẫn là nơi quyết định khi đổi mật khẩu).
+    private boolean hasPassword(Long userId) {
+        try {
+            return authClient.accountsByUsers(List.of(userId)).data().stream()
+                    .filter(account -> account.get("userId") != null
+                            && userId.toString().equals(account.get("userId").toString()))
+                    .findFirst()
+                    .map(account -> !Boolean.FALSE.equals(account.get("hasPassword")))
+                    .orElse(true);
+        } catch (Exception ex) {
+            log.warn("Could not read password state for user {}: {}", userId, ex.getMessage());
+            return true;
+        }
     }
 
     /// Body mới: MediaUpload (ảnh đã upload lên Cloudinary, ADR-0004). Body cũ `{imageUrl}`/`{avatar}` vẫn nhận.
@@ -151,11 +173,14 @@ public class UserController {
         return userProfileService.updateAvatar(targetUserId, imageUrl == null ? null : String.valueOf(imageUrl));
     }
 
+    /// Body `{currentPassword?, newPassword}`: bắt buộc `currentPassword` khi tài khoản đã có mật khẩu
+    /// (`hasPassword`). Refresh token của mọi máy bị thu hồi; `data` là cặp token mới cho máy đang đổi
+    /// (`accessToken`, `refreshToken`, `tokenType`, `expiresAt`, ...) để app không bị đăng xuất.
     @PutMapping("/api/user/password")
-    public ApiResponse<Void> changePassword(
+    public ApiResponse<Map<String, Object>> changePassword(
             @RequestHeader("X-User-Id") Long userId, @RequestBody Map<String, Object> request) {
-        authClient.changePassword(userId, request);
-        return ApiResponse.ok("PASSWORD_CHANGED", "Password changed successfully");
+        Map<String, Object> tokens = fetchFromAuth(() -> authClient.changePassword(userId, request)).data();
+        return ApiResponse.ok("PASSWORD_CHANGED", "Password changed successfully", tokens);
     }
 
     @GetMapping("/api/user/me/statistics")
@@ -306,6 +331,13 @@ public class UserController {
     /// trước khi lưu hồ sơ — auth-service từ chối (trùng, lỗi kết nối) thì hồ sơ giữ nguyên.
     @PutMapping("/api/admin/users/{id}")
     public ApiResponse<UserSummary> adminUpdate(@PathVariable Long id, @RequestBody UserProfileRequest request) {
+        return ApiResponse.ok("USER_UPDATED", "User updated", updateSyncingLogin(id, request));
+    }
+
+    /// Dùng chung cho admin và chính chủ (request chính chủ đã bỏ trạng thái/vai trò). Email/số điện thoại
+    /// đổi ⇒ kiểm trùng bên hồ sơ, rồi đồng bộ sang tài khoản đăng nhập TRƯỚC khi lưu hồ sơ; trạng thái đổi
+    /// ⇒ đồng bộ khoá/mở. Email/số điện thoại rỗng = giữ nguyên.
+    private UserSummary updateSyncingLogin(Long id, UserProfileRequest request) {
         UserSummary current = userProfileService.get(id);
         String status = StringUtils.hasText(request.status())
                 ? UserProfileService.requireValidStatus(request.status())
@@ -322,16 +354,34 @@ public class UserController {
         if (status != null && !status.equalsIgnoreCase(current.status())) {
             syncAuthStatus(id, status);
         }
+        String[] names = resolveNames(request);
         UserProfileRequest normalized = new UserProfileRequest(
-                email != null ? email : request.email(),
-                phoneNumber != null ? phoneNumber : request.phoneNumber(),
-                request.firstName(),
-                request.lastName(),
+                email != null ? email : blankToNull(request.email()),
+                phoneNumber != null ? phoneNumber : blankToNull(request.phoneNumber()),
+                names[0],
+                names[1],
                 request.birthday(),
                 request.imageUrl(),
                 status,
                 request.roles());
-        return ApiResponse.ok("USER_UPDATED", "User updated", userProfileService.update(id, normalized));
+        return userProfileService.update(id, normalized);
+    }
+
+    /// firstName/lastName gửi lên thì dùng nguyên; chỉ có `fullName` (app cũ) thì tách ở khoảng trắng cuối:
+    /// "Nguyễn Văn An" ⇒ ("Nguyễn Văn", "An"), một từ ⇒ (từ đó, ""). Không gửi gì ⇒ giữ nguyên (null, null).
+    static String[] resolveNames(UserProfileRequest request) {
+        if (request.firstName() != null || request.lastName() != null || !StringUtils.hasText(request.fullName())) {
+            return new String[] {request.firstName(), request.lastName()};
+        }
+        String full = request.fullName().trim().replaceAll("\\s+", " ");
+        int lastSpace = full.lastIndexOf(' ');
+        return lastSpace < 0
+                ? new String[] {full, ""}
+                : new String[] {full.substring(0, lastSpace), full.substring(lastSpace + 1)};
+    }
+
+    private static String blankToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     /// Giá trị mới (đã trim) nếu khác giá trị hiện tại; null khi không gửi hoặc không đổi.
@@ -379,8 +429,15 @@ public class UserController {
     }
 
     private void callAuth(Runnable call) {
-        try {
+        fetchFromAuth(() -> {
             call.run();
+            return null;
+        });
+    }
+
+    private <T> T fetchFromAuth(Supplier<T> call) {
+        try {
+            return call.get();
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {

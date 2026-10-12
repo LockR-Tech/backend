@@ -46,6 +46,23 @@ class UserProfileServiceLookupTest {
     }
 
     @Test
+    void profileViewCarriesNamePartsAndPasswordFlag() {
+        UserProfile user = new UserProfile();
+        user.setId(7L);
+        user.setFirstName("Nguyễn Văn");
+        user.setLastName("An");
+        user.setRoles("CUSTOMER");
+        when(repository.findById(7L)).thenReturn(java.util.Optional.of(user));
+
+        com.huynqb.laundrylocker.user.dto.UserProfileView view = service.getProfileView(7L, false);
+
+        assertEquals("Nguyễn Văn An", view.fullName());
+        assertEquals("Nguyễn Văn", view.firstName());
+        assertEquals("An", view.lastName());
+        assertEquals(false, view.hasPassword());
+    }
+
+    @Test
     void getManyWithoutIdsSkipsDatabase() {
         assertTrue(service.getMany(List.of()).isEmpty());
         assertTrue(service.getMany(null).isEmpty());

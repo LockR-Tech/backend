@@ -113,6 +113,25 @@ public class UserProfileService {
         return toSummary(find(id));
     }
 
+    /// Hồ sơ của chính người dùng (`GET /api/user/profile`); `hasPassword` do controller lấy từ auth-service.
+    @Transactional(readOnly = true)
+    public com.huynqb.laundrylocker.user.dto.UserProfileView getProfileView(Long id, boolean hasPassword) {
+        UserProfile user = find(id);
+        UserSummary summary = toSummary(user);
+        return new com.huynqb.laundrylocker.user.dto.UserProfileView(
+                summary.id(),
+                summary.email(),
+                summary.phoneNumber(),
+                summary.fullName(),
+                user.getFirstName(),
+                user.getLastName(),
+                user.getBirthday(),
+                summary.status(),
+                summary.roles(),
+                summary.imageUrl(),
+                hasPassword);
+    }
+
     @Transactional(readOnly = true)
     public UserSummary getByPhone(String phoneNumber) {
         return userProfileRepository
