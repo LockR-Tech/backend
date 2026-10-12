@@ -216,6 +216,18 @@ public class LockerService {
         return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
     }
 
+    @Transactional
+    public LockerResponse updateLockerLocation(Long id, LockerLocationRequest request) {
+        LockerUnit locker =
+                lockerRepository.findById(id).orElseThrow(() -> new NotFoundException("Locker", id));
+        locker.setLatitude(request.latitude());
+        locker.setLongitude(request.longitude());
+        if (StringUtils.hasText(request.address())) {
+            locker.setAddress(request.address());
+        }
+        return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
+    }
+
     /// Admin đổi trạng thái tủ bằng tay. Giữ nguyên trạng thái (lưu lại form) thì không đổi nguồn,
     /// để tủ do phiếu chặn vẫn tự mở lại khi phiếu đóng.
     private void applyAdminStatus(LockerUnit locker, String status) {
