@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
@@ -14,14 +15,15 @@ import java.time.LocalDateTime;
  * Đóng đơn drone chờ quá hạn — mỗi kiểu chờ giữ một tài nguyên mà không ai nhả:
  *
  * <ul>
- *   <li>chưa thanh toán: giữ ô DRONE ở cả tủ gửi lẫn tủ nhận (job tự huỷ chung chỉ quét đơn
- *       `INITIALIZED`, đơn drone chờ ở `AWAITING_DISPATCH`);</li>
- *   <li>đã thanh toán mà người gửi chưa bỏ kiện hoặc đội bay chưa tiếp nhận: giữ tiền của khách;</li>
+ *   <li>chưa thanh toán: giữ ô DRONE ở tủ nhận (job tự huỷ chung chỉ quét đơn `INITIALIZED`, đơn
+ *       drone chờ ở `AWAITING_DISPATCH`);</li>
+ *   <li>đã thanh toán mà không KTV drone nào nhận lấy hàng: giữ tiền của khách — đơn kết thúc
+ *       "giao không hoàn tất";</li>
  *   <li>nợ phụ thu cân lệch không trả: giữ drone ở `RESERVED`.</li>
  * </ul>
  *
- * Hai kiểu sau đã thu tiền nên được tạo yêu cầu hoàn tiền sau khi việc huỷ commit. Tiền về
- * sau khi đơn đã huỷ ở đây vẫn được hoàn nhờ {@link DroneLateRefundScheduler}.
+ * Hai kiểu sau đã thu tiền nên được tạo yêu cầu hoàn tiền sau khi việc đóng đơn commit. Tiền về sau khi
+ * đơn đã đóng ở đây vẫn được hoàn nhờ {@link DroneLateRefundScheduler}.
  */
 @Slf4j
 @Component
@@ -31,6 +33,7 @@ public class DroneOrderTimeoutSweeper {
     private final LockerOrderRepository orderRepository;
     private final DroneOrderExpiryService expiryService;
     private final DroneOrderMaintenanceService maintenanceService;
+    private final DroneDeliveryFailureService failureService;
     private final DroneRefundService refundService;
     private final OrderRules rules;
 
@@ -39,7 +42,7 @@ public class DroneOrderTimeoutSweeper {
         try {
             int canceled = sweep(LocalDateTime.now());
             if (canceled > 0) {
-                log.info("Auto-canceled timed-out drone orders: {}", canceled);
+                log.info("Auto-closed timed-out drone orders: {}", canceled);
             }
         } catch (RuntimeException ex) {
             log.warn("Drone order timeout sweep failed: {}", ex.getMessage());
@@ -77,8 +80,14 @@ public class DroneOrderTimeoutSweeper {
         }
         boolean canceled = false;
         if (dispatchMinutes > 0
-                && DroneOrderExpiryService.undispatchedPast(order, now.minusMinutes(dispatchMinutes))) {
-            canceled = expiryService.cancelUndispatched(orderId, now.minusMinutes(dispatchMinutes), dispatchMinutes);
+                && DroneOrderExpiryService.unassignedPast(order, now.minusMinutes(dispatchMinutes))) {
+            // Khoá và kiểm lại nằm trong fail(): KTV vừa nhận thì chặng đã đổi và lệnh này bị từ chối.
+            if (expiryService.stillUnassigned(orderId, now.minusMinutes(dispatchMinutes))) {
+                failureService.fail(orderId, null, DroneDeliveryFailureService.Actor.SYSTEM,
+                        DroneFailureReasons.NO_TECHNICIAN_AVAILABLE,
+                        "Không có kỹ thuật viên drone nhận lấy hàng trong " + dispatchMinutes + " phút", null);
+                canceled = true;
+            }
         } else if (surchargeMinutes > 0
                 && "ACCEPTED".equals(order.getDeliveryStage())
                 && "UNPAID".equalsIgnoreCase(order.getPaymentStatus())) {

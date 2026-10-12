@@ -12,7 +12,14 @@ import com.huynqb.laundrylocker.order.dto.admin.OrderPaymentSummary;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
+import com.huynqb.laundrylocker.order.dto.DroneContactView;
+import com.huynqb.laundrylocker.order.dto.DroneIncidentLinkView;
+import com.huynqb.laundrylocker.order.dto.DronePickupView;
+import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
+import com.huynqb.laundrylocker.order.model.DronePickup;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
+import com.huynqb.laundrylocker.order.repository.DronePickupRepository;
+import com.huynqb.laundrylocker.order.settings.OrderRules;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
 import com.huynqb.laundrylocker.order.service.AdminReferenceResolver.Lookup;
@@ -42,6 +49,8 @@ public class DroneDeliveryQueryService {
     private final OrderStatusHistoryRepository historyRepository;
     private final AdminReferenceResolver references;
     private final DroneTelemetryRegistry telemetry;
+    private final DronePickupRepository pickupRepository;
+    private final OrderRules rules;
 
     @Transactional(readOnly = true)
     public DroneDeliveryOrderResponse get(Long orderId, Long userId) {
@@ -49,18 +58,25 @@ public class DroneDeliveryQueryService {
         if (userId == null || (!userId.equals(order.getUserId()) && !userId.equals(order.getReceiverUserId()))) {
             throw new BusinessException("ORDER_FORBIDDEN", "Order does not belong to user");
         }
-        return build(order);
+        // Mã lấy hàng chỉ dành cho người gửi: họ đọc cho KTV khi giao kiện.
+        return buildAll(List.of(row(order)), userId.equals(order.getUserId())).getFirst();
     }
 
     @Transactional(readOnly = true)
     public DroneDeliveryOrderResponse getForTechnician(Long orderId, Long userId) {
         LockerOrder order = requireDroneOrder(orderId);
-        DroneMission mission = missionRepository.findByOrderId(orderId).orElse(null);
-        if (mission != null && !Objects.equals(userId, mission.getAssignedByUserId())) {
+        Row row = row(order);
+        if (!visibleToTechnician(row, userId)) {
             throw new BusinessException("DRONE_MISSION_NOT_ASSIGNED_TO_USER",
-                    "Only the assigned drone technician may view this mission detail");
+                    "Only the drone technician handling this order may view its detail");
         }
-        return buildAll(List.of(new Row(order, mission))).getFirst();
+        return buildAll(List.of(row)).getFirst();
+    }
+
+    /// Đơn bị một phiếu sự cố chặn hoặc đã kết thúc vì phiếu đó — cho KTV sự cố và admin.
+    @Transactional(readOnly = true)
+    public List<DroneDeliveryOrderResponse> byTicket(Long ticketId) {
+        return buildAll(orderRepository.findDroneOrdersByTicket(ticketId).stream().map(this::row).toList());
     }
 
     @Transactional(readOnly = true)
@@ -107,9 +123,8 @@ public class DroneDeliveryQueryService {
                 .filter(order -> includeFinished
                         || StringUtils.hasText(deliveryStage)
                         || !DROP_REPORTED.equalsIgnoreCase(order.getDeliveryStage()))
-                .map(order -> new Row(order, missionRepository.findByOrderId(order.getId()).orElse(null)))
-                .filter(row -> admin || row.mission() == null
-                        || Objects.equals(userId, row.mission().getAssignedByUserId()))
+                .map(this::row)
+                .filter(row -> admin || visibleToTechnician(row, userId))
                 .filter(row -> droneUnitId == null
                         || (row.mission() != null && droneUnitId.equals(row.mission().getDroneUnitId())))
                 .toList();
@@ -126,13 +141,41 @@ public class DroneDeliveryQueryService {
     }
 
     private DroneDeliveryOrderResponse build(LockerOrder order) {
-        return buildAll(List.of(new Row(order, missionRepository.findByOrderId(order.getId()).orElse(null))))
-                .getFirst();
+        return buildAll(List.of(row(order))).getFirst();
+    }
+
+    private Row row(LockerOrder order) {
+        return new Row(
+                order,
+                missionRepository.findByOrderId(order.getId()).orElse(null),
+                pickupRepository.findByOrderId(order.getId()).orElse(null));
+    }
+
+    /**
+     * KTV drone chỉ thấy việc của mình: đơn họ đang được mời/đã nhận lấy hàng/đã lấy, và nhiệm vụ bay
+     * họ phụ trách. Đơn tạo trước khi có lấy hàng tận nhà (không có điểm lấy hàng) và chưa ai nhận thì
+     * vẫn là hàng chờ chung như cũ.
+     */
+    private static boolean visibleToTechnician(Row row, Long userId) {
+        if (row.mission() != null) {
+            return Objects.equals(userId, row.mission().getAssignedByUserId());
+        }
+        DronePickup pickup = row.pickup();
+        if (pickup != null) {
+            return Objects.equals(userId, pickup.getTechnicianId())
+                    && !DronePickup.SEARCHING.equals(pickup.getStatus())
+                    && !DronePickup.CANCELED.equals(pickup.getStatus());
+        }
+        return row.order().getPickupLatitude() == null;
     }
 
     /// Tra tủ, ô và người dùng một lần cho cả danh sách (không gọi Feign theo từng đơn).
     /// Tra cứu lỗi thì các field tên để null, màn theo dõi vẫn hiện được chặng và mốc giờ.
     private List<DroneDeliveryOrderResponse> buildAll(List<Row> rows) {
+        return buildAll(rows, false);
+    }
+
+    private List<DroneDeliveryOrderResponse> buildAll(List<Row> rows, boolean revealPickupCode) {
         if (rows.isEmpty()) {
             return List.of();
         }
@@ -159,6 +202,9 @@ public class DroneDeliveryQueryService {
                 userIds.add(mission.getLoadedByUserId());
                 userIds.add(mission.getDepositedByUserId());
             }
+            if (row.pickup() != null) {
+                userIds.add(row.pickup().getTechnicianId());
+            }
             List<OrderStatusHistory> history =
                     historyRepository.findByOrderIdOrderByCreatedAtDescIdDesc(order.getId());
             history.forEach(h -> userIds.add(h.getChangedByUserId()));
@@ -171,7 +217,7 @@ public class DroneDeliveryQueryService {
 
         List<DroneDeliveryOrderResponse> result = new ArrayList<>(rows.size());
         for (int i = 0; i < rows.size(); i++) {
-            result.add(toResponse(rows.get(i), histories.get(i), lockers, boxes, users, payments));
+            result.add(toResponse(rows.get(i), histories.get(i), lockers, boxes, users, payments, revealPickupCode));
         }
         return result;
     }
@@ -182,7 +228,8 @@ public class DroneDeliveryQueryService {
             Lookup<LockerInfo> lockers,
             Lookup<BoxInfo> boxes,
             Lookup<UserSummary> users,
-            Lookup<OrderPaymentSummary> payments) {
+            Lookup<OrderPaymentSummary> payments,
+            boolean revealPickupCode) {
         LockerOrder order = row.order();
         DroneMission mission = row.mission();
         OrderPaymentSummary payment = payments == null ? null : payments.get(order.getId());
@@ -258,7 +305,77 @@ public class DroneDeliveryQueryService {
                 mission == null ? null : mission.getDepositedAt(),
                 mission == null ? null : name(users.get(mission.getDepositedByUserId())),
                 mission == null ? null : mission.getEndedAt(),
-                mission == null ? null : mission.getFailedStage());
+                mission == null ? null : mission.getFailedStage(),
+                pickupView(order, row.pickup(), users, revealPickupCode),
+                new DroneContactView(
+                        StringUtils.hasText(order.getSenderName()) ? order.getSenderName() : name(customer),
+                        StringUtils.hasText(order.getSenderPhone())
+                                ? order.getSenderPhone()
+                                : customer == null ? null : customer.phoneNumber(),
+                        StringUtils.hasText(order.getSenderEmail())
+                                ? order.getSenderEmail()
+                                : customer == null ? null : customer.email()),
+                order.getReceiverEmail(),
+                blockView(order),
+                failureView(order));
+    }
+
+    private DronePickupView pickupView(
+            LockerOrder order, DronePickup pickup, Lookup<UserSummary> users, boolean revealPickupCode) {
+        if (order.getPickupLatitude() == null && pickup == null) {
+            return null;
+        }
+        UserSummary technician = pickup == null ? null : users.get(pickup.getTechnicianId());
+        return new DronePickupView(
+                pickup == null ? null : pickup.getStatus(),
+                order.getPickupAddress(),
+                order.getPickupLatitude(),
+                order.getPickupLongitude(),
+                order.getPickupNote(),
+                order.getPickupDistanceMeters(),
+                pickup == null ? null : pickup.getTechnicianId(),
+                name(technician),
+                technician == null ? null : technician.phoneNumber(),
+                pickup == null ? null : pickup.getTechnicianDistanceMeters(),
+                pickup == null ? null : pickup.getOfferedAt(),
+                pickup == null ? null : pickup.getOfferExpiresAt(),
+                pickup == null ? null : pickup.getAcceptedAt(),
+                pickup == null ? null : pickup.getPickedUpAt(),
+                pickup != null && revealPickupCode ? pickup.getPickupCode() : null,
+                pickup == null ? null : pickup.getFailureReason(),
+                pickup == null ? null : pickup.getFailureNote(),
+                pickup == null ? null : pickup.getPickupNote());
+    }
+
+    private DroneIncidentLinkView blockView(LockerOrder order) {
+        if (order.getDeliveryBlockReason() == null) {
+            return null;
+        }
+        int timeout = rules.droneBlockedTimeoutMinutes();
+        boolean inFlight = DroneMissionProgressService.IN_FLIGHT_STAGES.contains(order.getDeliveryStage());
+        return new DroneIncidentLinkView(
+                order.getDeliveryBlockReason(),
+                DroneFailureReasons.label(order.getDeliveryBlockReason()),
+                order.getDeliveryBlockTicketId(),
+                order.getDeliveryBlockNote(),
+                order.getDeliveryBlockedAt(),
+                // Drone đang bay thì đơn không tự đóng.
+                inFlight || timeout <= 0 || order.getDeliveryBlockedAt() == null
+                        ? null
+                        : order.getDeliveryBlockedAt().plusMinutes(timeout));
+    }
+
+    private static DroneIncidentLinkView failureView(LockerOrder order) {
+        if (order.getFailureReason() == null) {
+            return null;
+        }
+        return new DroneIncidentLinkView(
+                order.getFailureReason(),
+                DroneFailureReasons.label(order.getFailureReason()),
+                order.getFailureTicketId(),
+                "CANCELED".equals(order.getStatus()) ? order.getStaffNote() : null,
+                order.getFailedAt(),
+                null);
     }
 
     private boolean liveTracking(LockerOrder order, DroneMission mission) {
@@ -314,6 +431,6 @@ public class DroneDeliveryQueryService {
         };
     }
 
-    private record Row(LockerOrder order, DroneMission mission) {
+    private record Row(LockerOrder order, DroneMission mission, DronePickup pickup) {
     }
 }

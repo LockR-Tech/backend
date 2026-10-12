@@ -1,111 +1,58 @@
 package com.huynqb.laundrylocker.order.dto;
 
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
+/// Đặt giao hàng bằng drone, lấy hàng tận nhà. Người gửi cho biết lấy kiện ở đâu và giao tới tủ
+/// nào; hệ thống tự chọn tủ gửi (tủ có bãi đáp gần điểm lấy hàng nhất) và KTV drone tới lấy.
 public record CreateDroneDeliveryOrderRequest(
-        @NotNull Long sourceLockerId,
+        /// Tủ người nhận tới lấy hàng bằng mã mở ô.
         @NotNull Long destinationLockerId,
+        /// Ô DRONE mong muốn ở tủ nhận; bỏ trống thì hệ thống tự giữ một ô trống.
         Long preferredBoxId,
-        String description,
-        @NotNull Integer parcelWeightGrams,
-        /// Không còn dùng: tiền thu ở bước thanh toán, đơn không lưu phương thức dự kiến.
-        /// Giữ lại để client cũ còn gửi field này không bị từ chối.
-        String paymentMethod,
-        String fulfillmentMode,
-        /// Ô DRONE người gửi chọn tại tủ gửi. Bỏ trống thì hệ thống tự lấy một ô DRONE
-        /// còn trống của tủ gửi.
-        Long sourceBoxId,
-        /// Người nhận tại tủ đích. Bỏ trống cả hai ⇒ người đặt tự nhận.
-        @Size(max = 20) String receiverPhone,
-        @Size(max = 120) String receiverName,
-        /// Email nhận mã mở ô, tuỳ chọn. Bỏ trống thì dùng email tài khoản của người nhận (nếu có).
-        @Email @Size(max = 255) String receiverEmail,
+
+        /// Điểm lấy hàng: vị trí hiện tại của người gửi hoặc điểm họ ghim trên bản đồ.
+        @NotBlank @Size(min = 5, max = 500) String pickupAddress,
+        @NotNull @DecimalMin("-90") @DecimalMax("90") Double pickupLatitude,
+        @NotNull @DecimalMin("-180") @DecimalMax("180") Double pickupLongitude,
+        /// Chỉ dẫn cho KTV (tầng, cổng, giờ có nhà…), tuỳ chọn.
+        @Size(max = 500) String pickupNote,
+
+        @NotBlank @Size(max = 120) String senderName,
+        @NotBlank @Pattern(regexp = PHONE, message = "Sender phone number is not valid") String senderPhone,
+        @NotBlank @Email @Size(max = 255) String senderEmail,
+
+        @NotBlank @Size(max = 120) String receiverName,
+        @NotBlank @Pattern(regexp = PHONE, message = "Receiver phone number is not valid") String receiverPhone,
+        @NotBlank @Email @Size(max = 255) String receiverEmail,
+
+        /// Tối đa theo cấu hình tải của drone (mặc định 5 kg một đơn).
+        @NotNull @Min(1) Integer parcelWeightGrams,
+        /// DOCUMENT | FOOD | CLOTHING | ELECTRONICS | COSMETICS | OTHER.
+        @NotBlank @Size(max = 30) String parcelCategory,
+        @Size(max = 2000) String description,
         /// Kích thước kiện (cm), tuỳ chọn; có nhập thì phải nhập đủ ba cạnh và lọt khoang drone.
         @Min(1) Integer parcelLengthCm,
         @Min(1) Integer parcelWidthCm,
         @Min(1) Integer parcelHeightCm,
-        /// DOCUMENT | FOOD | CLOTHING | ELECTRONICS | COSMETICS | OTHER. Bỏ trống ⇒ OTHER.
-        @Size(max = 30) String parcelCategory,
         /// Giá trị khai báo (VND) làm căn cứ bồi thường, tuỳ chọn.
         @DecimalMin("0") BigDecimal declaredValue,
         Boolean fragile,
         /// Người gửi cam kết kiện không chứa hàng cấm bay (pin rời, chất lỏng, dễ cháy nổ…).
         /// Bắt buộc true.
-        Boolean prohibitedItemsDeclared) {
+        Boolean prohibitedItemsDeclared,
 
-    /// Các constructor ngắn dưới đây chỉ phục vụ code/test nội bộ viết trước khi đơn có phần
-    /// khai báo kiện hàng: chúng coi như người gửi đã cam kết không gửi hàng cấm.
-    public CreateDroneDeliveryOrderRequest(
-            Long sourceLockerId,
-            Long destinationLockerId,
-            Long preferredBoxId,
-            String description,
-            Integer parcelWeightGrams,
-            String paymentMethod,
-            String fulfillmentMode,
-            Long sourceBoxId,
-            String receiverPhone,
-            String receiverName,
-            String receiverEmail) {
-        this(sourceLockerId, destinationLockerId, preferredBoxId, description, parcelWeightGrams,
-                paymentMethod, fulfillmentMode, sourceBoxId, receiverPhone, receiverName, receiverEmail,
-                null, null, null, null, null, null, true);
-    }
+        /// DEMO | STANDARD; bỏ trống thì theo cấu hình.
+        String fulfillmentMode) {
 
-    public CreateDroneDeliveryOrderRequest(
-            Long sourceLockerId,
-            Long destinationLockerId,
-            Long preferredBoxId,
-            String description,
-            Integer parcelWeightGrams,
-            String paymentMethod,
-            String fulfillmentMode,
-            Long sourceBoxId,
-            String receiverPhone,
-            String receiverName) {
-        this(sourceLockerId, destinationLockerId, preferredBoxId, description, parcelWeightGrams,
-                paymentMethod, fulfillmentMode, sourceBoxId, receiverPhone, receiverName, null);
-    }
-
-    public CreateDroneDeliveryOrderRequest(
-            Long sourceLockerId,
-            Long destinationLockerId,
-            Long preferredBoxId,
-            String description,
-            Integer parcelWeightGrams,
-            String paymentMethod,
-            String fulfillmentMode,
-            Long sourceBoxId) {
-        this(sourceLockerId, destinationLockerId, preferredBoxId, description, parcelWeightGrams,
-                paymentMethod, fulfillmentMode, sourceBoxId, null, null);
-    }
-
-    public CreateDroneDeliveryOrderRequest(
-            Long sourceLockerId,
-            Long destinationLockerId,
-            Long preferredBoxId,
-            String description,
-            Integer parcelWeightGrams,
-            String paymentMethod,
-            String fulfillmentMode) {
-        this(sourceLockerId, destinationLockerId, preferredBoxId, description, parcelWeightGrams,
-                paymentMethod, fulfillmentMode, null, null, null);
-    }
-
-    public CreateDroneDeliveryOrderRequest(
-            Long sourceLockerId,
-            Long destinationLockerId,
-            Long preferredBoxId,
-            String description,
-            Integer parcelWeightGrams,
-            String paymentMethod) {
-        this(sourceLockerId, destinationLockerId, preferredBoxId, description, parcelWeightGrams, paymentMethod,
-                null, null, null, null);
-    }
+    /// Số điện thoại 9–15 chữ số, cho phép dấu `+` đầu.
+    public static final String PHONE = "^[+]?[0-9]{9,15}$";
 }

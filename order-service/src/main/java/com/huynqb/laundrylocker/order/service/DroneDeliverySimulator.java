@@ -34,8 +34,15 @@ public class DroneDeliverySimulator {
     void advanceEligibleMissions(LocalDateTime now) {
         long stageDelayMs = rules.droneDemoStageDelayMs();
         for (DroneMission mission : missionRepository.findByStatusIn(DroneMissionProgressService.IN_FLIGHT_STAGES)) {
-            LockerOrder order = orderRepository.findById(mission.getOrderId()).orElse(null);
-            if (order == null || !"DEMO".equalsIgnoreCase(order.getFulfillmentMode())) {
+            // Khoá đơn rồi mới đọc: lệnh "giao không hoàn tất" cũng khoá đơn, nên hai bên không chạy
+            // xen. Danh sách nhiệm vụ ở trên được đọc TRƯỚC khi khoá và có thể đã cũ — chặng của đơn
+            // (vừa đọc dưới khoá) phải còn khớp chặng của nhiệm vụ, nếu không đơn vừa bị đóng/đổi
+            // chặng và lượt này bỏ qua, thay vì ghi đè một đơn đã kết thúc về "đang bay".
+            LockerOrder order = orderRepository.findByIdForUpdate(mission.getOrderId()).orElse(null);
+            if (order == null
+                    || !"DEMO".equalsIgnoreCase(order.getFulfillmentMode())
+                    || !"AWAITING_DISPATCH".equals(order.getStatus())
+                    || !mission.getStatus().equals(order.getDeliveryStage())) {
                 continue;
             }
             LocalDateTime updatedAt = mission.getUpdatedAt();

@@ -271,6 +271,59 @@ public class LockerOrder {
     @Column(name = "incident_dispute_allowed")
     private Boolean incidentDisputeAllowed;
 
+    /// Liên hệ người gửi của đơn drone (V23) — bắt buộc với đơn lấy hàng tận nhà; thư báo
+    /// "đơn đã được phóng" và "giao không hoàn tất" gửi tới `senderEmail`.
+    @Column(name = "sender_name", length = 120)
+    private String senderName;
+
+    @Column(name = "sender_phone", length = 20)
+    private String senderPhone;
+
+    @Column(name = "sender_email")
+    private String senderEmail;
+
+    /// Điểm KTV drone tới lấy kiện: vị trí hiện tại của người gửi hoặc điểm họ ghim trên bản đồ.
+    @Column(name = "pickup_address", length = 500)
+    private String pickupAddress;
+
+    @Column(name = "pickup_latitude")
+    private Double pickupLatitude;
+
+    @Column(name = "pickup_longitude")
+    private Double pickupLongitude;
+
+    @Column(name = "pickup_note", length = 500)
+    private String pickupNote;
+
+    /// Khoảng cách đường chim bay điểm lấy hàng → tủ gửi hệ thống chọn.
+    @Column(name = "pickup_distance_meters")
+    private Integer pickupDistanceMeters;
+
+    /// Đơn đã thanh toán nhưng đang không phục vụ được (mã trong `DroneFailureReasons`); null
+    /// khi không bị chặn. Xem `DroneDeliveryBlockService`.
+    @Column(name = "delivery_block_reason", length = 40)
+    private String deliveryBlockReason;
+
+    @Column(name = "delivery_blocked_at")
+    private LocalDateTime deliveryBlockedAt;
+
+    /// Phiếu sự cố của locker-service gây chặn, nếu xác định được.
+    @Column(name = "delivery_block_ticket_id")
+    private Long deliveryBlockTicketId;
+
+    @Column(name = "delivery_block_note", length = 500)
+    private String deliveryBlockNote;
+
+    /// Lý do đơn kết thúc "giao không hoàn tất" (`deliveryStage = FAILED`) và phiếu sự cố liên quan.
+    @Column(name = "failure_reason", length = 40)
+    private String failureReason;
+
+    @Column(name = "failure_ticket_id")
+    private Long failureTicketId;
+
+    @Column(name = "failed_at")
+    private LocalDateTime failedAt;
+
     @Column(name = "idempotency_key", length = 120)
     private String idempotencyKey;
 

@@ -11,7 +11,9 @@ import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
+import com.huynqb.laundrylocker.order.model.DronePickup;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
+import com.huynqb.laundrylocker.order.repository.DronePickupRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
@@ -36,6 +38,8 @@ public class DroneOrderMaintenanceService {
     private final OrderStatusHistoryRepository historyRepository;
     private final NotificationClient notificationClient;
     private final OrderRules rules;
+    private final DronePickupRepository pickupRepository;
+    private final DroneDeliveryMailer mailer;
 
     private static final java.security.SecureRandom SEAL_RANDOM = new java.security.SecureRandom();
     private static final java.time.ZoneId FLIGHT_ZONE = java.time.ZoneId.of("Asia/Ho_Chi_Minh");
@@ -58,11 +62,7 @@ public class DroneOrderMaintenanceService {
         if (!"AWAITING_DISPATCH".equals(order.getStatus())) {
             throw new BusinessException("DRONE_ORDER_STATUS_INVALID", "Drone order is not awaiting dispatch");
         }
-        // Không gán drone cho một đơn mà ô gửi còn rỗng.
-        if (order.getParcelDroppedAt() == null) {
-            throw new BusinessException(
-                    "DRONE_PARCEL_NOT_DROPPED", "Sender has not confirmed dropping the parcel at the source locker");
-        }
+        assertParcelInHand(order, userId);
         assertFlightsNotSuspended();
 
         DroneMission existingMission = missionRepository.findByOrderId(orderId).orElse(null);
@@ -105,11 +105,12 @@ public class DroneOrderMaintenanceService {
             mission.setLastAcceptIdempotencyKey(idempotencyKey);
             mission = missionRepository.save(mission);
 
+            String previousStage = order.getDeliveryStage();
             order.setDeliveryStage("ACCEPTED");
             order.setStaffId(userId);
             orderRepository.save(order);
-            addJourneyEvent(order.getId(), "AWAITING_DISPATCH", "ACCEPTED", userId,
-                    "Điều phối viên tiếp nhận và gán drone " + reservedDrone.code());
+            addJourneyEvent(order.getId(), previousStage, "ACCEPTED", userId,
+                    "Kỹ thuật viên mang kiện về tủ gửi và gán drone " + reservedDrone.code());
             notifyDeliveryStageQuietly(order, "accepted", "10 phút");
             return toResponse(order, mission, reservedDrone);
         } catch (RuntimeException failure) {
@@ -149,7 +150,9 @@ public class DroneOrderMaintenanceService {
         BigDecimal surcharge = applyWeightSurcharge(order, request.payloadWeightGrams());
         mission.setPayloadWeightGrams(request.payloadWeightGrams());
         mission.setSealCode(sealCode);
-        mission.setWeightSurcharge(surcharge);
+        BigDecimal earlier = mission.getWeightSurcharge();
+        mission.setWeightSurcharge(
+                earlier == null ? surcharge : surcharge == null ? earlier : earlier.add(surcharge));
         mission.setParcelMatched(request.parcelMatched());
         mission.setPayloadSecured(request.payloadSecured());
         mission.setCompartmentLocked(request.compartmentLocked());
@@ -228,6 +231,12 @@ public class DroneOrderMaintenanceService {
         orderRepository.save(order);
         addJourneyEvent(order.getId(), "ACCEPTED", "LAUNCHING", userId,
                 "Đã phát lệnh khởi phóng drone " + updatedDrone.code());
+        // Drone đã cất cánh: người gửi biết đơn đang tới ai, người nhận biết có đơn từ ai.
+        String mailed = mailer.launched(order, mission).describe(order);
+        addJourneyEvent(order.getId(), "LAUNCHING", "LAUNCHING", null,
+                mailed == null
+                        ? "Chưa gửi được email báo đơn đã phóng cho người gửi và người nhận."
+                        : "Đã gửi email báo đơn đã phóng cho " + mailed + ".");
         notifyDeliveryStageQuietly(order, "launching", "9 phút");
         return toResponse(order, mission, updatedDrone);
     }
@@ -318,57 +327,6 @@ public class DroneOrderMaintenanceService {
     }
 
     /**
-     * Chuyến bay không giao được hàng sau khi đã phóng (drone lỗi, mất tín hiệu, thời tiết, bãi
-     * đáp/ô nhận hỏng…). Trước khi có thao tác này đơn kẹt mãi ở chặng bay: đội bay chỉ huỷ được
-     * trước khi phóng, còn hoàn tiền chỉ chạy cho đơn `CANCELED`.
-     *
-     * <p>Đơn sang `CANCELED` với chặng `FAILED`, ô nhận được nhả, drone chuyển `FAULT` để phải
-     * kiểm tra (và lấy kiện ra) trước khi nhận nhiệm vụ khác. Nơi gọi tạo yêu cầu hoàn tiền sau
-     * khi giao dịch này commit. Chỉ điều phối viên đã nhận nhiệm vụ hoặc admin được báo.
-     */
-    @Transactional
-    public DroneMissionResponse reportFlightFailure(
-            Long orderId, Long userId, boolean admin, CancelDroneOrderRequest request) {
-        LockerOrder order = findDroneOrder(orderId);
-        DroneMission mission =
-                missionRepository
-                        .findByOrderId(orderId)
-                        .orElseThrow(() -> new NotFoundException("DroneMission", orderId));
-        if (!admin) {
-            validateAssignedOperator(mission, userId);
-        }
-        if (!DroneMissionProgressService.IN_FLIGHT_STAGES.contains(mission.getStatus())) {
-            throw new BusinessException(
-                    "DRONE_MISSION_STATUS_INVALID", "Only an in-flight drone mission can be reported as failed");
-        }
-        String note = requireReasonNote(request);
-        String failedStage = mission.getStatus();
-        String reason = cancelReasonLabel(request.reasonCode()) + (note == null ? "" : " · " + note);
-
-        groundDroneQuietly(
-                mission.getDroneUnitId(), "Flight of order " + order.getOrderCode() + " failed: " + reason);
-        releaseDestinationBoxQuietly(order);
-
-        order.setCancelReason(request.reasonCode());
-        order.setStaffNote(note);
-        order.setPinCode(null);
-        order.setStatus("CANCELED");
-        order.setDeliveryStage("FAILED");
-        orderRepository.save(order);
-        addJourneyEvent(order.getId(), failedStage, "FAILED", userId,
-                "Chuyến bay không thành công ở chặng " + failedStage + ": " + reason);
-
-        mission.setFailedStage(failedStage);
-        closeMission(mission, "FAILED", userId, request.reasonCode(), note);
-
-        notifyFlightFailureQuietly(order.getUserId(), order);
-        if (order.getReceiverUserId() != null && !order.getReceiverUserId().equals(order.getUserId())) {
-            notifyFlightFailureQuietly(order.getReceiverUserId(), order);
-        }
-        return toResponse(order, mission, null);
-    }
-
-    /**
      * Đóng đơn đang nợ phụ thu cân lệch mà không được trả: khách chủ động từ chối
      * ({@code customerUserId} khác null), hoặc quá hạn ({@code cutoff} khác null, do
      * {@link DroneOrderTimeoutSweeper} gọi). Trước đây khách không tự thoát được và drone bị giữ
@@ -446,6 +404,81 @@ public class DroneOrderMaintenanceService {
         }
     }
 
+    /**
+     * Drone đã gán gặp sự cố trước khi phóng: đổi sang drone rảnh khác tại tủ gửi, thay vì phải đóng
+     * đơn. Kiện phải được nạp và kiểm lại trên drone mới nên nhiệm vụ quay về "chờ nạp hàng"; cân
+     * nặng và phụ thu đã ghi được giữ.
+     */
+    @Transactional
+    public DroneMissionResponse changeDrone(Long orderId, Long userId, AcceptDroneOrderRequest request) {
+        LockerOrder order = findDroneOrder(orderId);
+        DroneMission mission =
+                missionRepository.findByOrderId(orderId).orElseThrow(() -> new NotFoundException("DroneMission", orderId));
+        validateAssignedOperator(mission, userId);
+        if (!"ACCEPTED".equals(order.getDeliveryStage())
+                || !("AWAITING_LOADING".equals(mission.getStatus()) || "READY_TO_LAUNCH".equals(mission.getStatus()))) {
+            throw new BusinessException(
+                    "DRONE_MISSION_STATUS_INVALID", "The drone can only be changed before launch");
+        }
+        if (Objects.equals(mission.getDroneUnitId(), request.droneUnitId())) {
+            throw new BusinessException("DRONE_UNCHANGED", "This drone is already assigned to the mission");
+        }
+        DroneUnitDto next = fetchDrone(request.droneUnitId());
+        validateDronePreflight(next);
+        if (!Objects.equals(order.getSourceLockerId(), next.lockerId())) {
+            throw new BusinessException(
+                    "DRONE_WRONG_SOURCE_LOCKER", "Selected drone is not stationed at the order source locker");
+        }
+        DroneUnitDto reserved = transitionDroneStatus(
+                next.id(), "IDLE", "RESERVED", "Reserved for order " + order.getOrderCode());
+        String previousCode = mission.getDroneCode();
+        // Drone cũ: còn RESERVED thì trả về rảnh; đã FAULT/MAINTENANCE thì giữ nguyên trạng thái mới.
+        releaseReservationQuietly(mission.getDroneUnitId());
+
+        mission.setDroneUnitId(reserved.id());
+        mission.setDroneCode(reserved.code());
+        mission.setStatus("AWAITING_LOADING");
+        mission.setLoadedAt(null);
+        mission.setLoadedByUserId(null);
+        mission.setReadyToLaunchAt(null);
+        mission.setParcelMatched(false);
+        mission.setPayloadSecured(false);
+        mission.setCompartmentLocked(false);
+        mission.setLastLoadingIdempotencyKey(null);
+        missionRepository.save(mission);
+        addJourneyEvent(order.getId(), "ACCEPTED", "ACCEPTED", userId,
+                "Đổi drone " + previousCode + " → " + reserved.code() + "; cần nạp và kiểm lại kiện");
+        return toResponse(order, mission, reserved);
+    }
+
+    /**
+     * Chỉ KTV đã lấy kiện ở nhà người gửi mới gán drone, và chỉ khi kiện đã trên tay (chặng
+     * `PICKED_UP`). Đơn tạo trước khi có lấy hàng tận nhà (không có điểm lấy hàng) giữ quy tắc cũ:
+     * người gửi đã xác nhận bỏ kiện vào ô gửi.
+     */
+    private void assertParcelInHand(LockerOrder order, Long userId) {
+        if (order.getPickupLatitude() == null) {
+            if (order.getParcelDroppedAt() == null) {
+                throw new BusinessException(
+                        "DRONE_PARCEL_NOT_DROPPED",
+                        "Sender has not confirmed dropping the parcel at the source locker");
+            }
+            return;
+        }
+        DronePickup pickup = pickupRepository.findByOrderId(order.getId()).orElse(null);
+        if (!"PICKED_UP".equals(order.getDeliveryStage())
+                || pickup == null
+                || !DronePickup.PICKED_UP.equals(pickup.getStatus())) {
+            throw new BusinessException(
+                    "DRONE_PARCEL_NOT_PICKED_UP", "The parcel has not been picked up from the sender yet");
+        }
+        if (!Objects.equals(pickup.getTechnicianId(), userId)) {
+            throw new BusinessException(
+                    "DRONE_PICKUP_NOT_ASSIGNED_TO_USER",
+                    "Only the drone technician who picked up this parcel may assign a drone");
+        }
+    }
+
     private String requireReasonNote(CancelDroneOrderRequest request) {
         String note = StringUtils.hasText(request.note()) ? request.note().trim() : null;
         if (Integer.valueOf(5).equals(request.reasonCode()) && note == null) {
@@ -464,20 +497,6 @@ public class DroneOrderMaintenanceService {
         missionRepository.save(mission);
     }
 
-    /// Drone vừa hỏng chuyến phải được kiểm tra trước khi bay lại. Trạng thái đội bay có thể
-    /// đã bị đổi (kỹ thuật viên tự báo FAULT) hoặc locker-service lỗi: không được chặn việc
-    /// đóng đơn và hoàn tiền cho khách.
-    private void groundDroneQuietly(Long droneUnitId, String reason) {
-        if (droneUnitId == null) {
-            return;
-        }
-        try {
-            transitionDroneStatus(droneUnitId, "IN_FLIGHT", "FAULT", reason);
-        } catch (RuntimeException ignored) {
-            // Xem chú thích trên.
-        }
-    }
-
     /// Ô nhận chưa có hàng. Lỗi nhả ô không được chặn việc đóng đơn; job đối soát nhả ô mồ côi sau.
     private void releaseDestinationBoxQuietly(LockerOrder order) {
         if (order.getReservedBoxId() == null) {
@@ -487,22 +506,6 @@ public class DroneOrderMaintenanceService {
             lockerClient.releaseBox(order.getReservedBoxId());
         } catch (RuntimeException ignored) {
             // Xem chú thích trên.
-        }
-    }
-
-    private void notifyFlightFailureQuietly(Long userId, LockerOrder order) {
-        try {
-            notificationClient.requestNotification(
-                    new NotificationRequest(
-                            userId,
-                            "Giao hàng bằng drone không thành công",
-                            "Chuyến bay của đơn " + order.getOrderCode()
-                                    + " không hoàn thành. Đội bay sẽ liên hệ người gửi để trả lại kiện hàng.",
-                            "DRONE_DELIVERY_STATUS_CHANGED",
-                            order.getId(),
-                            "ORDER"));
-        } catch (RuntimeException ignored) {
-            // Trạng thái đơn là nguồn sự thật; thông báo chỉ là kênh báo nhanh.
         }
     }
 

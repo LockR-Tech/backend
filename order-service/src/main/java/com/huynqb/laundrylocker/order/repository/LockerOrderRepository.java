@@ -35,6 +35,13 @@ public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long>,
 
     long countByUserIdAndTypeAndStatus(Long userId, String type, String status);
 
+    /// Đơn drone bị một phiếu sự cố chặn hoặc đã kết thúc vì phiếu đó — để KTV sự cố và admin
+    /// thấy phiếu ảnh hưởng tới những đơn nào.
+    @Query("select o from LockerOrder o where o.type = 'DRONE_DELIVERY' "
+            + "and (o.deliveryBlockTicketId = :ticketId or o.failureTicketId = :ticketId) "
+            + "order by o.updatedAt desc")
+    List<LockerOrder> findDroneOrdersByTicket(@Param("ticketId") Long ticketId);
+
     /// Đơn drone đã đóng mà kiện (người gửi đã bỏ vào hệ thống) chưa được trả lại.
     List<LockerOrder> findByTypeAndStatusAndParcelDroppedAtIsNotNullAndParcelReturnedAtIsNull(
             String type, String status);

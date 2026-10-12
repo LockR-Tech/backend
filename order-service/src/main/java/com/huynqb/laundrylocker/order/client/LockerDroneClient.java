@@ -21,6 +21,15 @@ public interface LockerDroneClient {
     @GetMapping("/internal/drones/{id}")
     ApiResponse<DroneUnitDto> getDroneUnit(@PathVariable Long id);
 
+    /// Mọi drone (lọc theo tủ nếu có) — để chọn tủ gửi còn drone dùng được.
+    @GetMapping("/internal/drones")
+    ApiResponse<java.util.List<DroneUnitDto>> listDroneUnits(
+            @org.springframework.web.bind.annotation.RequestParam(value = "lockerId", required = false) Long lockerId);
+
+    /// Phiếu sự cố còn mở (OPEN/IN_PROGRESS) — để gắn đơn drone bị chặn với đúng phiếu.
+    @GetMapping("/internal/reports/open")
+    ApiResponse<java.util.List<com.huynqb.laundrylocker.order.dto.OpenReportDto>> openReports();
+
     @GetMapping("/internal/lockers/{id}/layout")
     ApiResponse<LockerLayoutDto> getLockerLayout(@PathVariable Long id);
 

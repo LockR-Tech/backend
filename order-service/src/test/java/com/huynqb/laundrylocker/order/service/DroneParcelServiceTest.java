@@ -39,6 +39,8 @@ class DroneParcelServiceTest {
     private NotificationClient notificationClient;
     @Mock
     private UserClient userClient;
+    @Mock
+    private com.huynqb.laundrylocker.order.repository.DronePickupRepository pickupRepository;
 
     @Test
     void senderConfirmsDropOffOnceTheOrderIsPaid() {
@@ -135,7 +137,8 @@ class DroneParcelServiceTest {
 
     private DroneParcelService service() {
         return new DroneParcelService(
-                orderRepository, missionRepository, historyRepository, lockerClient, notificationClient, userClient);
+                orderRepository, missionRepository, historyRepository, lockerClient, notificationClient, userClient,
+                pickupRepository);
     }
 
     private static String code(Runnable call) {

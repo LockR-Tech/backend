@@ -39,6 +39,16 @@ class DroneOrderMaintenanceServiceTest {
     private OrderStatusHistoryRepository historyRepository;
     @Mock
     private NotificationClient notificationClient;
+    @Mock
+    private com.huynqb.laundrylocker.order.repository.DronePickupRepository pickupRepository;
+    @Mock
+    private DroneDeliveryMailer mailer;
+
+    @org.junit.jupiter.api.BeforeEach
+    void mailerReportsNothingSent() {
+        // Thư báo đơn đã phóng: ở các test này kênh thư không phải điều đang kiểm.
+        lenient().when(mailer.launched(any(), any())).thenReturn(new DroneDeliveryMailer.Outcome(false, false));
+    }
 
     @Test
     void acceptCreatesAwaitingLoadingMissionWhenPreflightPasses() {
@@ -50,7 +60,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
@@ -97,7 +107,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -131,7 +141,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setSourceBoxId(8001L);
         DroneMission mission = new DroneMission();
@@ -181,7 +191,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -214,7 +224,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -247,7 +257,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -290,7 +300,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -318,7 +328,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setStatus("AWAITING_DISPATCH");
         order.setSourceBoxId(8001L);
@@ -369,99 +379,6 @@ class DroneOrderMaintenanceServiceTest {
     }
 
     @Test
-    void flightFailureClosesOrderReleasesDestinationBoxAndGroundsDrone() {
-        DroneOrderMaintenanceService service = newService();
-        LockerOrder order = droneOrder(21L, "EN_ROUTE");
-        order.setReceiverUserId(55L);
-        DroneMission mission = inFlightMission("EN_ROUTE");
-        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
-        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
-
-        DroneMissionResponse response =
-                service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(2, " Mat tin hieu "));
-
-        assertEquals("FAILED", response.missionStatus());
-        assertEquals("FAILED", response.deliveryStage());
-        // CANCELED là điều kiện để DroneRefundService tạo yêu cầu hoàn tiền.
-        assertEquals("CANCELED", order.getStatus());
-        assertEquals("FAILED", order.getDeliveryStage());
-        assertEquals(2, order.getCancelReason());
-        assertEquals("Mat tin hieu", order.getStaffNote());
-        assertEquals("FAILED", mission.getStatus());
-        assertEquals("EN_ROUTE", mission.getFailedStage());
-        assertEquals(2, mission.getEndReason());
-        assertNotNull(mission.getEndedAt());
-        verify(lockerClient).releaseBox(9001L);
-        verify(lockerDroneClient).transitionDroneStatus(
-                9L,
-                new DroneStatusTransitionRequest(
-                        "IN_FLIGHT", "FAULT", "Flight of order ORD-21 failed: Drone fault · Mat tin hieu"));
-        verify(missionRepository, never()).delete(any());
-        // Báo cả người gửi lẫn người nhận có tài khoản.
-        verify(notificationClient, times(2)).requestNotification(any());
-    }
-
-    @Test
-    void flightFailureStillClosesOrderWhenFleetAndLockerSyncFail() {
-        DroneOrderMaintenanceService service = newService();
-        LockerOrder order = droneOrder(21L, "ARRIVED");
-        DroneMission mission = inFlightMission("ARRIVED");
-        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
-        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
-        when(lockerDroneClient.transitionDroneStatus(any(), any()))
-                .thenThrow(new IllegalStateException("drone already FAULT"));
-        doThrow(new IllegalStateException("locker-service down")).when(lockerClient).releaseBox(9001L);
-
-        service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(3, null));
-
-        assertEquals("CANCELED", order.getStatus());
-        assertEquals("FAILED", mission.getStatus());
-    }
-
-    @Test
-    void flightFailureIsRejectedBeforeLaunchAndForOtherTechnicians() {
-        DroneOrderMaintenanceService service = newService();
-        LockerOrder order = droneOrder(21L, "ACCEPTED");
-        DroneMission mission = inFlightMission("READY_TO_LAUNCH");
-        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
-        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
-
-        BusinessException notInFlight = assertThrows(
-                BusinessException.class,
-                () -> service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(2, null)));
-        assertEquals("DRONE_MISSION_STATUS_INVALID", notInFlight.getCode());
-
-        mission.setStatus("EN_ROUTE");
-        BusinessException notAssigned = assertThrows(
-                BusinessException.class,
-                () -> service.reportFlightFailure(21L, 7L, false, new CancelDroneOrderRequest(2, null)));
-        assertEquals("DRONE_MISSION_NOT_ASSIGNED_TO_USER", notAssigned.getCode());
-
-        BusinessException noteRequired = assertThrows(
-                BusinessException.class,
-                () -> service.reportFlightFailure(21L, 99L, false, new CancelDroneOrderRequest(5, " ")));
-        assertEquals("DRONE_CANCEL_NOTE_REQUIRED", noteRequired.getCode());
-
-        assertEquals("AWAITING_DISPATCH", order.getStatus());
-        verify(lockerClient, never()).releaseBox(any());
-        verify(missionRepository, never()).save(any());
-    }
-
-    @Test
-    void adminMayReportFlightFailureOfAnyMission() {
-        DroneOrderMaintenanceService service = newService();
-        LockerOrder order = droneOrder(21L, "DEPARTED");
-        DroneMission mission = inFlightMission("DEPARTED");
-        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
-        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
-
-        service.reportFlightFailure(21L, 1L, true, new CancelDroneOrderRequest(1, null));
-
-        assertEquals("FAILED", mission.getStatus());
-        assertEquals(1L, mission.getEndedByUserId());
-    }
-
-    @Test
     void acceptIsRejectedUntilTheSenderConfirmsTheParcelIsInTheSourceCell() {
         DroneOrderMaintenanceService service = newService();
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
@@ -502,7 +419,7 @@ class DroneOrderMaintenanceServiceTest {
                 lockerClient,
                 historyRepository,
                 notificationClient,
-                TestOrderRules.of(java.util.Map.of("app.order.drone-flights-suspended", true)));
+                TestOrderRules.of(java.util.Map.of("app.order.drone-flights-suspended", true)), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
 
@@ -634,7 +551,7 @@ class DroneOrderMaintenanceServiceTest {
                 lockerClient,
                 historyRepository,
                 notificationClient,
-                TestOrderRules.defaults());
+                TestOrderRules.defaults(), pickupRepository, mailer);
     }
 
     private DroneMission inFlightMission(String status) {
@@ -659,7 +576,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -688,7 +605,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -740,7 +657,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         awaitingLoading(order);
 
@@ -762,7 +679,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = awaitingLoading(order);
 
@@ -790,7 +707,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         awaitingLoading(order);
 
@@ -813,7 +730,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults());
+                        TestOrderRules.defaults(), pickupRepository, mailer);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setPaymentStatus("UNPAID");
         DroneMission mission = new DroneMission();

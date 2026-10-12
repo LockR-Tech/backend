@@ -42,6 +42,7 @@ public class DroneParcelService {
     private final LockerClient lockerClient;
     private final NotificationClient notificationClient;
     private final UserClient userClient;
+    private final com.huynqb.laundrylocker.order.repository.DronePickupRepository pickupRepository;
 
     /// Người đặt xác nhận đã bỏ kiện vào ô gửi. Gọi lại nhiều lần không đổi mốc đã ghi.
     @Transactional
@@ -49,6 +50,11 @@ public class DroneParcelService {
         LockerOrder order = findDroneOrder(orderId);
         if (userId == null || !userId.equals(order.getUserId())) {
             throw new BusinessException("ORDER_FORBIDDEN", "Order does not belong to user");
+        }
+        if (order.getPickupLatitude() != null) {
+            // Đơn lấy hàng tận nhà: KTV drone xác nhận đã lấy kiện, người gửi không tự bỏ vào tủ.
+            throw new BusinessException(
+                    "DRONE_ORDER_STATUS_INVALID", "A technician picks this parcel up at the sender's address");
         }
         if (order.getParcelDroppedAt() != null) {
             return;
@@ -83,10 +89,19 @@ public class DroneParcelService {
     public void confirmReturn(Long orderId, Long userId, boolean admin, String note) {
         LockerOrder order = findDroneOrder(orderId);
         DroneMission mission = missionRepository.findByOrderId(orderId).orElse(null);
-        if (!admin && mission != null && !Objects.equals(mission.getAssignedByUserId(), userId)) {
-            throw new BusinessException(
-                    "DRONE_MISSION_NOT_ASSIGNED_TO_USER",
-                    "Only the drone technician who accepted this mission may return its parcel");
+        if (!admin) {
+            // Người đang giữ kiện mới trả được: KTV phụ trách nhiệm vụ, hoặc (chưa có nhiệm vụ) KTV đã
+            // lấy kiện ở nhà người gửi.
+            Long holder = mission != null
+                    ? mission.getAssignedByUserId()
+                    : pickupRepository.findByOrderId(orderId)
+                            .map(com.huynqb.laundrylocker.order.model.DronePickup::getTechnicianId)
+                            .orElse(null);
+            if (holder != null && !Objects.equals(holder, userId)) {
+                throw new BusinessException(
+                        "DRONE_MISSION_NOT_ASSIGNED_TO_USER",
+                        "Only the drone technician holding this parcel may return it");
+            }
         }
         if (!DroneParcelCustody.returnPending(order, mission)) {
             throw new BusinessException(

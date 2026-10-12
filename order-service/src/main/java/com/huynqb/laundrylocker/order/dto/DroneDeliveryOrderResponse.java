@@ -95,7 +95,15 @@ public record DroneDeliveryOrderResponse(
         String depositedByName,
         /// Nhiệm vụ kết thúc không giao được (huỷ trước khi phóng / chuyến bay thất bại).
         LocalDateTime missionEndedAt,
-        String failedStage) {
+        String failedStage,
+        /// Lấy hàng tận nhà; null với đơn cũ (người gửi tự mang kiện ra tủ).
+        DronePickupView pickup,
+        DroneContactView sender,
+        String receiverEmail,
+        /// Đơn đang gặp sự cố nhưng chưa kết thúc; null khi không bị chặn.
+        DroneIncidentLinkView block,
+        /// Đơn đã kết thúc "giao không hoàn tất"; null với đơn khác.
+        DroneIncidentLinkView failure) {
 
     /** Constructor tương thích cho response ngay sau khi tạo đơn/chưa có mission. */
     public DroneDeliveryOrderResponse(
@@ -115,6 +123,7 @@ public record DroneDeliveryOrderResponse(
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, false,
                 null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null,
+                null, null, null, null, null);
     }
 }
