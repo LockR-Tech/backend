@@ -45,5 +45,10 @@ public record LockerReportResponse(
         Long droneUnitId,
         String droneCode,
         Long externalIncidentId,
-        String ticketType) {
+        String ticketType,
+        // Họ tên KTV đang được giao phiếu (null khi chưa giao / không tra được)
+        String assignedToTechnicianName,
+        // Số lần KTV đã tự gia hạn SLA và số lần tối đa admin cho phép
+        Integer slaExtensionsUsed,
+        Integer slaExtensionsMax) {
 }

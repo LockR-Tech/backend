@@ -18,6 +18,16 @@ public class LockerRules {
         return settings.getInt(SLA_HOURS);
     }
 
+    /// Số lần KTV được tự gia hạn SLA trên một phiếu (0 = không được tự gia hạn).
+    public int slaMaxExtensions() {
+        return settings.getInt(SLA_MAX_EXTENSIONS);
+    }
+
+    /// Số giờ tối đa mỗi lần KTV tự gia hạn SLA.
+    public int slaMaxHoursPerExtension() {
+        return settings.getInt(SLA_MAX_HOURS_PER_EXTENSION);
+    }
+
     public int technicianClaimBlockOverdue() {
         return settings.getInt(TECHNICIAN_CLAIM_BLOCK_OVERDUE);
     }

@@ -16,6 +16,8 @@ import static com.huynqb.laundrylocker.common.settings.SettingDefinition.string;
 public class LockerSettingsCatalog implements SettingsCatalog {
 
     public static final String SLA_HOURS = "app.maintenance.sla-hours";
+    public static final String SLA_MAX_EXTENSIONS = "app.maintenance.sla-max-extensions";
+    public static final String SLA_MAX_HOURS_PER_EXTENSION = "app.maintenance.sla-max-hours-per-extension";
     public static final String TECHNICIAN_CLAIM_BLOCK_OVERDUE = "app.maintenance.technician-claim-block-overdue";
     public static final String PENALTY_WARNING_OVERDUE = "app.maintenance.penalty-warning-overdue";
     public static final String PENALTY_RESTRICTED_OVERDUE = "app.maintenance.penalty-restricted-overdue";
@@ -41,6 +43,13 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                 integer(SLA_HOURS, MAINTENANCE, "SLA xử lý phiếu bảo trì",
                         "Số giờ tối đa từ lúc tạo phiếu đến khi xử lý xong; quá mốc này phiếu bị tính trễ hạn.",
                         4, 1, 720, "giờ"),
+                integer(SLA_MAX_EXTENSIONS, MAINTENANCE, "Số lần KTV được tự gia hạn SLA mỗi phiếu",
+                        "KTV đang giữ phiếu tự gia hạn hạn xử lý tối đa số lần này (phải nêu lý do). "
+                                + "0 = KTV không được tự gia hạn; admin gia hạn trên web không tính vào giới hạn.",
+                        2, 0, 20, "lần").asPublic(),
+                integer(SLA_MAX_HOURS_PER_EXTENSION, MAINTENANCE, "Số giờ tối đa mỗi lần KTV gia hạn SLA",
+                        "Mỗi lần KTV tự gia hạn chỉ được cộng thêm tối đa số giờ này vào hạn xử lý của phiếu.",
+                        24, 1, 720, "giờ").asPublic(),
                 integer(TECHNICIAN_CLAIM_BLOCK_OVERDUE, MAINTENANCE, "Chặn KTV nhận việc khi trễ hạn từ",
                         "KTV đang giữ từ số phiếu trễ hạn SLA này trở lên (đang xử lý) thì không nhận thêm phiếu mới.",
                         3, 1, 100, "phiếu"),
