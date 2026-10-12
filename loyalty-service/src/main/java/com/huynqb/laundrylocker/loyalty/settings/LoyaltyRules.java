@@ -36,4 +36,14 @@ public class LoyaltyRules {
     public int stampIncrement() {
         return settings.getInt(STAMP_INCREMENT);
     }
+
+    /// Điểm cho số tiền đơn đã thanh toán: 1 điểm mỗi `app.loyalty.vnd-per-point` đồng, làm tròn xuống.
+    public int pointsFor(java.math.BigDecimal paidAmount) {
+        if (paidAmount == null || paidAmount.signum() <= 0) {
+            return 0;
+        }
+        java.math.BigDecimal points = paidAmount.divide(
+                java.math.BigDecimal.valueOf(Math.max(1, settings.getInt(VND_PER_POINT))), 0, java.math.RoundingMode.FLOOR);
+        return points.min(java.math.BigDecimal.valueOf(Integer.MAX_VALUE)).intValue();
+    }
 }
