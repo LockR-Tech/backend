@@ -28,6 +28,11 @@ public class AuthAccount {
     @Column(name = "password_hash", nullable = false, length = 500)
     private String passwordHash;
 
+    /// false = mật khẩu ngẫu nhiên do hệ thống tạo (tài khoản Google/Firebase, đăng ký OTP không đặt mật khẩu):
+    /// người dùng chưa biết mật khẩu nào nên được đặt mật khẩu đầu tiên mà không cần mật khẩu hiện tại.
+    @Column(name = "password_set", nullable = false)
+    private Boolean passwordSet = true;
+
     @Column(name = "auth_provider", nullable = false, length = 30)
     private String authProvider = "LOCAL";
 
