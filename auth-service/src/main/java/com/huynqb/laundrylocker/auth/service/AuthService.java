@@ -280,14 +280,17 @@ public class AuthService {
                 .toList();
     }
 
+    /// Đăng nhập bằng số điện thoại: số lấy từ Firebase ID token đã xác minh (người dùng đã nhập OTP
+    /// của Firebase Phone Auth), không lấy từ số client tự gửi lên.
     @Transactional
     public Map<String, Object> phoneLogin(Map<String, Object> request) {
-        String phoneNumber = firstText(request, "phoneNumber", "phone", "idToken");
-        if (!StringUtils.hasText(phoneNumber)) {
-            throw new BusinessException("AUTH_PHONE_REQUIRED", "phoneNumber or idToken is required");
+        String idToken = text(request, "idToken");
+        if (!StringUtils.hasText(idToken)) {
+            throw new BusinessException(
+                    "AUTH_PHONE_TOKEN_REQUIRED", "Cần mã xác thực số điện thoại (Firebase ID token)");
         }
-        return authAccountRepository
-                .findByPhoneNumber(phoneNumber)
+        String phoneNumber = verifiedFirebasePhone(idToken);
+        return findAccountByPhone(phoneNumber)
                 .map(
                         account -> {
                             account.setPhoneVerified(true);
@@ -307,13 +310,44 @@ public class AuthService {
                         });
     }
 
+    /// Số điện thoại trong Firebase ID token đã xác minh chữ ký (claim `phone_number`, dạng +84…).
+    String verifiedFirebasePhone(String idToken) {
+        FirebaseToken decoded;
+        try {
+            decoded = FirebaseAuth.getInstance().verifyIdToken(idToken);
+        } catch (Exception e) {
+            throw new BusinessException("AUTH_FIREBASE_INVALID", "Mã xác thực số điện thoại không hợp lệ hoặc đã hết hạn");
+        }
+        Object phone = decoded.getClaims().get("phone_number");
+        if (!(phone instanceof String value) || !StringUtils.hasText(value)) {
+            throw new BusinessException("AUTH_PHONE_NOT_VERIFIED", "Mã xác thực không chứa số điện thoại đã xác minh");
+        }
+        return value.trim();
+    }
+
+    /// Firebase trả +84…, tài khoản có thể lưu 0… ⇒ thử cả hai dạng.
+    private Optional<AuthAccount> findAccountByPhone(String phone) {
+        Optional<AuthAccount> exact = authAccountRepository.findByPhoneNumber(phone);
+        if (exact.isPresent()) {
+            return exact;
+        }
+        if (phone.startsWith("+84")) {
+            return authAccountRepository.findByPhoneNumber("0" + phone.substring(3));
+        }
+        if (phone.startsWith("0")) {
+            return authAccountRepository.findByPhoneNumber("+84" + phone.substring(1));
+        }
+        return Optional.empty();
+    }
+
     @Transactional
     public AuthResponse completeRegistration(Map<String, Object> request) {
+        // Số điện thoại chỉ lấy từ tempToken do phoneLogin cấp sau khi xác minh Firebase ID token.
         String tempToken = text(request, "tempToken");
-        String phoneNumber =
-                StringUtils.hasText(tempToken)
-                        ? consumeTempToken(tempToken, "PHONE_REGISTRATION").identifier()
-                        : firstText(request, "phoneNumber", "idToken");
+        if (!StringUtils.hasText(tempToken)) {
+            throw new BusinessException("AUTH_TEMP_TOKEN_REQUIRED", "Phiên đăng ký đã hết hạn, vui lòng xác thực lại số điện thoại");
+        }
+        String phoneNumber = consumeTempToken(tempToken, "PHONE_REGISTRATION").identifier();
         return register(
                 new RegisterRequest(
                         null,
