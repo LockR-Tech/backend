@@ -54,6 +54,7 @@ upload "$KNOWLEDGE_ROOT/mobile/assets/markdown/terms_of_service.md" "Điều kho
 # Nội bộ: kỹ thuật viên và admin.
 upload "$SCRIPT_DIR/knowledge/huong-dan-ktv-tu.md" "Quy trình vận hành và bảo trì tủ cho kỹ thuật viên" \
   LOCKER_TECHNICIAN ADMIN
+upload "$KNOWLEDGE_ROOT/docs/01-overview/tom-tat-luong-nghiep-vu.md" "Tóm tắt các luồng nghiệp vụ Lock.R" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/02-flows/flow-1-drone-delivery.md" "Luồng giao hàng bằng drone" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/02-flows/flow-2-locker-send.md" "Luồng gửi hàng và thuê ô" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/02-flows/flow-3-roles-maintenance.md" "Luồng vai trò, vận hành và bảo trì" "${TECH_ROLES[@]}"
