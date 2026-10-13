@@ -183,4 +183,47 @@ class SepayServiceTest {
         payment.setMethod("WALLET");
         org.junit.jupiter.api.Assertions.assertNull(sepayService.bankTransfer(payment));
     }
+
+    @Test
+    void dronePaymentUsesItsOwnReceiverAndKeepsItInTheStoredQr() {
+        ReflectionTestUtils.setField(sepayService, "bankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "bankAccountNo", "111122223333");
+        ReflectionTestUtils.setField(sepayService, "accountName", "LOCKER OWNER");
+        ReflectionTestUtils.setField(sepayService, "droneBankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "droneBankAccountNo", "7980104151939");
+        ReflectionTestUtils.setField(sepayService, "droneAccountName", "LE THI YEN VI");
+        PaymentRecord payment = new PaymentRecord();
+        payment.setMethod("SEPAY");
+        payment.setAmount(BigDecimal.valueOf(15000));
+        payment.setReferenceId("PAY-87");
+
+        sepayService.createPayment(payment, null, true);
+        var transfer = sepayService.bankTransfer(payment);
+
+        assertTrue(payment.getQr().contains("970422-7980104151939-compact2.jpg"));
+        assertEquals("7980104151939", transfer.accountNo());
+        assertEquals("LE THI YEN VI", transfer.accountName());
+        assertEquals("PAY-87", transfer.transferContent());
+    }
+
+    @Test
+    void lockerPaymentContinuesUsingTheDefaultReceiver() {
+        ReflectionTestUtils.setField(sepayService, "bankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "bankAccountNo", "111122223333");
+        ReflectionTestUtils.setField(sepayService, "accountName", "TRUONG NGUYEN THAI BINH");
+        ReflectionTestUtils.setField(sepayService, "droneBankBin", "970422");
+        ReflectionTestUtils.setField(sepayService, "droneBankAccountNo", "7980104151939");
+        ReflectionTestUtils.setField(sepayService, "droneAccountName", "LE THI YEN VI");
+        PaymentRecord payment = new PaymentRecord();
+        payment.setMethod("SEPAY");
+        payment.setAmount(BigDecimal.valueOf(4000));
+        payment.setReferenceId("PAY-88");
+
+        sepayService.createPayment(payment, null, false);
+        var transfer = sepayService.bankTransfer(payment);
+
+        assertTrue(payment.getQr().contains("970422-111122223333-compact2.jpg"));
+        assertEquals("111122223333", transfer.accountNo());
+        assertEquals("TRUONG NGUYEN THAI BINH", transfer.accountName());
+    }
 }

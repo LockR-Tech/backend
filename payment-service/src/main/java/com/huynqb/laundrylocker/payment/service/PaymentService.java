@@ -168,7 +168,10 @@ public class PaymentService {
                     payment.setStatus("COMPLETED");
                 }
             }
-            case "SEPAY" -> sepayService.createPayment(payment, request.returnUrl());
+            case "SEPAY" -> sepayService.createPayment(
+                    payment,
+                    request.returnUrl(),
+                    "DRONE_DELIVERY".equalsIgnoreCase(order.type()));
             default ->
                     throw new BusinessException("PAYMENT_METHOD_INVALID", "Phương thức thanh toán không hợp lệ: " + method);
         }

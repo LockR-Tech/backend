@@ -72,6 +72,10 @@ public record DroneDeliveryOrderResponse(
         /// Đang có nguồn vị trí trực tiếp cho bản đồ: đơn DEMO đang bay (vị trí nội suy), hoặc
         /// drone thật còn gửi telemetry. false ⇒ mở bản đồ sẽ không có tín hiệu.
         Boolean liveTracking,
+        /// Current drone coordinates exposed consistently to customer, admin and technician views.
+        /// They remain null until telemetry is connected to this shared read model.
+        Double currentLatitude,
+        Double currentLongitude,
         /// Khai báo kiện hàng lúc đặt đơn; kích thước và giá trị khai báo có thể null.
         Integer parcelLengthCm,
         Integer parcelWidthCm,
@@ -121,7 +125,7 @@ public record DroneDeliveryOrderResponse(
                 sourceLockerId, etaMinutes, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, List.of(),
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, false,
+                null, null, null, null, null, false, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null,
                 null, null, null, null, null);

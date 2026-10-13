@@ -3,12 +3,17 @@ package com.huynqb.laundrylocker.order.service;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.order.client.UserClient;
+import com.huynqb.laundrylocker.order.dto.ReceiverOrderDetailResponse;
 import com.huynqb.laundrylocker.order.dto.ReceiverOrderResponse;
 import com.huynqb.laundrylocker.order.dto.admin.BoxInfo;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
+import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
+import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
+import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
 import com.huynqb.laundrylocker.order.service.AdminReferenceResolver.Lookup;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +25,8 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -38,6 +45,9 @@ public class ReceiverOrderQueryService {
     private static final List<String> ACTIVE_INCOMING_STATUSES =
             List.of("INITIALIZED", "AWAITING_DISPATCH", "STORING", "RETURNED");
     private static final List<String> ACTIVE_DELEGATED_STATUSES = List.of("STORING", "RETURNED");
+    private static final Set<String> TERMINAL_STATUSES = Set.of("COMPLETED", "CANCELED", "EXPIRED");
+    public static final String VIEWER_RECEIVER = "RECEIVER";
+    public static final String VIEWER_DELEGATE = "DELEGATE";
     /// Giá trị không thể trùng số điện thoại nào — tránh `in ()` khi tài khoản chưa có số.
     private static final Set<String> NO_PHONE = Set.of("#");
 
@@ -45,6 +55,7 @@ public class ReceiverOrderQueryService {
     private final UserClient userClient;
     private final AdminReferenceResolver references;
     private final QrTokenService qrTokenService;
+    private final OrderStatusHistoryRepository historyRepository;
 
     @Transactional(readOnly = true)
     public List<ReceiverOrderResponse> incoming(Long userId, boolean activeOnly, Integer limit) {
@@ -74,6 +85,102 @@ public class ReceiverOrderQueryService {
         List<LockerOrder> orders = orderRepository.findDelegatedTo(
                 phoneVariants(phone), !activeOnly, ACTIVE_DELEGATED_STATUSES, PageRequest.of(0, clamp(limit)));
         return build(orders, order -> new View(true, true));
+    }
+
+    /// Chi tiết một đơn cho người nhận hoặc người lấy hộ. Quyền xem khớp đúng hai danh sách:
+    /// đơn hiện ở `incoming` (người nhận theo tài khoản hoặc SĐT, trừ đơn tới tay tôi chỉ vì được
+    /// ủy quyền) xem với vai RECEIVER; đơn hiện ở `delegated-to-me` (SĐT người lấy hộ là số của
+    /// tôi) xem với vai DELEGATE. Mọi trường hợp khác — kể cả đơn không tồn tại — trả 404 như nhau
+    /// để không lộ đơn của người khác.
+    @Transactional(readOnly = true)
+    public ReceiverOrderDetailResponse detail(Long userId, Long orderId) {
+        requireUser(userId);
+        String phone = callerPhone(userId);
+        LockerOrder order = orderId == null ? null : orderRepository.findById(orderId).orElse(null);
+        Viewer viewer = order == null ? null : viewerOf(order, userId, phone);
+        if (viewer == null) {
+            throw new NotFoundException("Order", orderId);
+        }
+        Long lockerId = lockerId(order);
+        Long boxId = boxId(order);
+        boolean drone = isDrone(order);
+        Long sourceLockerId = drone ? order.getSourceLockerId() : null;
+        Lookup<LockerInfo> lockers = references.lockers(Arrays.asList(lockerId, sourceLockerId));
+        Lookup<BoxInfo> boxes = references.boxes(Collections.singletonList(boxId));
+        Lookup<UserSummary> users = references.users(Collections.singletonList(order.getUserId()));
+        LockerInfo locker = lockers.get(lockerId);
+        LockerInfo source = lockers.get(sourceLockerId);
+        BoxInfo box = boxes.get(boxId);
+        UserSummary sender = users.get(order.getUserId());
+        List<OrderStatusHistory> history = historyRepository.findByOrderIdOrderByCreatedAtAscIdAsc(order.getId());
+
+        View view = viewer.view();
+        boolean receiver = VIEWER_RECEIVER.equals(viewer.role());
+        boolean ready = readyForPickup(order) && StringUtils.hasText(order.getPinCode());
+        boolean showPin = ready && view.pinVisible();
+        boolean active = !TERMINAL_STATUSES.contains(upper(order.getStatus()));
+        return new ReceiverOrderDetailResponse(
+                order.getId(),
+                order.getOrderCode(),
+                order.getType(),
+                order.getStatus(),
+                order.getDeliveryStage(),
+                viewer.role(),
+                order.getUserId(),
+                firstText(order.getSenderName(), sender == null ? null : sender.fullName()),
+                firstText(order.getSenderPhone(), sender == null ? null : sender.phoneNumber()),
+                receiver ? textOrNull(order.getSenderEmail()) : null,
+                order.getReceiverName(),
+                order.getReceiverPhone(),
+                receiver ? textOrNull(order.getReceiverEmail()) : null,
+                lockerId,
+                locker == null ? null : locker.code(),
+                locker == null ? null : locker.name(),
+                locker == null ? null : locker.address(),
+                locker == null ? null : locker.latitude(),
+                locker == null ? null : locker.longitude(),
+                boxId,
+                box == null ? null : box.boxNumber(),
+                box == null ? null : box.size(),
+                box == null ? null : box.cellType(),
+                sourceLockerId,
+                source == null ? null : source.code(),
+                source == null ? null : source.name(),
+                source == null ? null : source.address(),
+                drone ? order.getRouteDistanceMeters() : null,
+                order.getPickupDeadline(),
+                order.getPickupDeadline() != null && LocalDateTime.now().isAfter(order.getPickupDeadline()),
+                ready,
+                showPin ? order.getPinCode() : null,
+                showPin ? qrTokenService.issue(order.getId(), order.getPinCode()) : null,
+                order.getIntendedReceiveAt(),
+                order.getRentalDurationHours(),
+                textOrNull(order.getDeliveryAddress()),
+                order.getPaymentStatus(),
+                order.getDelegatePhone() != null,
+                view.delegateDetails() ? order.getDelegateName() : null,
+                view.delegateDetails() ? order.getDelegatePhone() : null,
+                view.delegateDetails() ? order.getDelegateNote() : null,
+                // Lúc ủy quyền cho người nhận biết vì sao mã không còn hiện ở chỗ họ.
+                order.getDelegatedAt(),
+                textOrNull(order.getCustomerNote()),
+                OrderDetailViews.parcel(order),
+                order.getDeliveryBlockReason(),
+                DroneFailureReasons.label(order.getDeliveryBlockReason()),
+                order.getDeliveryBlockReason() == null ? null : order.getDeliveryBlockedAt(),
+                order.getFailureReason(),
+                DroneFailureReasons.label(order.getFailureReason()),
+                order.getFailureReason() == null ? null : order.getFailedAt(),
+                order.getParcelReturnedAt(),
+                drone && active ? DroneDeliveryQueryService.etaMinutes(order.getDeliveryStage()) : null,
+                // Màn theo dõi drone chỉ mở cho người gửi và tài khoản người nhận của đơn.
+                drone && active && userId.equals(order.getReceiverUserId()),
+                drone ? DroneDeliveryQueryService.stageChanges(history.reversed()) : List.of(),
+                order.getCreatedAt(),
+                order.getPaidAt(),
+                order.getUpdatedAt(),
+                order.getCompletedAt(),
+                OrderDetailViews.milestones(order, history));
     }
 
     /// Hàng đã nằm trong ô và mở được bằng PIN/QR của đơn.
@@ -172,6 +279,46 @@ public class ReceiverOrderQueryService {
         return variants.isEmpty() ? NO_PHONE : variants;
     }
 
+    /// Vai của người xem với đơn, hoặc null khi đơn không nằm trong danh sách nào của họ. So số
+    /// điện thoại đúng như hai truy vấn danh sách (`findIncoming`, `findDelegatedTo`).
+    static Viewer viewerOf(LockerOrder order, Long userId, String phone) {
+        Set<String> phones = phoneVariants(phone);
+        boolean receiverAccount = isReceiverAccount(order, userId);
+        boolean receiverMatch = !userId.equals(order.getUserId())
+                && (receiverAccount || storedPhoneIn(order.getReceiverPhone(), phones));
+        if (receiverMatch && (receiverAccount || !delegatedTo(order, phone))) {
+            // Đơn đã ủy quyền cho người khác: mã mới thuộc về người lấy hộ.
+            boolean pinVisible = order.getDelegatePhone() == null || delegatedTo(order, phone);
+            return new Viewer(VIEWER_RECEIVER, new View(pinVisible, false));
+        }
+        if (PhoneNumbers.normalize(phone) != null && storedPhoneIn(order.getDelegatePhone(), phones)) {
+            return new Viewer(VIEWER_DELEGATE, new View(true, true));
+        }
+        return null;
+    }
+
+    private static boolean storedPhoneIn(String stored, Set<String> phones) {
+        String compact = PhoneNumbers.stripSeparators(stored);
+        return compact != null && phones.contains(compact);
+    }
+
+    private static boolean isDrone(LockerOrder order) {
+        return "DRONE_DELIVERY".equalsIgnoreCase(order.getType());
+    }
+
+    private static String upper(String value) {
+        return value == null ? "" : value.toUpperCase();
+    }
+
+    private static String textOrNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private static String firstText(String preferred, String fallback) {
+        String first = textOrNull(preferred);
+        return first != null ? first : textOrNull(fallback);
+    }
+
     private static boolean isReceiverAccount(LockerOrder order, Long userId) {
         return userId.equals(order.getReceiverUserId()) || userId.equals(order.getReceiverId());
     }
@@ -207,6 +354,9 @@ public class ReceiverOrderQueryService {
         }
     }
 
-    private record View(boolean pinVisible, boolean delegateDetails) {
+    record View(boolean pinVisible, boolean delegateDetails) {
+    }
+
+    record Viewer(String role, View view) {
     }
 }

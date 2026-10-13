@@ -241,11 +241,7 @@ public class DroneDeliveryQueryService {
         BoxInfo sourceBox = boxes.get(order.getSourceBoxId());
         UserSummary customer = users.get(order.getUserId());
         UserSummary receiver = users.get(receiverUserId);
-        List<DroneJourneyEventResponse> events = history.stream()
-                .map(h -> new DroneJourneyEventResponse(
-                        h.getId(), h.getOldStatus(), h.getNewStatus(), h.getChangedByUserId(),
-                        name(users.get(h.getChangedByUserId())), h.getNote(), h.getCreatedAt()))
-                .toList();
+        List<DroneJourneyEventResponse> events = journeyEvents(history, users);
 
         return new DroneDeliveryOrderResponse(
                 order.getId(), order.getOrderCode(), order.getUserId(), receiverUserId,
@@ -293,6 +289,8 @@ public class DroneDeliveryQueryService {
                 mission == null ? null : mission.getWeightSurcharge(),
                 amountDue(order),
                 liveTracking(order, mission),
+                null,
+                null,
                 order.getParcelLengthCm(), order.getParcelWidthCm(), order.getParcelHeightCm(),
                 order.getParcelCategory(), order.getParcelDeclaredValue(), order.getParcelFragile(),
                 order.getRouteDistanceMeters(),
@@ -318,6 +316,26 @@ public class DroneDeliveryQueryService {
                 order.getReceiverEmail(),
                 blockView(order),
                 failureView(order));
+    }
+
+    /// Hành trình cho khách, điều phối viên và admin: mọi dòng lịch sử (mới nhất trước) kèm người
+    /// thao tác và ghi chú.
+    static List<DroneJourneyEventResponse> journeyEvents(List<OrderStatusHistory> newestFirst, Lookup<UserSummary> users) {
+        return newestFirst.stream()
+                .map(h -> new DroneJourneyEventResponse(
+                        h.getId(), h.getOldStatus(), h.getNewStatus(), h.getChangedByUserId(),
+                        name(users.get(h.getChangedByUserId())), h.getNote(), h.getCreatedAt()))
+                .toList();
+    }
+
+    /// Hành trình cho người nhận/người lấy hộ: chỉ các lần thật sự đổi chặng (bỏ dòng ghi chú cũ = mới),
+    /// không có người thao tác và ghi chú nội bộ của đội bay. Thứ tự giữ như `newestFirst`.
+    static List<DroneJourneyEventResponse> stageChanges(List<OrderStatusHistory> newestFirst) {
+        return newestFirst.stream()
+                .filter(h -> h.getNewStatus() != null && !Objects.equals(h.getOldStatus(), h.getNewStatus()))
+                .map(h -> new DroneJourneyEventResponse(
+                        h.getId(), h.getOldStatus(), h.getNewStatus(), null, null, null, h.getCreatedAt()))
+                .toList();
     }
 
     private DronePickupView pickupView(

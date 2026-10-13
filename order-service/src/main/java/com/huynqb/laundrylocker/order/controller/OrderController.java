@@ -583,6 +583,15 @@ public class OrderController {
         return ApiResponse.ok(receiverOrderQueryService.delegatedToMe(userId, activeOnly, limit));
     }
 
+    /// Chi tiết một đơn gửi tới tôi hoặc ủy quyền cho tôi lấy hộ: liên hệ người gửi, kiện hàng,
+    /// tủ/ô, mốc thời gian, hành trình drone. Đơn không thuộc hai danh sách trên của tôi ⇒ 404.
+    /// Hai đường cùng một quy tắc quyền; `viewerRole` trong kết quả cho biết vai của người xem.
+    @GetMapping({"/api/orders/incoming/{orderId}", "/api/orders/delegated-to-me/{orderId}"})
+    public ApiResponse<ReceiverOrderDetailResponse> receiverOrderDetail(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(receiverOrderQueryService.detail(userId, orderId));
+    }
+
     @PostMapping("/api/orders/{orderId}/rate")
     public ApiResponse<OrderRatingResponse> rate(
             @PathVariable Long orderId,

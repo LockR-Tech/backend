@@ -77,6 +77,15 @@ public class SepayService {
     @Value("${sepay.account-name:LaundryLocker}")
     private String accountName;
 
+    @Value("${sepay.drone-bank-bin:}")
+    private String droneBankBin;
+
+    @Value("${sepay.drone-bank-account-no:}")
+    private String droneBankAccountNo;
+
+    @Value("${sepay.drone-account-name:}")
+    private String droneAccountName;
+
     public boolean isConfigured() {
         return StringUtils.hasText(merchantId) && !"DEMO".equalsIgnoreCase(merchantId);
     }
@@ -85,10 +94,14 @@ public class SepayService {
      * Khởi tạo URL chuyển tiếp thanh toán SePay cho payment record.
      */
     public String createPayment(PaymentRecord payment, String overrideReturnUrl) {
+        return createPayment(payment, overrideReturnUrl, false);
+    }
+
+    public String createPayment(PaymentRecord payment, String overrideReturnUrl, boolean droneDelivery) {
         payment.setUrl(payBaseUrl + "?referenceId=" + payment.getReferenceId());
-        // Sinh VietQR inline nếu đã cấu hình tài khoản ngân hàng.
-        if (StringUtils.hasText(bankBin) && StringUtils.hasText(bankAccountNo)) {
-            payment.setQr(generateVietQrUrl(payment));
+        ReceiverAccount receiver = receiverAccount(droneDelivery);
+        if (receiver != null) {
+            payment.setQr(generateVietQrUrl(payment, receiver));
         }
         return payment.getUrl();
     }
@@ -110,15 +123,17 @@ public class SepayService {
     /// cấu hình tài khoản nhận. Nội dung chuyển khoản trùng `addInfo` của ảnh QR.
     public com.huynqb.laundrylocker.payment.dto.PaymentResponse.BankTransfer bankTransfer(PaymentRecord payment) {
         if (payment == null || payment.getMethod() == null
-                || !payment.getMethod().toUpperCase(java.util.Locale.ROOT).startsWith("SEPAY")
-                || !StringUtils.hasText(bankBin) || !StringUtils.hasText(bankAccountNo)) {
+                || !payment.getMethod().toUpperCase(java.util.Locale.ROOT).startsWith("SEPAY")) {
             return null;
         }
+        ReceiverAccount receiver = receiverFromQr(payment.getQr());
+        if (receiver == null) receiver = receiverAccount(false);
+        if (receiver == null) return null;
         java.math.BigDecimal amount = payment.getAmount() == null
                 ? java.math.BigDecimal.ZERO
                 : payment.getAmount().setScale(0, java.math.RoundingMode.HALF_UP);
         return new com.huynqb.laundrylocker.payment.dto.PaymentResponse.BankTransfer(
-                bankBin, bankAccountNo, accountName, amount,
+                receiver.bankBin(), receiver.accountNo(), receiver.accountName(), amount,
                 transferContent(payment));
     }
 
@@ -127,15 +142,54 @@ public class SepayService {
      * Nội dung chuyển khoản (addInfo) chứa transferContent để SePay webhook nhận diện.
      */
     public String generateVietQrUrl(PaymentRecord payment) {
+        ReceiverAccount receiver = receiverAccount(false);
+        return receiver == null ? null : generateVietQrUrl(payment, receiver);
+    }
+
+    private String generateVietQrUrl(PaymentRecord payment, ReceiverAccount receiver) {
         String amount = payment.getAmount() != null
                 ? payment.getAmount().setScale(0, java.math.RoundingMode.HALF_UP).toPlainString()
                 : "0";
         String info = transferContent(payment);
-        String name = java.net.URLEncoder.encode(accountName, java.nio.charset.StandardCharsets.UTF_8)
+        String name = java.net.URLEncoder.encode(receiver.accountName(), java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
         return String.format(
                 "https://img.vietqr.io/image/%s-%s-compact2.jpg?amount=%s&addInfo=%s&accountName=%s",
-                bankBin, bankAccountNo, amount, info, name);
+                receiver.bankBin(), receiver.accountNo(), amount, info, name);
+    }
+
+    private ReceiverAccount receiverAccount(boolean droneDelivery) {
+        if (droneDelivery && StringUtils.hasText(droneBankBin) && StringUtils.hasText(droneBankAccountNo)) {
+            return new ReceiverAccount(droneBankBin, droneBankAccountNo,
+                    StringUtils.hasText(droneAccountName) ? droneAccountName : accountName);
+        }
+        if (StringUtils.hasText(bankBin) && StringUtils.hasText(bankAccountNo)) {
+            return new ReceiverAccount(bankBin, bankAccountNo, accountName);
+        }
+        return null;
+    }
+
+    private ReceiverAccount receiverFromQr(String qrUrl) {
+        if (!StringUtils.hasText(qrUrl)) return null;
+        try {
+            java.net.URI uri = java.net.URI.create(qrUrl);
+            String file = uri.getPath().substring(uri.getPath().lastIndexOf('/') + 1);
+            String[] parts = file.split("-");
+            if (parts.length < 3) return null;
+            String name = "";
+            for (String pair : java.util.Optional.ofNullable(uri.getRawQuery()).orElse("").split("&")) {
+                String[] entry = pair.split("=", 2);
+                if (entry.length == 2 && "accountName".equals(entry[0])) {
+                    name = java.net.URLDecoder.decode(entry[1], java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+            return new ReceiverAccount(parts[0], parts[1], name);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private record ReceiverAccount(String bankBin, String accountNo, String accountName) {
     }
 
     /**
