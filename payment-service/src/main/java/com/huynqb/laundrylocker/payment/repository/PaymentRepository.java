@@ -16,6 +16,8 @@ public interface PaymentRepository extends JpaRepository<PaymentRecord, Long>, J
 
     Optional<PaymentRecord> findByReferenceId(String referenceId);
 
+    List<PaymentRecord> findByContentContaining(String content);
+
     List<PaymentRecord> findByOrderIdIn(Collection<Long> orderIds);
 
     /// Tiền nạp thật vào ví. VNPAY% chỉ còn ở giao dịch cũ (VNPay đã ngừng hỗ trợ) — vẫn tính để số dư rút được đúng.

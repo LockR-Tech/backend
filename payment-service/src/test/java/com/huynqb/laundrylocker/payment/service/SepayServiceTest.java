@@ -127,6 +127,10 @@ class SepayServiceTest {
         // description thay vì content
         Map<String, Object> bankBody4 = Map.of("description", "MBVCB.PAY-99.CT");
         assertEquals("PAY-99", sepayService.extractReferenceId(bankBody4));
+
+        // Ngân hàng (MB) bỏ gạch nối giữa orderId (82) và timestamp 13 chữ số (1791828685942)
+        Map<String, Object> bankBody5 = Map.of("content", "PAY821791828685942");
+        assertEquals("PAY-82-1791828685942", sepayService.extractReferenceId(bankBody5));
     }
 
     @Test
@@ -148,7 +152,7 @@ class SepayServiceTest {
         ReflectionTestUtils.setField(sepayService, "bankBin", "970422");
         ReflectionTestUtils.setField(sepayService, "bankAccountNo", "0123456789");
         ReflectionTestUtils.setField(sepayService, "accountName", "LOCKR");
-        com.huynqb.laundrylocker.payment.model.PaymentRecord payment = new com.huynqb.laundrylocker.payment.model.PaymentRecord();
+        PaymentRecord payment = new PaymentRecord();
         payment.setMethod("SEPAY");
         payment.setAmount(new java.math.BigDecimal("15000.40"));
         payment.setReferenceId("PAY-42-ABC");
@@ -160,6 +164,11 @@ class SepayServiceTest {
         org.junit.jupiter.api.Assertions.assertEquals("LOCKR", transfer.accountName());
         org.junit.jupiter.api.Assertions.assertEquals(new java.math.BigDecimal("15000"), transfer.amount());
         org.junit.jupiter.api.Assertions.assertEquals("PAY-42-ABC", transfer.transferContent());
+
+        // Khi có orderId: nội dung chuyển khoản luôn là PAY-{orderId} ngắn gọn
+        payment.setOrderId(82L);
+        var orderTransfer = sepayService.bankTransfer(payment);
+        org.junit.jupiter.api.Assertions.assertEquals("PAY-82", orderTransfer.transferContent());
     }
 
     @Test

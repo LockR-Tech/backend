@@ -12,5 +12,9 @@ public record CheckoutRequest(
         String returnUrl,
         /// Lý do trả tiền lần này, hiện lên chi tiết đơn của khách để phân biệt nhiều
         /// lần trả trên cùng một đơn ("Phí quá hạn"…). Trống thì server tự suy.
-        String description) {
+        String description,
+        String orderCode) {
+    public CheckoutRequest(Long orderId, String method, String returnUrl, String description) {
+        this(orderId, method, returnUrl, description, null);
+    }
 }

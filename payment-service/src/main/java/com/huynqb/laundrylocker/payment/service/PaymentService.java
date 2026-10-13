@@ -128,14 +128,30 @@ public class PaymentService {
             throw new BusinessException("ORDER_ALREADY_PAID", "Đơn này đã được thanh toán");
         }
 
-        PaymentRecord payment = new PaymentRecord();
-        payment.setOrderId(request.orderId());
-        payment.setUserId(userId);
+        String effectiveOrderCode = StringUtils.hasText(request.orderCode())
+                ? request.orderCode()
+                : (order != null ? order.orderCode() : null);
+        String transferNote = StringUtils.hasText(effectiveOrderCode)
+                ? "PAY-" + request.orderId() + "-" + effectiveOrderCode
+                : "PAY-" + request.orderId();
+
+        PaymentRecord payment = repository.findByOrderId(request.orderId()).stream()
+                .filter(p -> "PENDING".equalsIgnoreCase(p.getStatus()) && method.equalsIgnoreCase(p.getMethod()))
+                .reduce((first, second) -> second)
+                .orElse(null);
+        if (payment == null) {
+            payment = new PaymentRecord();
+            payment.setOrderId(request.orderId());
+            payment.setUserId(userId);
+            payment.setMethod(method);
+            payment.setReferenceId(generateReference(request.orderId()));
+            payment.setContent(transferNote);
+            payment.setDescription(paymentPurpose(request.description(), request.orderId(), completedAmount));
+        } else {
+            payment.setUserId(userId);
+            payment.setContent(transferNote);
+        }
         payment.setAmount(amount);
-        payment.setMethod(method);
-        payment.setReferenceId(generateReference(request.orderId()));
-        payment.setContent("Thanh toan don " + request.orderId());
-        payment.setDescription(paymentPurpose(request.description(), request.orderId(), completedAmount));
 
         switch (method) {
             case "WALLET" -> {
@@ -262,6 +278,12 @@ public class PaymentService {
                 } catch (NumberFormatException ignored) {
                 }
             }
+        }
+        if (payment == null && (refId.startsWith("ORD-") || refId.startsWith("ORD"))) {
+            payment = repository.findByContentContaining(refId).stream()
+                    .filter(p -> "PENDING".equalsIgnoreCase(p.getStatus()))
+                    .reduce((first, second) -> second)
+                    .orElse(null);
         }
         if (payment == null) {
             throw new NotFoundException("Payment with ref: " + refId, -1L);
