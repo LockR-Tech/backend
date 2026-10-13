@@ -248,6 +248,9 @@ services:
       SEPAY_BANK_BIN: ${SEPAY_BANK_BIN:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
       SEPAY_BANK_ACCOUNT_NO: ${SEPAY_BANK_ACCOUNT_NO:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
       SEPAY_ACCOUNT_NAME: ${SEPAY_ACCOUNT_NAME:-LaundryLocker}
+      SEPAY_DRONE_BANK_BIN: ${SEPAY_DRONE_BANK_BIN:-}
+      SEPAY_DRONE_BANK_ACCOUNT_NO: ${SEPAY_DRONE_BANK_ACCOUNT_NO:-}
+      SEPAY_DRONE_ACCOUNT_NAME: ${SEPAY_DRONE_ACCOUNT_NAME:-}
       SEPAY_MERCHANT_ID: ${SEPAY_MERCHANT_ID:-}
       SEPAY_SECRET_KEY: ${SEPAY_SECRET_KEY:-}
       JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
