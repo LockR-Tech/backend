@@ -34,4 +34,36 @@ public final class PhoneNumbers {
 
         return VN_COUNTRY_CODE + digits;
     }
+
+    /// Số Việt Nam dạng nội địa `0xxxxxxxxx` — dạng eSMS dùng trong ví dụ của mình.
+    ///
+    /// Nhận `0901234567`, `+84901234567`, `84901234567`, `0084…`, có khoảng trắng/dấu chấm/
+    /// gạch, kể cả kiểu `+84 (0) 901…`. Trả `null` với số nước ngoài (eSMS chỉ gửi trong
+    /// nước) hoặc số không đủ 9–10 chữ số sau đầu `0`.
+    public static String toVietnameseNational(String raw) {
+        if (!StringUtils.hasText(raw)) return null;
+
+        String trimmed = raw.trim();
+        boolean hadPlus = trimmed.startsWith("+");
+        String digits = trimmed.replaceAll("\\D", "");
+        if (digits.isEmpty()) return null;
+
+        if (digits.startsWith("0084")) {
+            digits = digits.substring(2);
+            hadPlus = true;
+        }
+
+        String national;
+        if (digits.startsWith("84") && (hadPlus || digits.length() >= 11)) {
+            national = digits.substring(2);
+        } else if (hadPlus) {
+            return null;
+        } else {
+            national = digits;
+        }
+
+        national = national.replaceFirst("^0+", "");
+        if (national.length() < 9 || national.length() > 10) return null;
+        return "0" + national;
+    }
 }
