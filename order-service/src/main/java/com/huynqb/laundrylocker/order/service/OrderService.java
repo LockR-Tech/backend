@@ -887,7 +887,16 @@ public class OrderService {
         if (dirty) {
             orders = orderRepository.findByUserIdOrderByCreatedAtDesc(userId);
         }
-        return orders.stream().map(this::toResponse).toList();
+        // Lịch sử của cả danh sách trong một truy vấn (mốc thời gian của từng đơn).
+        Map<Long, List<OrderStatusHistory>> histories = new HashMap<>();
+        if (!orders.isEmpty()) {
+            historyRepository.findByOrderIdInOrderByCreatedAtAscIdAsc(
+                            orders.stream().map(LockerOrder::getId).toList())
+                    .forEach(h -> histories.computeIfAbsent(h.getOrderId(), k -> new ArrayList<>()).add(h));
+        }
+        return orders.stream()
+                .map(order -> toResponse(order, histories.getOrDefault(order.getId(), List.of())))
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -1864,6 +1873,11 @@ public class OrderService {
     }
 
     private OrderResponse toResponse(LockerOrder order) {
+        return toResponse(order, historyRepository.findByOrderIdOrderByCreatedAtAscIdAsc(order.getId()));
+    }
+
+    /// `historyOldestFirst`: lịch sử trạng thái của đơn, cũ → mới — để dựng mốc thời gian.
+    private OrderResponse toResponse(LockerOrder order, List<OrderStatusHistory> historyOldestFirst) {
         List<OrderDetailResponse> details =
                 detailRepository.findByOrderId(order.getId()).stream()
                         .map(d -> new OrderDetailResponse(d.getServiceId(), d.getQuantity(), d.getPrice(), d.getDescription()))
@@ -1913,7 +1927,27 @@ public class OrderService {
                 OrderAccessPolicy.blockReason(order, rules, LocalDateTime.now(), overtimeFee),
                 overtimeFee,
                 paidAmountOf(order),
-                amountDueOf(order));
+                amountDueOf(order),
+                OrderDetailViews.milestones(order, historyOldestFirst),
+                OrderDetailViews.parcel(order),
+                order.getPaidAt(),
+                order.getDropOpenedAt(),
+                order.getIntendedReceiveAt(),
+                order.getDelegateName(),
+                order.getDelegatePhone(),
+                order.getDelegateNote(),
+                order.getDelegatedAt(),
+                order.getSourceLockerId(),
+                order.getDestinationLockerId(),
+                order.getRouteDistanceMeters(),
+                order.getParcelDroppedAt(),
+                order.getParcelReturnedAt(),
+                order.getDeliveryBlockReason(),
+                DroneFailureReasons.label(order.getDeliveryBlockReason()),
+                order.getDeliveryBlockReason() == null ? null : order.getDeliveryBlockedAt(),
+                order.getFailureReason(),
+                DroneFailureReasons.label(order.getFailureReason()),
+                order.getFailureReason() == null ? null : order.getFailedAt());
     }
 
     private static BigDecimal paidAmountOf(LockerOrder order) {

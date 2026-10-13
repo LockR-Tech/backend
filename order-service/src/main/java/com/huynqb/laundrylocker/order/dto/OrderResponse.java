@@ -58,5 +58,33 @@ public record OrderResponse(
         /// `paymentStatus = UNPAID`. Client phải thu `amountDue`, không phải
         /// `totalPrice`, nếu không khách trả lại cả phần đã thanh toán trước đó.
         BigDecimal paidAmount,
-        BigDecimal amountDue) {
+        BigDecimal amountDue,
+        // Phần chi tiết cho màn "Đơn của tôi" — cùng nguồn với chi tiết đơn phía người nhận
+        // (OrderDetailViews) để hai màn hiện giống nhau.
+        /// Các mốc đã xảy ra, cũ → mới.
+        List<OrderMilestone> milestones,
+        /// Khai báo kiện (mô tả, cân nặng, kích thước, loại hàng, giá trị, dễ vỡ); null khi không khai.
+        OrderParcelView parcel,
+        LocalDateTime paidAt,
+        LocalDateTime dropOpenedAt,
+        /// Thời điểm người gửi dự kiến người nhận tới lấy (nếu khai).
+        LocalDateTime intendedReceiveAt,
+        /// Người được ủy quyền lấy hộ; receiverName/receiverPhone cũng đã đổi sang người này.
+        String delegateName,
+        String delegatePhone,
+        String delegateNote,
+        LocalDateTime delegatedAt,
+        /// Tủ gửi / tủ nhận của đơn drone (lockerId của đơn drone là tủ nhận).
+        Long sourceLockerId,
+        Long destinationLockerId,
+        Integer routeDistanceMeters,
+        LocalDateTime parcelDroppedAt,
+        LocalDateTime parcelReturnedAt,
+        /// Đơn drone đang tạm dừng / đã giao không hoàn tất: mã + nhãn trong DroneFailureReasons.
+        String deliveryBlockReason,
+        String deliveryBlockReasonLabel,
+        LocalDateTime deliveryBlockedAt,
+        String failureReason,
+        String failureReasonLabel,
+        LocalDateTime failedAt) {
 }
