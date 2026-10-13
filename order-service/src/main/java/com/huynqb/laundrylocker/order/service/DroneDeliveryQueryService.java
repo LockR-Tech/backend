@@ -293,6 +293,8 @@ public class DroneDeliveryQueryService {
                 mission == null ? null : mission.getWeightSurcharge(),
                 amountDue(order),
                 liveTracking(order, mission),
+                null,
+                null,
                 order.getParcelLengthCm(), order.getParcelWidthCm(), order.getParcelHeightCm(),
                 order.getParcelCategory(), order.getParcelDeclaredValue(), order.getParcelFragile(),
                 order.getRouteDistanceMeters(),
