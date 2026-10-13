@@ -33,4 +33,14 @@ public class AssistantRules {
     public int historyTurns() {
         return settings.getInt(HISTORY_TURNS);
     }
+
+    /// Gửi kèm dữ liệu đơn của chính người hỏi khi câu hỏi nói về đơn của họ.
+    public boolean orderContextEnabled() {
+        return settings.getBoolean(ORDER_CONTEXT_ENABLED);
+    }
+
+    /// Thêm dấu cho câu hỏi tiếng Việt gõ không dấu trước khi tìm tài liệu.
+    public boolean restoreDiacritics() {
+        return settings.getBoolean(RESTORE_DIACRITICS);
+    }
 }

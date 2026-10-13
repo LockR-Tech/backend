@@ -109,7 +109,8 @@ class AssistantPostgresContainerTest {
                 }
 
                 @Override
-                public GeneratedAnswer generate(String question, List<RetrievedChunk> chunks, List<ChatTurn> history) {
+                public GeneratedAnswer generate(String question, List<RetrievedChunk> chunks, List<ChatTurn> history,
+                                                ContextDocument extra) {
                     generatorCalls.incrementAndGet();
                     String cited = chunks.get(0).content();
                     return new GeneratedAnswer("Theo tài liệu: " + cited, false,

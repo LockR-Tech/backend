@@ -106,6 +106,64 @@ class ClaudeAnswerGeneratorTest {
         assertEquals("Còn hoàn tiền thì sao?", blocks.get(2).path("text").asText());
     }
 
+    /// Dữ liệu đơn là document block cuối (sau các đoạn), cũng bật citations; trích dẫn vào nó có
+    /// document_index = số đoạn.
+    @Test
+    void sendsOrderDataAsTheLastCitableDocument() throws IOException {
+        responseBody = """
+                {"id":"msg_4","type":"message","role":"assistant","model":"claude-opus-5",
+                 "content":[
+                   {"type":"text","text":"Đơn ORD-20261012-AB12 ","citations":[{"type":"char_location",
+                     "cited_text":"Trạng thái: Hàng đang nằm trong ô","document_index":1,"document_title":"Đơn hàng của bạn",
+                     "start_char_index":10,"end_char_index":44}]},
+                   {"type":"text","text":"chưa có người lấy."}],
+                 "stop_reason":"end_turn","stop_sequence":null,
+                 "usage":{"input_tokens":700,"output_tokens":20}}
+                """;
+        AnswerGenerator.ContextDocument orders = new AnswerGenerator.ContextDocument(
+                "Đơn hàng của bạn", "Dữ liệu lúc 14:05 13/10/2026 (giờ Việt Nam)",
+                "1. Mã đơn ORD-20261012-AB12\n- Trạng thái: Hàng đang nằm trong ô");
+
+        GeneratedAnswer answer = generator.generate("Đơn của tôi có ai lấy chưa?",
+                List.of(new RetrievedChunk(11, 1, "Hướng dẫn", 0, null, "Mở ứng dụng.", 0.5)), List.of(), orders);
+
+        assertEquals("Đơn ORD-20261012-AB12 chưa có người lấy.", answer.text());
+        assertEquals(List.of(new AnswerGenerator.Citation(1, "Trạng thái: Hàng đang nằm trong ô")), answer.citations());
+
+        JsonNode request = new ObjectMapper().readTree(requestBody.get());
+        String system = request.path("system").asText();
+        assertTrue(system.contains("\"Đơn hàng của bạn\""));
+        assertTrue(system.contains("Mã PIN, mã QR và mã lấy hàng/mở ô không bao giờ có trong dữ liệu"));
+        assertTrue(system.contains("gõ tiếng Việt không dấu"));
+        JsonNode blocks = request.path("messages").get(0).path("content");
+        assertEquals(3, blocks.size());
+        assertEquals("Hướng dẫn", blocks.get(0).path("title").asText());
+        JsonNode orderBlock = blocks.get(1);
+        assertEquals("document", orderBlock.path("type").asText());
+        assertEquals("Đơn hàng của bạn", orderBlock.path("title").asText());
+        assertEquals("Dữ liệu lúc 14:05 13/10/2026 (giờ Việt Nam)", orderBlock.path("context").asText());
+        assertEquals(orders.content(), orderBlock.path("source").path("data").asText());
+        assertTrue(orderBlock.path("citations").path("enabled").asBoolean());
+        assertEquals("Đơn của tôi có ai lấy chưa?", blocks.get(2).path("text").asText());
+    }
+
+    @Test
+    void orderDataAloneIsEnoughToAsk() throws IOException {
+        responseBody = """
+                {"id":"msg_5","type":"message","role":"assistant","model":"claude-opus-5",
+                 "content":[{"type":"text","text":"Bạn chưa có đơn nào."}],
+                 "stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":90,"output_tokens":8}}
+                """;
+
+        generator.generate("Đơn của tôi?", List.of(), List.of(),
+                new AnswerGenerator.ContextDocument("Đơn hàng của bạn", null, "Bạn chưa tạo đơn nào."));
+
+        JsonNode blocks = new ObjectMapper().readTree(requestBody.get()).path("messages").get(0).path("content");
+        assertEquals(2, blocks.size());
+        assertEquals("document", blocks.get(0).path("type").asText());
+        assertTrue(blocks.get(0).path("context").isMissingNode());
+    }
+
     @Test
     void refusalStopReasonBecomesAPoliteRefusal() {
         responseBody = """

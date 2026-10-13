@@ -50,6 +50,13 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
         </dependency>
+        <!-- Đọc đơn của chính người hỏi từ order-service (và tên tủ từ locker-service), cùng cách các
+             service khác gọi nhau. Không kèm circuit breaker: timeout ngắn đặt trong application.yml,
+             lỗi thì trợ lý trả lời như khi không có dữ liệu đơn. -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>

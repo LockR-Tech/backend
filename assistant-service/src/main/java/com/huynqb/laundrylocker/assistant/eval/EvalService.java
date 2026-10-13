@@ -6,6 +6,8 @@ import com.huynqb.laundrylocker.assistant.knowledge.RoleSet;
 import com.huynqb.laundrylocker.assistant.provider.AnswerGenerator;
 import com.huynqb.laundrylocker.assistant.provider.EmbeddingProvider;
 import com.huynqb.laundrylocker.assistant.provider.ProviderException;
+import com.huynqb.laundrylocker.assistant.query.QuestionPreparer;
+import com.huynqb.laundrylocker.assistant.query.QuestionPreparer.PreparedQuestion;
 import com.huynqb.laundrylocker.assistant.settings.AssistantRules;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
@@ -27,8 +29,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /// Bộ câu hỏi đánh giá chất lượng truy xuất: câu phải trúng đúng tài liệu, câu ngoài phạm vi (hoặc
-/// tài liệu nội bộ mà vai trò đó không được đọc) phải bị từ chối. Mặc định chỉ đo truy xuất (chỉ tốn
-/// phí nhúng); `generate=true` gọi thêm Claude cho từng câu — tốn phí mô hình.
+/// tài liệu nội bộ mà vai trò đó không được đọc) phải bị từ chối. Câu hỏi được chuẩn bị y như khi hỏi
+/// thật ([QuestionPreparer]: câu gõ không dấu được thêm dấu — một lượt gọi Claude ngắn cho mỗi câu như
+/// vậy). Mặc định chỉ đo truy xuất (phí nhúng + phí thêm dấu nếu có); `generate=true` gọi thêm Claude
+/// trả lời từng câu — tốn phí mô hình. Không đánh giá phần dữ liệu đơn (phụ thuộc người hỏi).
 @Service
 public class EvalService {
 
@@ -44,9 +48,10 @@ public class EvalService {
             boolean mustRefuse) {
     }
 
+    /// `restoredQuestion`: câu đã thêm dấu dùng để tìm tài liệu; null khi câu gốc được dùng nguyên.
     public record EvalResult(
             long caseId, String question, List<String> roles, String expectedDocumentTitle, boolean mustRefuse,
-            double topScore, List<String> retrievedTitles, boolean passed, String answer) {
+            double topScore, List<String> retrievedTitles, boolean passed, String answer, String restoredQuestion) {
     }
 
     public record EvalReport(
@@ -61,14 +66,16 @@ public class EvalService {
     private final ChunkRepository chunks;
     private final AnswerGenerator generator;
     private final AssistantRules rules;
+    private final QuestionPreparer questions;
 
     public EvalService(JdbcTemplate jdbc, EmbeddingProvider embeddings, ChunkRepository chunks,
-                       AnswerGenerator generator, AssistantRules rules) {
+                       AnswerGenerator generator, AssistantRules rules, QuestionPreparer questions) {
         this.jdbc = jdbc;
         this.embeddings = embeddings;
         this.chunks = chunks;
         this.generator = generator;
         this.rules = rules;
+        this.questions = questions;
     }
 
     public List<EvalCase> list() {
@@ -126,9 +133,11 @@ public class EvalService {
         int refusalCases = 0;
         int refusalCorrect = 0;
         try {
+            List<PreparedQuestion> prepared = cases.stream().map(evalCase -> questions.prepare(evalCase.question())).toList();
             List<float[]> vectors = cases.isEmpty()
                     ? List.of()
-                    : embeddings.embed(cases.stream().map(EvalCase::question).toList(), EmbeddingProvider.InputType.QUERY);
+                    : embeddings.embed(prepared.stream().map(PreparedQuestion::text).toList(),
+                            EmbeddingProvider.InputType.QUERY);
             List<List<RetrievedChunk>> relevantByCase = new ArrayList<>();
             List<Double> topScores = new ArrayList<>();
             for (int i = 0; i < cases.size(); i++) {
@@ -141,7 +150,7 @@ public class EvalService {
                 topScores.add(found.isEmpty() ? 0 : found.get(0).score());
                 relevantByCase.add(found.stream().filter(chunk -> chunk.score() >= minScore).toList());
             }
-            List<String> answers = generate ? generateAnswers(cases, relevantByCase) : null;
+            List<String> answers = generate ? generateAnswers(prepared, relevantByCase) : null;
             for (int i = 0; i < cases.size(); i++) {
                 EvalCase evalCase = cases.get(i);
                 List<RetrievedChunk> relevant = relevantByCase.get(i);
@@ -166,7 +175,8 @@ public class EvalService {
                 }
                 results.add(new EvalResult(
                         evalCase.id(), evalCase.question(), evalCase.roles(), evalCase.expectedDocumentTitle(),
-                        evalCase.mustRefuse(), topScore, titles, ok, answers == null ? null : answers.get(i)));
+                        evalCase.mustRefuse(), topScore, titles, ok, answers == null ? null : answers.get(i),
+                        prepared.get(i).restored() ? prepared.get(i).text() : null));
             }
         } catch (ProviderException ex) {
             throw new BusinessException(
@@ -177,12 +187,12 @@ public class EvalService {
     }
 
     /// Gọi Claude song song (4 luồng) để cả bộ câu hỏi xong trong giới hạn đọc 300 s của Nginx.
-    private List<String> generateAnswers(List<EvalCase> cases, List<List<RetrievedChunk>> relevantByCase) {
+    private List<String> generateAnswers(List<PreparedQuestion> prepared, List<List<RetrievedChunk>> relevantByCase) {
         ExecutorService pool = Executors.newFixedThreadPool(GENERATION_THREADS);
         try {
             List<CompletableFuture<String>> futures = new ArrayList<>();
-            for (int i = 0; i < cases.size(); i++) {
-                String question = cases.get(i).question();
+            for (int i = 0; i < prepared.size(); i++) {
+                String question = prepared.get(i).text();
                 List<RetrievedChunk> relevant = relevantByCase.get(i);
                 futures.add(relevant.isEmpty()
                         ? CompletableFuture.completedFuture(null)

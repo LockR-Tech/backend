@@ -18,6 +18,8 @@ public class AssistantSettingsCatalog implements SettingsCatalog {
     public static final String TOP_K = "app.assistant.top-k";
     public static final String QUESTIONS_PER_HOUR = "app.assistant.questions-per-hour";
     public static final String HISTORY_TURNS = "app.assistant.history-turns";
+    public static final String ORDER_CONTEXT_ENABLED = "app.assistant.order-context-enabled";
+    public static final String RESTORE_DIACRITICS = "app.assistant.restore-diacritics";
 
     private static final String ASSISTANT = "Trợ lý hỏi đáp";
 
@@ -36,6 +38,15 @@ public class AssistantSettingsCatalog implements SettingsCatalog {
                         "Khống chế chi phí gọi mô hình.", 30, 1, 1000, "câu"),
                 integer(HISTORY_TURNS, ASSISTANT, "Số lượt hội thoại trước gửi kèm",
                         "Giúp hiểu câu hỏi nối tiếp (\"còn phí thì sao?\"). 0 = mỗi câu độc lập.",
-                        3, 0, 10, "lượt"));
+                        3, 0, 10, "lượt"),
+                bool(ORDER_CONTEXT_ENABLED, ASSISTANT, "Trả lời về đơn hàng của chính người hỏi",
+                        "Câu hỏi về đơn của chính người hỏi (trạng thái, thanh toán, hạn lấy hàng, giờ hết thuê, "
+                                + "hàng người khác gửi tới) được trả lời từ dữ liệu đơn thật lúc hỏi, gửi kèm cho mô "
+                                + "hình. Không bao giờ gửi mã PIN/QR, mã lấy hàng, số điện thoại đầy đủ hay email. "
+                                + "Tắt thì trợ lý chỉ dựa vào tài liệu.", true),
+                bool(RESTORE_DIACRITICS, ASSISTANT, "Thêm dấu cho câu hỏi gõ không dấu",
+                        "Câu hỏi tiếng Việt gõ không dấu được mô hình thêm dấu trước khi tìm tài liệu, giúp tìm "
+                                + "đúng hơn. Tốn thêm một lượt gọi mô hình ngắn cho mỗi câu như vậy; lỗi thì dùng "
+                                + "nguyên câu gốc.", true));
     }
 }
