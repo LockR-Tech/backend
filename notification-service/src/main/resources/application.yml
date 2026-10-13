@@ -52,6 +52,20 @@ app:
   # KHOÁ LÀ SECRET — nạp qua biến môi trường trên VM, không commit giá trị vào repo.
   # Thiếu bất kỳ giá trị nào thì rơi về bản chỉ ghi log (service vẫn khởi động được).
   sms:
+    # esms | twilio | log — trống thì tự chọn: eSMS nếu đủ khoá, rồi Twilio, không thì chỉ ghi log.
+    provider: ${APP_SMS_PROVIDER:}
+    # eSMS.vn (https://developers.esms.vn). Brandname trống ⇒ gửi bằng đầu số cố định (SmsType 8);
+    # có brandname ⇒ tin CSKH (SmsType 2), nội dung phải khớp template đã đăng ký với eSMS.
+    # sms-type trống ⇒ tự chọn như trên. unicode=false vì nội dung SMS đang là tiếng Việt không dấu
+    # (một tin 160 ký tự thay vì 70). sandbox=true ⇒ eSMS chỉ kiểm tra request, KHÔNG gửi, không tính phí.
+    esms:
+      api-key: ${APP_SMS_ESMS_API_KEY:}
+      secret-key: ${APP_SMS_ESMS_SECRET_KEY:}
+      brandname: ${APP_SMS_ESMS_BRANDNAME:}
+      sms-type: ${APP_SMS_ESMS_SMS_TYPE:}
+      unicode: ${APP_SMS_ESMS_UNICODE:false}
+      sandbox: ${APP_SMS_ESMS_SANDBOX:false}
+      base-url: ${APP_SMS_ESMS_BASE_URL:https://rest.esms.vn/MainService.svc/json}
     twilio:
       account-sid: ${APP_SMS_TWILIO_ACCOUNT_SID:}
       auth-token: ${APP_SMS_TWILIO_AUTH_TOKEN:}

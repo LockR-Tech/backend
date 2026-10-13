@@ -7,12 +7,14 @@ import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.common.util.BusinessTime;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.*;
+import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.model.*;
 import com.huynqb.laundrylocker.order.repository.*;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
@@ -34,8 +36,6 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -344,52 +344,63 @@ public class OrderService {
     /// 2. SMS tới đúng số người gửi đã nhập;
     /// 3. email, nếu người gửi có nhập.
     ///
-    /// Cuối cùng báo lại cho NGƯỜI GỬI đã gửi được hay chưa: khi không kênh nào tới nơi
-    /// thì họ phải tự chuyển mã, và họ chỉ làm vậy nếu biết.
+    /// Cuối cùng báo lại cho NGƯỜI GỬI đã gửi được qua kênh nào: khi không kênh nào tới
+    /// nơi thì họ phải tự chuyển mã, và họ chỉ làm vậy nếu biết.
+    ///
+    /// `type` giữ nguyên (`ORDER_PARCEL_READY`, `ORDER_PARCEL_STORED`) vì app dựa vào nó
+    /// để mở đúng màn hình; tiêu đề/nội dung viết thẳng tiếng Việt.
     private void notifyParcelReadyForReceiver(LockerOrder order) {
-        String message =
-                "Parcel " + order.getOrderCode() + " is waiting in locker " + order.getLockerId()
-                        + ". Pickup PIN: " + order.getPinCode()
-                        + ". Deadline: " + order.getPickupDeadline();
+        PickupPlace place = pickupPlace(order);
+        String deadline = formatDeadline(order.getPickupDeadline());
+
         boolean inAppSent = false;
         try {
             var receiver = userClient.getUserByPhone(order.getReceiverPhone()).data();
             if (receiver != null && receiver.id() != null) {
                 order.setReceiverId(receiver.id());
-                notificationClient.requestNotification(
-                        new NotificationRequest(receiver.id(), "Parcel waiting for you", message, "ORDER_PARCEL_READY", order.getId(), "ORDER"));
+                notificationClient.requestNotification(new NotificationRequest(
+                        receiver.id(), RECEIVER_READY_TITLE, receiverReadyMessage(order, place, deadline),
+                        "ORDER_PARCEL_READY", order.getId(), "ORDER"));
                 inAppSent = true;
             }
         } catch (Exception ex) {
-            log.info("Receiver {} not notified in-app for order {}: {}", order.getReceiverPhone(), order.getId(), ex.getMessage());
+            log.info("Receiver of order {} not notified in-app: {}", order.getId(), ex.getMessage());
         }
 
-        GuestNotification.Result guest = notifyReceiverOutOfBand(order);
-        boolean reached = inAppSent || guest.delivered();
+        GuestNotification.Result guest = notifyReceiverOutOfBand(order, place, deadline);
 
-        notifyQuietly(order.getUserId(), "Parcel stored",
-                senderSummary(order, reached),
+        notifyQuietly(order.getUserId(), SENDER_STORED_TITLE,
+                senderSummary(order, place, deadline, inAppSent, guest.smsSent(), guest.emailSent()),
                 "ORDER_PARCEL_STORED", order.getId());
+    }
+
+    static final String RECEIVER_READY_TITLE = "Có kiện hàng đang chờ bạn";
+    static final String SENDER_STORED_TITLE = "Đã gửi hàng vào tủ";
+    /// Một tin SMS GSM-7 tối đa 160 ký tự; dài hơn là tách thành nhiều tin (tốn tiền hơn).
+    static final int SMS_SINGLE_SEGMENT = 160;
+
+    static String receiverReadyMessage(LockerOrder order, PickupPlace place, String deadline) {
+        return "Kiện hàng " + order.getOrderCode() + " đang chờ bạn tại " + place.label() + ". "
+                + "Mã mở tủ: " + order.getPinCode() + ". "
+                + "Hạn lấy hàng: " + deadline + ". "
+                + "Nhập mã trên màn hình tủ để mở ô và lấy hàng.";
     }
 
     /// Gửi mã qua SMS/email tới số và email người gửi đã nhập trên đơn.
     /// Không bao giờ ném lỗi ra ngoài: hỏng kênh nhắn tin không được làm hỏng việc bỏ hàng.
-    private GuestNotification.Result notifyReceiverOutOfBand(LockerOrder order) {
+    private GuestNotification.Result notifyReceiverOutOfBand(LockerOrder order, PickupPlace place, String deadline) {
         String phone = rules.receiverNotifySms() ? order.getReceiverPhone() : null;
         String email = rules.receiverNotifyEmail() ? order.getReceiverEmail() : null;
         if (!StringUtils.hasText(phone) && !StringUtils.hasText(email)) {
             return new GuestNotification.Result(false, false, false, false);
         }
 
-        String where = lockerLabel(order.getLockerId());
-        String deadline = formatDeadline(order.getPickupDeadline());
-        String sms = "Lock.R: Ban co kien hang " + order.getOrderCode() + " tai " + where
-                + ". Ma mo tu: " + order.getPinCode() + ". Han lay: " + deadline + ".";
+        String sms = pickupSms(order.getOrderCode(), place, order.getPinCode(), deadline);
         String emailBody = "Xin chào" + (StringUtils.hasText(order.getReceiverName())
                 ? " " + order.getReceiverName() : "") + ",\n\n"
                 + "Bạn có một kiện hàng đang chờ trong tủ Lock.R.\n\n"
                 + "Mã đơn: " + order.getOrderCode() + "\n"
-                + "Nơi lấy: " + where + "\n"
+                + "Nơi lấy: " + place.label() + "\n"
                 + "Mã mở tủ: " + order.getPinCode() + "\n"
                 + "Hạn lấy hàng: " + deadline + "\n\n"
                 + "Nhập mã này trên màn hình tủ để mở ô và lấy hàng. "
@@ -409,43 +420,122 @@ public class OrderService {
         }
     }
 
-    /// Câu báo cho người gửi, nói thẳng người nhận đã nhận được mã chưa.
-    private String senderSummary(LockerOrder order, boolean reached) {
-        String base = "Parcel " + order.getOrderCode() + " stored. Receiver "
-                + order.getReceiverPhone() + " can pick up with PIN " + order.getPinCode()
-                + " before " + order.getPickupDeadline() + ". ";
-        return base + (reached
-                ? "Pickup code sent to the receiver."
-                : "We could not reach the receiver — please share the PIN with them yourself.");
+    /// Tin SMS cho người nhận: tiếng Việt KHÔNG dấu (GSM-7 — 160 ký tự/tin thay vì 70),
+    /// chỉ gồm mã đơn, nơi lấy, mã mở tủ, hạn lấy; không có tên/số của ai.
+    ///
+    /// Khuôn cố định "Lock.R: Ban co kien hang {ma don} tai {noi lay}. Ma mo tu: {PIN}.
+    /// Han lay: {HH:mm dd/MM/yyyy}." — trùng template phải đăng ký nếu gửi bằng brandname.
+    /// Quá 160 ký tự thì bỏ địa chỉ tủ trước, rồi mới cắt bớt tên tủ.
+    static String pickupSms(String orderCode, PickupPlace place, String pin, String deadline) {
+        String name = SmsText.ascii(place.lockerName());
+        String address = SmsText.ascii(place.lockerAddress());
+        String box = place.boxNumber() == null ? "" : ", o so " + place.boxNumber();
+
+        String full = pickupSmsText(orderCode, name + (address.isEmpty() ? "" : " (" + address + ")") + box, pin, deadline);
+        if (full.length() <= SMS_SINGLE_SEGMENT) return full;
+
+        String noAddress = pickupSmsText(orderCode, name + box, pin, deadline);
+        int overflow = noAddress.length() - SMS_SINGLE_SEGMENT;
+        if (overflow <= 0) return noAddress;
+
+        // Tên tủ quá dài: cắt bớt nhưng vẫn giữ ít nhất vài chữ đầu để người nhận nhận ra.
+        int keep = Math.max(name.length() - overflow, Math.min(name.length(), 12));
+        return pickupSmsText(orderCode, name.substring(0, keep).trim() + box, pin, deadline);
+    }
+
+    private static String pickupSmsText(String orderCode, String where, String pin, String deadline) {
+        return "Lock.R: Ban co kien hang " + orderCode + " tai " + where
+                + ". Ma mo tu: " + pin + ". Han lay: " + SmsText.ascii(deadline) + ".";
+    }
+
+    /// Câu báo cho người gửi, nói thẳng người nhận đã nhận được mã qua kênh nào chưa.
+    static String senderSummary(LockerOrder order, PickupPlace place, String deadline,
+                                boolean inAppSent, boolean smsSent, boolean emailSent) {
+        String base = "Kiện hàng " + order.getOrderCode() + " đã được cất tại " + place.label() + ". "
+                + "Người nhận " + order.getReceiverPhone() + " lấy hàng bằng mã " + order.getPinCode()
+                + " trước " + deadline + ". ";
+
+        List<String> channels = new ArrayList<>();
+        if (inAppSent) channels.add("thông báo trong ứng dụng Lock.R");
+        if (smsSent) channels.add("SMS");
+        if (emailSent) channels.add("email");
+
+        return base + (channels.isEmpty()
+                ? "Lock.R CHƯA gửi được mã tới người nhận (qua ứng dụng, SMS hay email). "
+                        + "Hãy mở đơn và bấm \"Chia sẻ mã cho người nhận\" để tự gửi mã cho họ."
+                : "Mã mở tủ đã được gửi tới người nhận qua " + String.join(", ", channels) + ".");
+    }
+
+    /// Nơi lấy hàng: tên + địa chỉ tủ và số ô — tra MỘT lần cho cả thông báo trong app,
+    /// SMS và email. Tra không được thì rơi về `tủ #<id>`; "locker 7" không giúp ai tìm tủ.
+    record PickupPlace(String lockerName, String lockerAddress, Integer boxNumber) {
+
+        /// `Tủ Thư viện (Toà Alpha), ô số 4` — có dấu, dùng cho app và email.
+        String label() {
+            StringBuilder label = new StringBuilder(lockerName);
+            if (StringUtils.hasText(lockerAddress)) label.append(" (").append(lockerAddress).append(')');
+            if (boxNumber != null) label.append(", ô số ").append(boxNumber);
+            return label.toString();
+        }
+    }
+
+    private PickupPlace pickupPlace(LockerOrder order) {
+        LockerInfo locker = lockerInfo(order.getLockerId());
+        String name = locker != null && StringUtils.hasText(locker.name())
+                ? locker.name().trim()
+                : order.getLockerId() == null ? "tủ Lock.R" : "tủ #" + order.getLockerId();
+        String address = locker != null && StringUtils.hasText(locker.address()) ? locker.address().trim() : null;
+        return new PickupPlace(name, address, boxNumber(activeBoxId(order)));
+    }
+
+    private Integer boxNumber(Long boxId) {
+        if (boxId == null) return null;
+        try {
+            var response = lockerClient.getBox(boxId);
+            var box = response == null ? null : response.data();
+            return box == null ? null : box.boxNumber();
+        } catch (Exception ex) {
+            log.debug("Box {} lookup failed while composing pickup message: {}", boxId, ex.getMessage());
+            return null;
+        }
+    }
+
+    private LockerInfo lockerInfo(Long lockerId) {
+        if (lockerId == null) return null;
+        try {
+            var response = lockerLookupClient.getLockers(List.of(lockerId));
+            var lockers = response == null ? null : response.data();
+            return lockers == null || lockers.isEmpty() ? null : lockers.getFirst();
+        } catch (Exception ex) {
+            log.debug("Locker {} lookup failed while composing pickup message: {}", lockerId, ex.getMessage());
+            return null;
+        }
     }
 
     /// Tên + địa chỉ tủ nếu tra cứu được, ngược lại rơi về mã tủ. Người nhận cần biết
     /// đi đâu, "locker 7" thì không giúp được gì.
     private String lockerLabel(Long lockerId) {
         if (lockerId == null) return "tủ Lock.R";
-        try {
-            var lockers = lockerLookupClient.getLockers(List.of(lockerId)).data();
-            if (lockers != null && !lockers.isEmpty()) {
-                var locker = lockers.getFirst();
-                String name = StringUtils.hasText(locker.name()) ? locker.name() : "tủ #" + lockerId;
-                return StringUtils.hasText(locker.address()) ? name + " (" + locker.address() + ")" : name;
-            }
-        } catch (Exception ex) {
-            log.debug("Locker {} lookup failed while composing pickup message: {}", lockerId, ex.getMessage());
-        }
-        return "tủ #" + lockerId;
+        LockerInfo locker = lockerInfo(lockerId);
+        if (locker == null) return "tủ #" + lockerId;
+        String name = StringUtils.hasText(locker.name()) ? locker.name() : "tủ #" + lockerId;
+        return StringUtils.hasText(locker.address()) ? name + " (" + locker.address() + ")" : name;
     }
 
-    /// Container chạy UTC nhưng người nhận đọc giờ Việt Nam, nên phải đổi múi giờ
-    /// trước khi đưa vào tin nhắn — trùng cách app và trang admin hiển thị thời gian.
-    private static final ZoneId DISPLAY_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
-    private static final DateTimeFormatter PICKUP_DEADLINE_FORMAT =
-            DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
+    /// Cột thời gian trong DB ghi theo múi giờ JVM (UTC trên container) nhưng người nhận
+    /// đọc giờ Việt Nam — đổi qua {@link BusinessTime} như các báo cáo admin.
+    private static final DateTimeFormatter PICKUP_DEADLINE_FORMAT = DateTimeFormatter.ofPattern("HH:mm dd/MM/yyyy");
 
-    private static String formatDeadline(LocalDateTime deadline) {
+    private BusinessTime time = BusinessTime.system();
+
+    void setTime(BusinessTime time) {
+        this.time = time;
+    }
+
+    String formatDeadline(LocalDateTime deadline) {
         if (deadline == null) return "chưa xác định";
         return PICKUP_DEADLINE_FORMAT.format(
-                deadline.atZone(ZoneOffset.UTC).withZoneSameInstant(DISPLAY_ZONE));
+                deadline.atZone(time.storageZone()).withZoneSameInstant(time.businessZone()));
     }
 
     private void notifyQuietly(Long userId, String title, String message, String type, Long orderId) {

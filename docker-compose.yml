@@ -301,8 +301,20 @@ services:
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_SMTP_STARTTLS:-false}
       APP_MAIL_FROM: ${APP_MAIL_FROM:-}
       MANAGEMENT_HEALTH_MAIL_ENABLED: false
-      # SMS: để trống cả ba thì service vẫn chạy, chỉ ghi log thay vì gửi thật.
-      # Tài khoản Twilio dùng thử chỉ gửi được tới số đã xác minh trong console.
+      # SMS: không nạp khoá nhà cung cấp nào thì service vẫn chạy, chỉ ghi log thay vì gửi thật.
+      # APP_SMS_PROVIDER: esms | twilio | log; trống ⇒ eSMS nếu đủ khoá, rồi Twilio.
+      APP_SMS_PROVIDER: ${APP_SMS_PROVIDER:-}
+      # eSMS.vn — API key/secret là SECRET. Brandname trống ⇒ đầu số cố định (SmsType 8),
+      # có brandname ⇒ CSKH (SmsType 2, cần template đã duyệt). SMS_TYPE trống ⇒ tự chọn.
+      # Default dưới đây trùng application.yml vì biến rỗng sẽ đè default của Spring.
+      APP_SMS_ESMS_API_KEY: ${APP_SMS_ESMS_API_KEY:-}
+      APP_SMS_ESMS_SECRET_KEY: ${APP_SMS_ESMS_SECRET_KEY:-}
+      APP_SMS_ESMS_BRANDNAME: ${APP_SMS_ESMS_BRANDNAME:-}
+      APP_SMS_ESMS_SMS_TYPE: ${APP_SMS_ESMS_SMS_TYPE:-}
+      APP_SMS_ESMS_UNICODE: ${APP_SMS_ESMS_UNICODE:-false}
+      # true ⇒ eSMS chỉ kiểm tra request, KHÔNG gửi tin, không trừ tiền.
+      APP_SMS_ESMS_SANDBOX: ${APP_SMS_ESMS_SANDBOX:-false}
+      # Twilio dùng thử chỉ gửi được tới số đã xác minh trong console.
       APP_SMS_TWILIO_ACCOUNT_SID: ${APP_SMS_TWILIO_ACCOUNT_SID:-}
       APP_SMS_TWILIO_AUTH_TOKEN: ${APP_SMS_TWILIO_AUTH_TOKEN:-}
       APP_SMS_TWILIO_FROM_NUMBER: ${APP_SMS_TWILIO_FROM_NUMBER:-}
