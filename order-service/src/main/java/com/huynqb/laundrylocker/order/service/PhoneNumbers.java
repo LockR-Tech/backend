@@ -59,4 +59,17 @@ public final class PhoneNumbers {
         String left = normalize(a);
         return left != null && left.equals(normalize(b));
     }
+
+    /// Số lưu trong DB sau khi bỏ đúng các ký tự trình bày như chuỗi `replace(...)` của truy vấn
+    /// JPA — để so trong Java đúng y như database so với [variants]. null giữ nguyên null.
+    public static String stripSeparators(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String compact = raw;
+        for (String separator : SEPARATORS) {
+            compact = compact.replace(separator, "");
+        }
+        return compact;
+    }
 }

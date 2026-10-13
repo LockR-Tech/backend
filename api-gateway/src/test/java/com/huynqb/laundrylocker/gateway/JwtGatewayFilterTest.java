@@ -181,6 +181,24 @@ class JwtGatewayFilterTest {
         assertEquals("CUSTOMER", forwarded.get().getRequest().getHeaders().getFirst("X-User-Roles"));
     }
 
+    // Chi tiết đơn phía người nhận: phải đăng nhập, và order-service đọc người xem từ X-User-Id.
+    @Test
+    void receiverOrderDetailNeedsJwtAndForwardsTheCaller() {
+        for (String path : List.of("/api/orders/incoming/21", "/api/orders/delegated-to-me/21")) {
+            MockServerWebExchange anonymous = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
+            AtomicBoolean anonymousForwarded = new AtomicBoolean(false);
+            filter.filter(anonymous, chainThatMarks(anonymousForwarded)).block();
+            assertEquals(HttpStatus.UNAUTHORIZED, anonymous.getResponse().getStatusCode(), path);
+            assertFalse(anonymousForwarded.get(), path);
+
+            AtomicReference<ServerWebExchange> forwarded = new AtomicReference<>();
+            filter.filter(
+                    exchangeWithBearer(MockServerHttpRequest.get(path), token("access", "CUSTOMER")),
+                    captureExchange(forwarded)).block();
+            assertEquals("42", forwarded.get().getRequest().getHeaders().getFirst("X-User-Id"), path);
+        }
+    }
+
     // Trước khi tách prefix, KTV drone vào được cả việc của tủ (lỗ hổng F3.02).
     @Test
     void blocksDroneTechnicianFromLockerTechnicianApi() {

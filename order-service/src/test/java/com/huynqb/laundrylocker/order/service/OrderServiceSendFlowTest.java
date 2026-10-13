@@ -8,7 +8,10 @@ import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
+import com.huynqb.laundrylocker.order.dto.OrderMilestone;
+import com.huynqb.laundrylocker.order.dto.OrderResponse;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
+import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
 import com.huynqb.laundrylocker.order.repository.*;
 import com.huynqb.laundrylocker.order.settings.TestOrderRules;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +23,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,9 +31,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -157,6 +164,51 @@ class OrderServiceSendFlowTest {
         assertTrue(orderService.status(36L).isPaid());
         assertFalse(orderService.status(37L).isPaid());
         assertEquals("UNPAID", orderService.status(37L).paymentStatus());
+    }
+
+    @Test
+    void myOrdersCarryMilestonesParcelAndDelegationFromOneHistoryQuery() {
+        LockerOrder order = sendAwaitingDrop(36L, "PAID");
+        order.setStatus("STORING");
+        order.setCreatedAt(LocalDateTime.of(2026, 10, 12, 1, 0));
+        order.setPaidAt(LocalDateTime.of(2026, 10, 12, 1, 2));
+        order.setDropOpenedAt(LocalDateTime.of(2026, 10, 12, 1, 10));
+        order.setDescription("Hộp bánh");
+        order.setDelegatePhone("0911222333");
+        order.setDelegateName("Người Lấy Hộ");
+        order.setDelegateNote("Lấy giúp nhé");
+        order.setDelegatedAt(LocalDateTime.of(2026, 10, 12, 2, 0));
+        OrderStatusHistory stored = new OrderStatusHistory();
+        stored.setOrderId(36L);
+        stored.setOldStatus("INITIALIZED");
+        stored.setNewStatus("STORING");
+        stored.setCreatedAt(LocalDateTime.of(2026, 10, 12, 1, 15));
+        when(orderRepository.findByUserIdOrderByCreatedAtDesc(44L)).thenReturn(List.of(order));
+        when(historyRepository.findByOrderIdInOrderByCreatedAtAscIdAsc(anyCollection())).thenReturn(List.of(stored));
+
+        OrderResponse response = orderService.listByUser(44L).getFirst();
+
+        assertEquals(List.of("CREATED", "PAID", "DROP_OPENED", "STORED", "DELEGATED"),
+                response.milestones().stream().map(OrderMilestone::code).toList());
+        assertEquals("Hộp bánh", response.parcel().description());
+        assertEquals(LocalDateTime.of(2026, 10, 12, 1, 2), response.paidAt());
+        assertEquals("Người Lấy Hộ", response.delegateName());
+        assertEquals("0911222333", response.delegatePhone());
+        assertEquals("Lấy giúp nhé", response.delegateNote());
+        assertNull(response.failureReason());
+        verify(historyRepository, never()).findByOrderIdOrderByCreatedAtAscIdAsc(anyLong());
+    }
+
+    @Test
+    void singleOrderWithoutParcelDeclarationHasNoParcelBlock() {
+        LockerOrder order = sendAwaitingDrop(37L, "PAID");
+        when(orderRepository.findById(37L)).thenReturn(Optional.of(order));
+
+        OrderResponse response = orderService.get(37L);
+
+        assertNull(response.parcel());
+        assertEquals(List.of("CREATED"), response.milestones().stream().map(OrderMilestone::code).toList());
+        verify(historyRepository).findByOrderIdOrderByCreatedAtAscIdAsc(37L);
     }
 
     private static LockerOrder sendAwaitingDrop(Long id, String paymentStatus) {

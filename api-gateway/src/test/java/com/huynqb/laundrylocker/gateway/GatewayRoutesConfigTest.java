@@ -53,6 +53,8 @@ class GatewayRoutesConfigTest {
         assertFirstRoutedTo("/api/drone-technician/drones", "lb://locker-service");
         assertFirstRoutedTo("/api/orders/incoming", "lb://order-service");
         assertFirstRoutedTo("/api/orders/delegated-to-me", "lb://order-service");
+        assertFirstRoutedTo("/api/orders/incoming/42", "lb://order-service");
+        assertFirstRoutedTo("/api/orders/delegated-to-me/42", "lb://order-service");
     }
 
     private void assertFirstRoutedTo(String path, String expectedUri) {
