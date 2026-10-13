@@ -93,8 +93,21 @@ public class SepayService {
         return payment.getUrl();
     }
 
+    /// Nội dung chuyển khoản: với đơn hàng dùng PAY-{orderId}-{orderCode} hoặc PAY-{orderId} ngắn gọn;
+    /// các giao dịch khác (nạp ví...) dùng referenceId (TOPUP_...).
+    public String transferContent(PaymentRecord payment) {
+        if (payment == null) return "";
+        if (payment.getOrderId() != null && payment.getOrderId() > 0) {
+            if (StringUtils.hasText(payment.getContent()) && payment.getContent().toUpperCase().startsWith("PAY-")) {
+                return payment.getContent();
+            }
+            return "PAY-" + payment.getOrderId();
+        }
+        return payment.getReferenceId() != null ? payment.getReferenceId() : "";
+    }
+
     /// Thông tin chuyển khoản cho app (mở app ngân hàng điền sẵn). `null` khi không phải SePay hoặc chưa
-    /// cấu hình tài khoản nhận. Nội dung chuyển khoản trùng `addInfo` của ảnh QR (referenceId).
+    /// cấu hình tài khoản nhận. Nội dung chuyển khoản trùng `addInfo` của ảnh QR.
     public com.huynqb.laundrylocker.payment.dto.PaymentResponse.BankTransfer bankTransfer(PaymentRecord payment) {
         if (payment == null || payment.getMethod() == null
                 || !payment.getMethod().toUpperCase(java.util.Locale.ROOT).startsWith("SEPAY")
@@ -106,18 +119,18 @@ public class SepayService {
                 : payment.getAmount().setScale(0, java.math.RoundingMode.HALF_UP);
         return new com.huynqb.laundrylocker.payment.dto.PaymentResponse.BankTransfer(
                 bankBin, bankAccountNo, accountName, amount,
-                payment.getReferenceId() != null ? payment.getReferenceId() : "");
+                transferContent(payment));
     }
 
     /**
      * Sinh URL ảnh VietQR (img.vietqr.io) để mobile hiển thị inline.
-     * Nội dung chuyển khoản (addInfo) chứa referenceId để SePay webhook nhận diện.
+     * Nội dung chuyển khoản (addInfo) chứa transferContent để SePay webhook nhận diện.
      */
     public String generateVietQrUrl(PaymentRecord payment) {
         String amount = payment.getAmount() != null
                 ? payment.getAmount().setScale(0, java.math.RoundingMode.HALF_UP).toPlainString()
                 : "0";
-        String info = payment.getReferenceId() != null ? payment.getReferenceId() : "";
+        String info = transferContent(payment);
         String name = java.net.URLEncoder.encode(accountName, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
         return String.format(
@@ -256,6 +269,8 @@ public class SepayService {
             java.util.regex.Pattern.compile("(TOPUP_[0-9]+_[0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final java.util.regex.Pattern PAY_PATTERN =
             java.util.regex.Pattern.compile("PAY[-_\\s]?([0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern ORD_PATTERN =
+            java.util.regex.Pattern.compile("(ORD[-_\\s]?[0-9]{8}[-_\\s]?[A-Z0-9]+|ORD[-_\\s]?[A-Z0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
      * Trích xuất referenceId từ body Webhook.
@@ -310,10 +325,22 @@ public class SepayService {
         if (topupMatcher.find()) {
             return topupMatcher.group(1).toUpperCase();
         }
-        // 2. Quét tìm chuỗi PAY-... (hỗ trợ PAY-12, PAY 12, PAY12, PAY_12, trong chuỗi MBVCB.PAY-12.CT...)
+        // 2. Quét tìm chuỗi PAY-... (hỗ trợ PAY-85-ORD-..., PAY-12, PAY 12, PAY12, PAY_12, trong chuỗi MBVCB.PAY-12.CT...)
         java.util.regex.Matcher payMatcher = PAY_PATTERN.matcher(content);
         if (payMatcher.find()) {
-            return "PAY-" + payMatcher.group(1);
+            String digits = payMatcher.group(1);
+            if (digits.length() > 13) {
+                // Nếu ngân hàng xoá gạch nối giữa orderId và timestamp 13 số (ví dụ PAY821791828685942):
+                String orderIdStr = digits.substring(0, digits.length() - 13);
+                String timestampStr = digits.substring(digits.length() - 13);
+                return "PAY-" + orderIdStr + "-" + timestampStr;
+            }
+            return "PAY-" + digits;
+        }
+        // 3. Quét tìm chuỗi ORD-... (nếu khách chỉ gõ mã đơn hàng)
+        java.util.regex.Matcher ordMatcher = ORD_PATTERN.matcher(content);
+        if (ordMatcher.find()) {
+            return ordMatcher.group(1).toUpperCase().replace(" ", "-").replace("_", "-");
         }
         return content.trim();
     }
