@@ -10,6 +10,17 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:assistant_pass}
   flyway:
     enabled: true
+  # Dữ liệu đơn cho câu hỏi về đơn của người hỏi: chờ ngắn rồi bỏ qua, không làm chậm câu trả lời.
+  cloud:
+    openfeign:
+      client:
+        config:
+          assistantOrderClient:
+            connect-timeout: 1000
+            read-timeout: 3000
+          assistantLockerClient:
+            connect-timeout: 1000
+            read-timeout: 2000
   # Nginx cho body tối đa 20 MB.
   servlet:
     multipart:

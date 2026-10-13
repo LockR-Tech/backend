@@ -73,3 +73,14 @@ Tủ đang bảo trì hoặc tạm ngưng hoạt động sẽ không nhận đơ
 ## Trợ lý hỏi đáp
 
 Trợ lý trong ứng dụng trả lời dựa trên tài liệu chính thức của Lock.R và ghi rõ nguồn trích dẫn. Nếu tài liệu chưa đề cập nội dung bạn hỏi, trợ lý sẽ nói rõ và gợi ý liên hệ bộ phận hỗ trợ.
+
+### Hỏi về đơn hàng của chính bạn
+
+- Trợ lý trả lời được câu hỏi về đơn của chính bạn bằng dữ liệu thật lấy ngay lúc bạn hỏi: trạng thái đơn (đã có người lấy hàng chưa, drone đang ở chặng nào), đã thanh toán chưa và số tiền, hạn lấy hàng, thuê ô còn bao lâu hết giờ, và hàng người khác gửi cho bạn. Ví dụ: "Đơn gửi hàng hôm qua của tôi đã có người lấy chưa?", "Tủ tôi thuê còn bao lâu hết giờ?", "Có hàng ai gửi cho tôi không?".
+- Trợ lý chỉ xem đơn bạn đã tạo và đơn người khác gửi cho bạn, theo tài khoản đang đăng nhập; không xem được đơn của người khác.
+- Câu trả lời có nguồn "Đơn hàng của bạn" kèm thời điểm lấy dữ liệu (giờ Việt Nam). Trạng thái có thể đổi sau thời điểm đó; danh sách đầy đủ và mới nhất luôn ở mục Đơn hàng trong ứng dụng.
+- Trợ lý không hiển thị mã PIN, mã QR hay mã lấy hàng/mở ô. Để xem mã, mở đơn trong mục Đơn hàng › Đơn của tôi (hàng người khác gửi cho bạn ở Hàng chờ nhận).
+
+### Gõ tiếng Việt không dấu
+
+Bạn có thể hỏi bằng tiếng Việt không dấu, ví dụ "lam sao de gui hang cho nguoi khac qua tu?". Trợ lý vẫn hiểu đúng câu hỏi và trả lời bằng tiếng Việt có dấu.

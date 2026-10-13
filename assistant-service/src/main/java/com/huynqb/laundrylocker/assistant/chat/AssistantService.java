@@ -9,11 +9,16 @@ import com.huynqb.laundrylocker.assistant.chat.ConversationRepository.MessageRow
 import com.huynqb.laundrylocker.assistant.knowledge.ChunkRepository;
 import com.huynqb.laundrylocker.assistant.knowledge.RetrievedChunk;
 import com.huynqb.laundrylocker.assistant.knowledge.RoleSet;
+import com.huynqb.laundrylocker.assistant.orders.OrderContextService;
 import com.huynqb.laundrylocker.assistant.provider.AnswerGenerator;
 import com.huynqb.laundrylocker.assistant.provider.AnswerGenerator.ChatTurn;
+import com.huynqb.laundrylocker.assistant.provider.AnswerGenerator.ContextDocument;
 import com.huynqb.laundrylocker.assistant.provider.AnswerGenerator.GeneratedAnswer;
 import com.huynqb.laundrylocker.assistant.provider.EmbeddingProvider;
 import com.huynqb.laundrylocker.assistant.provider.ProviderException;
+import com.huynqb.laundrylocker.assistant.query.OrderIntent;
+import com.huynqb.laundrylocker.assistant.query.QuestionPreparer;
+import com.huynqb.laundrylocker.assistant.query.QuestionPreparer.PreparedQuestion;
 import com.huynqb.laundrylocker.assistant.settings.AssistantRules;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
@@ -29,36 +34,47 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/// Hỏi đáp RAG: nhúng câu hỏi → tìm đoạn tài liệu người hỏi được đọc → dưới ngưỡng thì trả lời
-/// "tài liệu chưa đề cập" mà không gọi mô hình → trên ngưỡng thì Claude trả lời kèm trích dẫn.
+/// Hỏi đáp RAG: chuẩn bị câu hỏi (thêm dấu nếu gõ không dấu) → nhúng → tìm đoạn tài liệu người hỏi
+/// được đọc → nếu câu hỏi nói về đơn của chính người hỏi thì kèm dữ liệu đơn thật của họ → không có
+/// đoạn nào đạt ngưỡng và không có dữ liệu đơn thì trả lời "tài liệu chưa đề cập" mà không gọi mô
+/// hình → ngược lại Claude trả lời kèm trích dẫn.
 @Slf4j
 @Service
 public class AssistantService {
 
     static final String NO_ANSWER_TEXT = "Tài liệu hiện có chưa đề cập nội dung này. Bạn có thể diễn đạt lại câu "
             + "hỏi, hoặc liên hệ bộ phận hỗ trợ Lock.R để được giúp đỡ.";
+    /// Nguồn "Đơn hàng của bạn" không thuộc kho tri thức ⇒ documentId/chunkId = 0 (id thật bắt đầu từ 1).
+    static final long ORDER_SOURCE_ID = 0;
 
     private final ConversationRepository conversations;
     private final ChunkRepository chunks;
     private final EmbeddingProvider embeddings;
     private final AnswerGenerator generator;
     private final AssistantRules rules;
+    private final QuestionPreparer questions;
+    private final OrderContextService orderContext;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
     @Autowired
     public AssistantService(ConversationRepository conversations, ChunkRepository chunks, EmbeddingProvider embeddings,
-                            AnswerGenerator generator, AssistantRules rules, ObjectMapper objectMapper) {
-        this(conversations, chunks, embeddings, generator, rules, objectMapper, Clock.systemDefaultZone());
+                            AnswerGenerator generator, AssistantRules rules, QuestionPreparer questions,
+                            OrderContextService orderContext, ObjectMapper objectMapper) {
+        this(conversations, chunks, embeddings, generator, rules, questions, orderContext, objectMapper,
+                Clock.systemDefaultZone());
     }
 
     AssistantService(ConversationRepository conversations, ChunkRepository chunks, EmbeddingProvider embeddings,
-                     AnswerGenerator generator, AssistantRules rules, ObjectMapper objectMapper, Clock clock) {
+                     AnswerGenerator generator, AssistantRules rules, QuestionPreparer questions,
+                     OrderContextService orderContext, ObjectMapper objectMapper, Clock clock) {
         this.conversations = conversations;
         this.chunks = chunks;
         this.embeddings = embeddings;
         this.generator = generator;
         this.rules = rules;
+        this.questions = questions;
+        this.orderContext = orderContext;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -69,6 +85,7 @@ public class AssistantService {
         return new AssistantStatus(rules.enabled(), embedding && chat, embedding, chat);
     }
 
+    /// `userId` là X-User-Id gateway gắn sau khi kiểm JWT — dữ liệu đơn chỉ lấy theo id này.
     public AskResponse ask(long userId, List<String> roles, AskRequest request) {
         if (!rules.enabled()) {
             throw new BusinessException(
@@ -93,10 +110,15 @@ public class AssistantService {
                 : ownedConversation(request.conversationId(), userId);
         List<ChatTurn> history = conversation == null ? List.of() : history(conversation.id(), rules.historyTurns());
 
+        // Câu gõ không dấu ⇒ bản đã thêm dấu dùng để tìm tài liệu, nhận diện ý định và gửi mô hình;
+        // hội thoại vẫn lưu nguyên câu người dùng gõ.
+        PreparedQuestion prepared = questions.prepare(question);
+        String effective = prepared.text();
+
         List<RetrievedChunk> relevant;
         double topScore;
         try {
-            float[] query = embeddings.embed(List.of(retrievalQuery(history, question)),
+            float[] query = embeddings.embed(List.of(retrievalQuery(history, effective)),
                     EmbeddingProvider.InputType.QUERY).get(0);
             List<RetrievedChunk> found = chunks.search(
                     query, roles.contains(RoleSet.ADMIN) ? null : RoleSet.readerRoles(roles), rules.topK());
@@ -107,26 +129,29 @@ public class AssistantService {
             throw unavailable(ex);
         }
 
+        ContextDocument orders = orderContext(userId, question, effective, history);
+
         String answerText;
         boolean refused;
         List<SourceView> sources;
         String model = null;
         Long inputTokens = null;
         Long outputTokens = null;
-        if (relevant.isEmpty()) {
+        if (relevant.isEmpty() && orders == null) {
             answerText = NO_ANSWER_TEXT;
             refused = true;
             sources = List.of();
         } else {
+            // Có dữ liệu đơn thì luôn để mô hình quyết định, kể cả khi không đoạn tài liệu nào đạt ngưỡng.
             GeneratedAnswer generated;
             try {
-                generated = generator.generate(question, relevant, history);
+                generated = generator.generate(effective, relevant, history, orders);
             } catch (ProviderException ex) {
                 throw unavailable(ex);
             }
             answerText = generated.text().isBlank() ? NO_ANSWER_TEXT : generated.text();
             refused = generated.refused();
-            sources = sources(generated, relevant);
+            sources = sources(generated, relevant, orders);
             model = generator.model();
             inputTokens = generated.inputTokens();
             outputTokens = generated.outputTokens();
@@ -164,6 +189,23 @@ public class AssistantService {
 
     public ConversationDetail conversation(long id) {
         return detail(conversations.find(id).orElseThrow(() -> new NotFoundException("Conversation", id)));
+    }
+
+    /// Dữ liệu đơn của người hỏi khi câu này — hoặc một câu trước trong hội thoại đang gửi kèm — nói
+    /// về đơn của họ. Không tải được ⇒ null (trả lời như chưa có tính năng này).
+    private ContextDocument orderContext(long userId, String question, String effective, List<ChatTurn> history) {
+        if (!rules.orderContextEnabled()) {
+            return null;
+        }
+        boolean asked = OrderIntent.isOrderQuestion(effective) || OrderIntent.isOrderQuestion(question)
+                || history.stream().anyMatch(turn -> turn.fromUser() && OrderIntent.isOrderQuestion(turn.content()));
+        if (!asked) {
+            return null;
+        }
+        // Mã đơn nhắc ở câu này hoặc câu trước được ưu tiên đưa vào tài liệu.
+        StringBuilder codeSource = new StringBuilder(question);
+        history.stream().filter(ChatTurn::fromUser).forEach(turn -> codeSource.append('\n').append(turn.content()));
+        return orderContext.load(userId, codeSource.toString()).orElse(null);
     }
 
     private ConversationRow ownedConversation(long id, long userId) {
@@ -212,10 +254,17 @@ public class AssistantService {
         return question;
     }
 
-    /// Mỗi trích dẫn trỏ về một đoạn đã gửi; gộp trích dẫn trùng đoạn + câu.
-    static List<SourceView> sources(GeneratedAnswer generated, List<RetrievedChunk> relevant) {
+    /// Mỗi trích dẫn trỏ về một đoạn đã gửi; gộp trích dẫn trùng đoạn + câu. Trích dẫn vào dữ liệu đơn
+    /// gộp thành một nguồn "Đơn hàng của bạn" không kèm câu trích — câu trả lời đã nói đủ, và không lưu
+    /// lại bản sao dữ liệu đơn trong lịch sử hội thoại.
+    static List<SourceView> sources(GeneratedAnswer generated, List<RetrievedChunk> relevant, ContextDocument orders) {
         Map<String, SourceView> unique = new LinkedHashMap<>();
         for (AnswerGenerator.Citation citation : generated.citations()) {
+            if (orders != null && citation.chunkIndex() == relevant.size()) {
+                unique.putIfAbsent("orders", new SourceView(
+                        ORDER_SOURCE_ID, orders.title(), ORDER_SOURCE_ID, orders.context(), ""));
+                continue;
+            }
             if (citation.chunkIndex() < 0 || citation.chunkIndex() >= relevant.size()) {
                 continue;
             }

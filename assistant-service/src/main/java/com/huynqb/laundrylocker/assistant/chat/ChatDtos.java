@@ -16,7 +16,9 @@ public final class ChatDtos {
     public record AskRequest(Long conversationId, @NotBlank @Size(max = 2000) String question) {
     }
 
-    /// Đoạn tài liệu làm căn cứ cho câu trả lời; `citedText` là câu được trích nguyên văn.
+    /// Đoạn tài liệu làm căn cứ cho câu trả lời; `citedText` là câu được trích nguyên văn. Nguồn "Đơn hàng
+    /// của bạn" (dữ liệu đơn của người hỏi, không thuộc kho tri thức) có `documentId = chunkId = 0`,
+    /// `heading` là thời điểm lấy dữ liệu và `citedText` rỗng.
     public record SourceView(long documentId, String documentTitle, long chunkId, String heading, String citedText) {
     }
 

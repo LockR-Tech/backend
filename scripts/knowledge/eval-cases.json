@@ -15,6 +15,10 @@
   {"question": "Đăng nhập bằng Google thì ứng dụng nhận những dữ liệu nào?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Chính sách quyền riêng tư", "mustRefuse": false},
   {"question": "Tôi muốn xoá tài khoản và dữ liệu cá nhân thì làm sao?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn xóa dữ liệu người dùng", "mustRefuse": false},
   {"question": "Người dùng có trách nhiệm gì khi sử dụng dịch vụ?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Điều khoản dịch vụ", "mustRefuse": false},
+  {"question": "lam sao de gui hang cho nguoi khac qua tu?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
+  {"question": "nguoi nhan lay ma mo tu o dau?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
+  {"question": "thue o theo gio thi co mo lai o nhieu lan duoc khong?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn sử dụng Lock.R cho khách hàng", "mustRefuse": false},
+  {"question": "toi muon xoa tai khoan va du lieu ca nhan thi lam sao?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Hướng dẫn xóa dữ liệu người dùng", "mustRefuse": false},
   {"question": "Hoàn tất phiếu sự cố xong thì ô tủ trở về trạng thái nào?", "roles": ["LOCKER_TECHNICIAN"], "expectedDocumentTitle": "Quy trình vận hành và bảo trì tủ cho kỹ thuật viên", "mustRefuse": false},
   {"question": "Kiểm tra định kỳ có mục không đạt thì xử lý thế nào?", "roles": ["LOCKER_TECHNICIAN"], "expectedDocumentTitle": "Quy trình vận hành và bảo trì tủ cho kỹ thuật viên", "mustRefuse": false},
   {"question": "Vì sao tôi không nhận thêm được phiếu mới?", "roles": ["LOCKER_TECHNICIAN"], "expectedDocumentTitle": "Quy trình vận hành và bảo trì tủ cho kỹ thuật viên", "mustRefuse": false},
@@ -23,6 +27,7 @@
   {"question": "Quy trình phát hành và triển khai backend lên production gồm những bước nào?", "roles": ["ADMIN"], "expectedDocumentTitle": "Quy trình phát hành và triển khai", "mustRefuse": false},
   {"question": "Thời tiết Hà Nội ngày mai thế nào?", "roles": ["CUSTOMER"], "mustRefuse": true},
   {"question": "Giá vàng hôm nay bao nhiêu?", "roles": ["CUSTOMER"], "mustRefuse": true},
+  {"question": "gia vang hom nay bao nhieu?", "roles": ["CUSTOMER"], "mustRefuse": true},
   {"question": "Viết giúp tôi một bài thơ về mùa thu.", "roles": ["CUSTOMER"], "mustRefuse": true},
   {"question": "Kỹ thuật viên giữ bao nhiêu phiếu trễ hạn SLA thì bị đình chỉ?", "roles": ["CUSTOMER"], "mustRefuse": true},
   {"question": "Kỹ thuật viên ghi kết quả kiểm tra định kỳ từng mục thế nào?", "roles": ["CUSTOMER"], "mustRefuse": true}
