@@ -1860,7 +1860,7 @@ public class OrderService {
     }
 
     private OrderSummary toSummary(LockerOrder order) {
-        return new OrderSummary(order.getId(), order.getUserId(), order.getStatus(), order.getTotalPrice());
+        return new OrderSummary(order.getId(), order.getUserId(), order.getStatus(), order.getTotalPrice(), order.getType());
     }
 
     private OrderResponse toResponse(LockerOrder order) {
