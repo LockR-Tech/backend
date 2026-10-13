@@ -2,16 +2,25 @@
 
 Lock.R là hệ thống tủ khoá thông minh: bạn có thể gửi hàng cho người khác qua tủ, thuê ô tủ theo giờ để cất đồ, và nhận hàng giao bằng drone. Mọi thao tác đặt đơn, thanh toán và theo dõi đơn làm trên ứng dụng Lock.R; việc mở ô làm tại màn hình kiosk của tủ bằng mã, hoặc mở từ ứng dụng.
 
+## Đăng nhập và đăng ký
+
+- Đăng nhập bằng **số điện thoại**: nhập số di động Việt Nam, nhận mã OTP 6 số qua tin nhắn SMS rồi nhập mã. Chưa có tài khoản thì hệ thống tự tạo; lần đầu ứng dụng hỏi họ tên (bước "Hoàn tất đăng ký"). Không nhận được mã thì chờ hết đếm ngược rồi bấm "Gửi lại mã".
+- Đăng nhập bằng **email**: nhập email, nhận mã OTP qua email.
+- Đăng nhập bằng **tài khoản Google**.
+
 ## Phí và thời hạn
 
 Phí gửi hàng, giá thuê ô theo giờ (ô tiêu chuẩn và ô XL), số giờ thuê tối thiểu/tối đa và thời hạn lấy hàng do Lock.R cấu hình và có thể thay đổi. Số tiền và thời hạn áp dụng cho đơn của bạn luôn hiển thị trên ứng dụng trước khi bạn thanh toán, và được giữ nguyên cho đơn đã tạo.
 
 ## Thanh toán
 
-- Ứng dụng hỗ trợ thanh toán bằng Ví Lock.R và chuyển khoản ngân hàng qua mã VietQR (SePay). Ứng dụng không có hình thức trả tiền mặt.
-- Với chuyển khoản VietQR, ứng dụng mở trang thanh toán có mã QR; bạn quét mã bằng ứng dụng ngân hàng, giữ nguyên số tiền và nội dung chuyển khoản, rồi quay lại ứng dụng và chờ vài giây để đơn chuyển sang "Đã thanh toán".
+- Mọi đơn (gửi hàng, thuê ô, gia hạn, phí quá hạn, giao bằng drone) chỉ thanh toán bằng **chuyển khoản ngân hàng qua mã VietQR (SePay)**. Ứng dụng không nhận tiền mặt, không trả đơn bằng ví, không dùng MoMo hay VNPay.
+- Sau khi tạo đơn, ứng dụng hiện ngay mã VietQR, số tiền cần chuyển và nội dung chuyển khoản (có nút "Sao chép"). Có hai cách trả:
+  - Quét mã QR bằng ứng dụng ngân hàng; giữ nguyên số tiền và nội dung chuyển khoản.
+  - Bấm "Thanh toán bằng app ngân hàng", chọn ngân hàng của bạn: ứng dụng ngân hàng mở ra với số tài khoản, số tiền và nội dung đã điền sẵn, bạn chỉ cần xác nhận chuyển.
+- Chuyển xong, quay lại ứng dụng: đơn tự chuyển sang "Đã thanh toán" sau vài giây, hoặc bấm "Tôi đã chuyển khoản — Kiểm tra ngay".
 - Nếu đã trả tiền mà đơn chưa hiện "Đã thanh toán", hãy mở lại trang đơn để làm mới. Quá vài phút vẫn chưa cập nhật thì liên hệ bộ phận hỗ trợ, không thanh toán lại lần thứ hai.
-- Ví Lock.R được nạp tiền trong mục Ví của ứng dụng bằng chuyển khoản VietQR.
+- Ví Lock.R được nạp tiền bằng chuyển khoản VietQR; số dư có thể rút về tài khoản ngân hàng trong mục Ví.
 
 ## Gửi hàng qua tủ
 
@@ -20,7 +29,8 @@ Phí gửi hàng, giá thuê ô theo giờ (ô tiêu chuẩn và ô XL), số gi
 3. Đến tủ đã chọn. Mở ô bằng một trong hai cách: bấm "Mở ô để bỏ hàng" trong ứng dụng, hoặc nhập mã gửi hàng trên màn hình kiosk.
 4. Đặt hàng vào ô và đóng cửa ô.
 5. Xác nhận đã bỏ hàng: bấm "Tôi đã bỏ hàng vào ô" trong ứng dụng, hoặc chọn "Đã bỏ hàng xong" trên kiosk ngay sau khi mở ô bằng mã.
-6. Sau khi xác nhận, người nhận nhận được mã lấy hàng và hạn lấy hàng qua thông báo của ứng dụng (nếu có tài khoản Lock.R), tin nhắn SMS hoặc email.
+6. Sau khi xác nhận, ứng dụng hiện mã lấy hàng dành cho người nhận. Bấm "Chia sẻ mã cho người nhận" để gửi tin nhắn soạn sẵn (tên tủ, ô số, mã lấy hàng, hạn lấy) qua Zalo, Messenger hoặc SMS; hoặc "Nhắn SMS" để mở ứng dụng tin nhắn điền sẵn số người nhận; hoặc "Sao chép tin nhắn". Mã này cũng xem lại được trong chi tiết đơn ở mục Đơn của tôi.
+7. Nếu người nhận có tài khoản Lock.R trùng số điện thoại, họ thấy đơn trong mục "Hàng chờ nhận" và nhận thông báo trong ứng dụng; nếu bạn nhập email người nhận, họ nhận thêm email có mã.
 
 Lưu ý:
 - Chỉ xác nhận sau khi hàng đã thực sự nằm trong ô. Hệ thống yêu cầu ô đã được mở cho đơn trước khi cho xác nhận bỏ hàng.
@@ -28,7 +38,7 @@ Lưu ý:
 
 ## Nhận hàng
 
-1. Mở thông báo hoặc tin nhắn chứa mã lấy hàng.
+1. Lấy mã lấy hàng từ tin nhắn người gửi chia sẻ, email, hoặc mục "Hàng chờ nhận" trong ứng dụng (nếu tài khoản của bạn trùng số điện thoại người gửi đã nhập).
 2. Tại tủ, nhập mã lấy hàng trên màn hình kiosk (hoặc quét mã QR nếu tủ hỗ trợ).
 3. Ô tương ứng tự mở. Lấy hàng và đóng cửa ô. Đơn chuyển sang hoàn tất.
 
@@ -68,7 +78,7 @@ Tủ đang bảo trì hoặc tạm ngưng hoạt động sẽ không nhận đơ
 
 ## Huỷ đơn và hoàn tiền
 
-Đơn chưa thanh toán có thể huỷ trong ứng dụng. Với đơn đã thanh toán muốn huỷ hoặc cần hoàn tiền, vui lòng liên hệ bộ phận hỗ trợ Lock.R để được xử lý.
+Đơn chưa thanh toán có thể huỷ trong ứng dụng. Đơn đã thanh toán gặp sự cố (tủ lỗi không mở được, thanh toán trùng, tính phí sai…) thì gửi yêu cầu hoàn tiền trong chi tiết đơn, kèm lý do và ảnh nếu có; theo dõi trạng thái ở mục Yêu cầu hoàn tiền. Quản trị viên duyệt rồi chuyển khoản lại cho bạn.
 
 ## Trợ lý hỏi đáp
 
