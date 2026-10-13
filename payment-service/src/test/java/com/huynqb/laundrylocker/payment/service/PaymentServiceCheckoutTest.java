@@ -276,6 +276,30 @@ class PaymentServiceCheckoutTest {
     }
 
     @Test
+    void checkoutSelectsDroneReceiverOnlyForDroneDeliveryOrders() {
+        when(orderClient.getOrder(55L)).thenReturn(ApiResponse.ok(
+                new OrderSummary(55L, 44L, "AWAITING_DISPATCH", BigDecimal.valueOf(15000), "DRONE_DELIVERY")));
+        when(repository.findByOrderId(55L)).thenReturn(List.of());
+        when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        paymentService.checkout(44L, new CheckoutRequest(55L, "SEPAY", null, null));
+
+        verify(sepayService).createPayment(any(PaymentRecord.class), any(), org.mockito.ArgumentMatchers.eq(true));
+    }
+
+    @Test
+    void checkoutKeepsDefaultReceiverForLockerOrders() {
+        when(orderClient.getOrder(55L)).thenReturn(ApiResponse.ok(
+                new OrderSummary(55L, 44L, "INITIALIZED", BigDecimal.valueOf(4000), "RENTAL")));
+        when(repository.findByOrderId(55L)).thenReturn(List.of());
+        when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        paymentService.checkout(44L, new CheckoutRequest(55L, "SEPAY", null, null));
+
+        verify(sepayService).createPayment(any(PaymentRecord.class), any(), org.mockito.ArgumentMatchers.eq(false));
+    }
+
+    @Test
     void refundOrderCreatesPendingRefundWithoutWalletCredit() {
         PaymentRecord paid = new PaymentRecord();
         paid.setId(7L);

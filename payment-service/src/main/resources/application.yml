@@ -90,4 +90,7 @@ sepay:
   bank-bin: ${SEPAY_BANK_BIN:}
   bank-account-no: ${SEPAY_BANK_ACCOUNT_NO:}
   account-name: ${SEPAY_ACCOUNT_NAME:LaundryLocker}
+  drone-bank-bin: ${SEPAY_DRONE_BANK_BIN:}
+  drone-bank-account-no: ${SEPAY_DRONE_BANK_ACCOUNT_NO:}
+  drone-account-name: ${SEPAY_DRONE_ACCOUNT_NAME:}
 
