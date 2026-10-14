@@ -140,11 +140,20 @@ public class DronePickupService {
 
     /// Xem định nghĩa "rảnh" ở đầu lớp.
     public boolean busy(Long technicianId) {
-        if (pickupRepository.existsByTechnicianIdAndStatusIn(technicianId, HOLDING)) {
-            return true;
+        // Do not trust a child row alone: the parent order may already be closed while cleanup was interrupted.
+        // A terminal order must never keep a technician busy indefinitely.
+        for (DronePickup holding : pickupRepository
+                .findByTechnicianIdAndStatusInOrderByCreatedAtDesc(technicianId, HOLDING)) {
+            LockerOrder order = orderRepository.findById(holding.getOrderId()).orElse(null);
+            if (activeOrder(order)) {
+                return true;
+            }
         }
-        if (missionRepository.existsByAssignedByUserIdAndStatusIn(technicianId, ACTIVE_MISSION)) {
-            return true;
+        for (var mission : missionRepository.findByAssignedByUserIdAndStatusIn(technicianId, ACTIVE_MISSION)) {
+            LockerOrder order = orderRepository.findById(mission.getOrderId()).orElse(null);
+            if (activeOrder(order)) {
+                return true;
+            }
         }
         // Đang cầm kiện đã lấy nhưng chưa tạo nhiệm vụ bay.
         for (DronePickup carrying : pickupRepository
@@ -155,6 +164,16 @@ public class DronePickupService {
             }
         }
         return false;
+    }
+
+    private static boolean activeOrder(LockerOrder order) {
+        if (order == null) {
+            return false;
+        }
+        String status = order.getStatus() == null ? "" : order.getStatus().toUpperCase();
+        String stage = order.getDeliveryStage() == null ? "" : order.getDeliveryStage().toUpperCase();
+        return !Set.of("COMPLETED", "CANCELED", "EXPIRED").contains(status)
+                && !Set.of("READY_FOR_PICKUP", "CANCELED", "FAILED").contains(stage);
     }
 
     // ------------------------------------------------------------------ dispatch
