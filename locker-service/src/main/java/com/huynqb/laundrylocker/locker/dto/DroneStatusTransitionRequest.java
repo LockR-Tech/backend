@@ -6,5 +6,14 @@ import jakarta.validation.constraints.NotBlank;
 public record DroneStatusTransitionRequest(
         @NotBlank String expectedStatus,
         @NotBlank String status,
-        String reason) {
+        String reason,
+        Boolean createFaultReport) {
+
+    public DroneStatusTransitionRequest(String expectedStatus, String status, String reason) {
+        this(expectedStatus, status, reason, true);
+    }
+
+    public boolean shouldCreateFaultReport() {
+        return createFaultReport == null || createFaultReport;
+    }
 }
