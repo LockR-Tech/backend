@@ -9,8 +9,10 @@ import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.DroneMaintenanceLogResponse;
+import com.huynqb.laundrylocker.locker.dto.CreateIncidentTicketsRequest;
 import com.huynqb.laundrylocker.locker.dto.DroneUpdateRequest;
 import com.huynqb.laundrylocker.locker.dto.DroneUnitResponse;
+import com.huynqb.laundrylocker.locker.dto.IncidentTicketBundleResponse;
 import com.huynqb.laundrylocker.locker.dto.LockerReportResponse;
 import com.huynqb.laundrylocker.locker.model.DroneMaintenanceLog;
 import com.huynqb.laundrylocker.locker.model.DroneStatus;
@@ -38,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -355,6 +358,63 @@ class LockerServiceDroneFleetTest {
 
         assertEquals("DRONE_STATUS_CONFLICT", error.getCode());
         verify(droneUnitRepository, never()).save(any());
+    }
+
+    @Test
+    void parcelDropCreatesOneDroneInspectionAndSelectsNearestLockerRecoveryTechnician() {
+        DroneUnit drone = droneUnit(7L, 42L, DroneStatus.FAULT, 70);
+        LockerUnit fpt = locker(10L, "CAB-DEMO-01");
+        fpt.setStatus("ACTIVE");
+        fpt.setName("Tủ FPT University HCMC");
+        fpt.setLatitude(10.8411);
+        fpt.setLongitude(106.8097);
+        fpt.setAssignedTechnicianId(84L);
+        LockerUnit farther = locker(11L, "CAB-VGP-01");
+        farther.setStatus("ACTIVE");
+        farther.setLatitude(10.8429);
+        farther.setLongitude(106.8361);
+        farther.setAssignedTechnicianId(85L);
+        when(droneUnitRepository.findById(7L)).thenReturn(Optional.of(drone));
+        when(lockerRepository.findAll()).thenReturn(List.of(farther, fpt));
+        when(reportRepository.findByExternalIncidentIdAndTicketType(any(), any()))
+                .thenReturn(Optional.empty());
+        when(reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(userClient.getUser(42L)).thenReturn(ApiResponse.ok(
+                new UserSummary(42L, "drone@test", "0901", "KTV Drone", "ACTIVE", Set.of("DRONE_TECHNICIAN"))));
+        when(userClient.getUser(84L)).thenReturn(ApiResponse.ok(
+                new UserSummary(84L, "locker@test", "0902", "KTV Tủ FPT", "ACTIVE", Set.of("LOCKER_TECHNICIAN"))));
+        when(userClient.getUser(85L)).thenReturn(ApiResponse.ok(
+                new UserSummary(85L, "far@test", "0903", "KTV Tủ Xa", "ACTIVE", Set.of("LOCKER_TECHNICIAN"))));
+        AtomicLong ids = new AtomicLong(100);
+        when(reportRepository.save(any(LockerReport.class))).thenAnswer(invocation -> {
+            LockerReport report = invocation.getArgument(0);
+            report.setId(ids.incrementAndGet());
+            return report;
+        });
+
+        IncidentTicketBundleResponse result = service.createIncidentTickets(new CreateIncidentTicketsRequest(
+                89L, "DPI-89", 89L, "ORD-89", 7L, "DRONE-01", 3L,
+                "Kiện rơi khỏi khoang", 10.8411, 106.8097, null, null));
+
+        ArgumentCaptor<LockerReport> reports = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository).save(reports.capture());
+        LockerReport inspection = reports.getValue();
+        assertEquals("DRONE_INSPECTION", inspection.getTicketType());
+        assertEquals(42L, inspection.getAssignedToUserId());
+        assertEquals(ReportCategory.DRONE, inspection.getCategory());
+        assertEquals(84L, result.recoveryTechnicianId());
+        assertEquals(10L, result.recoveryLockerId());
+    }
+
+    @Test
+    void parcelDropFaultTransitionCanSuppressTheGenericDroneFaultReport() {
+        when(droneUnitRepository.findByIdForUpdate(7L))
+                .thenReturn(Optional.of(droneUnit(7L, 42L, DroneStatus.IN_FLIGHT, 70)));
+
+        service.transitionDroneStatusInternal(
+                7L, DroneStatus.IN_FLIGHT, DroneStatus.FAULT, "Parcel drop incident DPI-89", false);
+
+        verify(reportRepository, never()).save(any(LockerReport.class));
     }
 
     // ─── Quy tắc đổi trạng thái tay ───

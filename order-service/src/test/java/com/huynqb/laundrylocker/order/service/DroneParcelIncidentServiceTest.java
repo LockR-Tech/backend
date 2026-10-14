@@ -165,6 +165,7 @@ class DroneParcelIncidentServiceTest {
         LockerOrder order = policyOrder();
         order.setType("DRONE_DELIVERY");
         order.setDeliveryStage("EN_ROUTE");
+        order.setFulfillmentMode("DEMO");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
         mission.setDroneCode("DRONE-09");
@@ -178,6 +179,9 @@ class DroneParcelIncidentServiceTest {
 
         assertEquals("UNAVAILABLE", camera.get("status"));
         assertEquals(false, camera.get("integrationAvailable"));
+        assertEquals(DroneParcelIncidentService.FPT_HCM_LATITUDE, camera.get("latitude"));
+        assertEquals(DroneParcelIncidentService.FPT_HCM_LONGITUDE, camera.get("longitude"));
+        assertEquals("SIMULATION_FPT_HCM", camera.get("locationSource"));
         assertFalse(camera.containsKey("streamUrl"));
     }
 

@@ -2537,6 +2537,12 @@ public class LockerService {
     @Transactional
     public DroneUnitResponse transitionDroneStatusInternal(
             Long id, String expectedStatus, String status, String reason) {
+        return transitionDroneStatusInternal(id, expectedStatus, status, reason, true);
+    }
+
+    @Transactional
+    public DroneUnitResponse transitionDroneStatusInternal(
+            Long id, String expectedStatus, String status, String reason, boolean createFaultReport) {
         DroneUnit unit = droneUnitRepository
                 .findByIdForUpdate(id)
                 .orElseThrow(() -> new NotFoundException("DroneUnit", id));
@@ -2545,7 +2551,7 @@ public class LockerService {
                     "DRONE_STATUS_CONFLICT",
                     "Drone status changed; expected " + expectedStatus + " but was " + unit.getStatus());
         }
-        return updateDroneStatusInternal(unit, status, reason, null, false);
+        return updateDroneStatusInternal(unit, status, reason, null, false, createFaultReport);
     }
 
     private DroneUnitResponse updateDroneStatusInternal(
@@ -2555,6 +2561,12 @@ public class LockerService {
 
     private DroneUnitResponse updateDroneStatusInternal(
             DroneUnit unit, String status, String reason, Long actorUserId, boolean requireOwnership) {
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, requireOwnership, true);
+    }
+
+    private DroneUnitResponse updateDroneStatusInternal(
+            DroneUnit unit, String status, String reason, Long actorUserId,
+            boolean requireOwnership, boolean createFaultReport) {
         if (!DroneStatus.ALL.contains(status)) {
             throw new BusinessException("DRONE_STATUS_INVALID", "Unknown drone status: " + status);
         }
@@ -2590,7 +2602,7 @@ public class LockerService {
         appendDroneLog(saved.getId(), note, actorUserId);
         // #2 FAULT mở phiếu cho đội drone. Phiếu chỉ đóng qua luồng hoàn tất phiếu (nhật ký, ảnh nghiệm
         // thu); đóng phiếu cuối cùng tự đưa drone về hoạt động (restoreAssetsAfterClose).
-        if (fault && !DroneStatus.FAULT.equals(previousStatus)) {
+        if (fault && !DroneStatus.FAULT.equals(previousStatus) && createFaultReport) {
             openDroneFaultReport(saved, normalizedReason, actorUserId);
         }
         return toDroneUnit(saved);

@@ -649,7 +649,7 @@ public class LockerController {
     public ApiResponse<DroneUnitResponse> internalDroneStatusTransition(
             @PathVariable Long id, @Valid @RequestBody DroneStatusTransitionRequest request) {
         return ApiResponse.ok(lockerService.transitionDroneStatusInternal(
-                id, request.expectedStatus(), request.status(), request.reason()));
+                id, request.expectedStatus(), request.status(), request.reason(), request.shouldCreateFaultReport()));
     }
 
     @PostMapping("/internal/drone-incidents/tickets")

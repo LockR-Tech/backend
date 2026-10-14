@@ -37,6 +37,8 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class DroneParcelIncidentService {
+    static final double FPT_HCM_LATITUDE = 10.841100;
+    static final double FPT_HCM_LONGITUDE = 106.809700;
     private static final Set<String> REPORTABLE_MISSION_STATES = Set.of(
             "LAUNCHING", "DEPARTED", "EN_ROUTE", "APPROACHING", "ARRIVED");
     private static final Set<String> RECOVERY_ACTIONS = Set.of("ACCEPT", "START_SEARCHING");
@@ -108,7 +110,7 @@ public class DroneParcelIncidentService {
 
         DroneTelemetryFrame telemetry = telemetryRegistry.latest(mission.getDroneCode()).orElse(null);
         boolean telemetryLive = telemetryRegistry.isLive(mission.getDroneCode());
-        Location location = incidentLocation(request, telemetry, telemetryLive);
+        Location location = incidentLocation(request, telemetry, telemetryLive, order);
         VerifiedMedia snapshot = request.cameraSnapshot() == null
                 ? null
                 : mediaStorage.verify(request.cameraSnapshot(), MediaPurpose.REPORT_EVIDENCE, actorUserId);
@@ -165,7 +167,8 @@ public class DroneParcelIncidentService {
         try {
             lockerDroneClient.transitionDroneStatus(
                     mission.getDroneUnitId(),
-                    new DroneStatusTransitionRequest("IN_FLIGHT", "FAULT", "Parcel drop incident " + incident.getIncidentCode()));
+                    new DroneStatusTransitionRequest(
+                            "IN_FLIGHT", "FAULT", "Parcel drop incident " + incident.getIncidentCode(), false));
         } catch (Exception ignored) {
             // Fleet state may already be FAULT/offline. The incident remains the
             // source of truth and the drone is never set back to IDLE here.
@@ -217,11 +220,17 @@ public class DroneParcelIncidentService {
         result.put("journeyStatus", String.valueOf(order.getDeliveryStage()));
         result.put("telemetryLive", telemetryLive);
         result.put("telemetryAvailable", frame != null);
+        boolean simulatedLocation = !telemetryLive
+                && "DEMO".equalsIgnoreCase(order.getFulfillmentMode());
         result.put("batteryPercent", frame == null || frame.batteryPercent() == null ? -1 : frame.batteryPercent());
         result.put("flightMode", frame == null || frame.flight() == null || frame.flight().mode() == null
                 ? "UNKNOWN" : frame.flight().mode());
-        result.put("latitude", frame == null || frame.lat() == null ? 0D : frame.lat());
-        result.put("longitude", frame == null || frame.lng() == null ? 0D : frame.lng());
+        result.put("latitude", frame != null && frame.hasPosition()
+                ? frame.lat() : simulatedLocation ? FPT_HCM_LATITUDE : 0D);
+        result.put("longitude", frame != null && frame.hasPosition()
+                ? frame.lng() : simulatedLocation ? FPT_HCM_LONGITUDE : 0D);
+        result.put("locationSource", frame != null && frame.hasPosition()
+                ? "TELEMETRY" : simulatedLocation ? "SIMULATION_FPT_HCM" : "UNAVAILABLE");
         result.put("observedAt", frame == null || frame.observedAt() == null ? "" : frame.observedAt());
         result.put("gpsFix", frame != null && frame.hasPosition());
         result.put("gpsFixType", frame == null || frame.gps() == null ? null : frame.gps().fixType());
@@ -750,11 +759,17 @@ public class DroneParcelIncidentService {
     }
 
     private Location incidentLocation(
-            ReportDroppedParcelRequest request, DroneTelemetryFrame telemetry, boolean telemetryLive) {
+            ReportDroppedParcelRequest request,
+            DroneTelemetryFrame telemetry,
+            boolean telemetryLive,
+            LockerOrder order) {
         if (telemetryLive && telemetry != null && telemetry.hasPosition()) {
             return new Location(telemetry.lat(), telemetry.lng(), null, "TELEMETRY");
         }
         validateCoordinate(request.latitude(), request.longitude());
+        if (request.latitude() == null && "DEMO".equalsIgnoreCase(order.getFulfillmentMode())) {
+            return new Location(FPT_HCM_LATITUDE, FPT_HCM_LONGITUDE, null, "SIMULATION_FPT_HCM");
+        }
         return new Location(request.latitude(), request.longitude(), request.gpsAccuracyM(),
                 request.latitude() == null ? "UNAVAILABLE" : "MANUAL_DEVICE");
     }
