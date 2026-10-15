@@ -3,11 +3,16 @@ package com.huynqb.laundrylocker.notification.channel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import jakarta.mail.Part;
+import jakarta.mail.Session;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.Multipart;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+
+import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -77,14 +82,48 @@ class GuestEmailSenderTest {
                 .send("an@example.com", "Mã mở tủ Lock.R", "Mã mở tủ: 482913");
 
         assertThat(sent).isFalse();
-        verify(mailSender, never()).send(any(SimpleMailMessage.class));
+        verify(mailSender, never()).send(any(MimeMessage.class));
+    }
+
+    @Test
+    @DisplayName("gửi email có bản text, HTML Lock.R và logo nhúng CID")
+    void sendsBrandedHtmlWithInlineLogo() throws Exception {
+        when(provider.getIfAvailable()).thenReturn(mailSender);
+        when(mailSender.createMimeMessage())
+                .thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+
+        boolean sent = sender("no-reply@lockr.vn", "login@lockr.vn", "smtp.gmail.com")
+                .send("an@example.com", "Đơn hàng Lock.R", "Nội dung dự phòng");
+
+        assertThat(sent).isTrue();
+        var messageCaptor = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mailSender).send(messageCaptor.capture());
+        assertThat(messageCaptor.getValue().getContent()).isInstanceOf(Multipart.class);
+        String parts = multipartText(messageCaptor.getValue());
+        assertThat(parts).contains("Nội dung dự phòng", "Lock.R", "cid:lockr-logo", "Đơn hàng Lock.R");
+    }
+
+    @Test
+    @DisplayName("dùng template HTML riêng khi bên gọi truyền emailHtml")
+    void usesProvidedHtmlForDroneEmail() throws Exception {
+        when(provider.getIfAvailable()).thenReturn(mailSender);
+        when(mailSender.createMimeMessage())
+                .thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+
+        boolean sent = sender("no-reply@lockr.vn", "login@lockr.vn", "smtp.gmail.com")
+                .send("an@example.com", "Đơn drone", "Nội dung text", "<html><body>DRONE_TEMPLATE</body></html>");
+
+        assertThat(sent).isTrue();
+        var messageCaptor = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mailSender).send(messageCaptor.capture());
+        assertThat(multipartText(messageCaptor.getValue())).contains("DRONE_TEMPLATE");
     }
 
     @Test
     @DisplayName("địa chỉ người nhận trống thì bỏ qua")
     void skipsBlankRecipient() {
         assertThat(sender("no-reply@lockr.vn", "login", "smtp.brevo.com").send("", "s", "b")).isFalse();
-        verify(mailSender, never()).send(any(SimpleMailMessage.class));
+        verify(mailSender, never()).send(any(MimeMessage.class));
     }
 
     @Test
@@ -93,5 +132,18 @@ class GuestEmailSenderTest {
         assertThat(GuestEmailSender.maskedEmail("an@example.com")).isEqualTo("a***@example.com");
         assertThat(GuestEmailSender.maskedEmail("@example.com")).isEqualTo("***");
         assertThat(GuestEmailSender.maskedEmail(null)).isEqualTo("***");
+    }
+
+    private static String multipartText(Part part) throws Exception {
+        Object content = part.getContent();
+        if (content instanceof String text) return text;
+        if (content instanceof Multipart multipart) {
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < multipart.getCount(); i++) {
+                text.append(multipartText(multipart.getBodyPart(i)));
+            }
+            return text.toString();
+        }
+        return "";
     }
 }

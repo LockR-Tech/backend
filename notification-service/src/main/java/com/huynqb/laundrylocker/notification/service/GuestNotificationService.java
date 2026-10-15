@@ -24,7 +24,8 @@ public class GuestNotificationService {
                 && smsSender.send(request.phone(), request.smsMessage());
 
         boolean emailSent = StringUtils.hasText(request.email())
-                && emailSender.send(request.email(), request.subject(), request.emailBodyOrSms());
+                && emailSender.send(
+                        request.email(), request.subject(), request.emailBodyOrSms(), request.emailHtml());
 
         return new GuestNotificationResponse(
                 smsSent, emailSent, smsSender.isReal(), emailSender.isReal());

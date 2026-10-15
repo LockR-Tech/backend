@@ -14,7 +14,12 @@ public record GuestNotificationRequest(
         @Email(message = "email không hợp lệ") String email,
         @NotBlank(message = "subject không được rỗng") String subject,
         @NotBlank(message = "smsMessage không được rỗng") String smsMessage,
-        String emailBody) {
+        String emailBody,
+        String emailHtml) {
+
+    public GuestNotificationRequest(String phone, String email, String subject, String smsMessage, String emailBody) {
+        this(phone, email, subject, smsMessage, emailBody, null);
+    }
 
     /// Nội dung email; rơi về nội dung SMS khi nơi gọi không soạn riêng.
     public String emailBodyOrSms() {

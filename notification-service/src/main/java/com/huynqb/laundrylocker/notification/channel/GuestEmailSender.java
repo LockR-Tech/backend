@@ -1,10 +1,12 @@
 package com.huynqb.laundrylocker.notification.channel;
 
 import lombok.extern.slf4j.Slf4j;
+import jakarta.mail.internet.MimeMessage;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -47,6 +49,11 @@ public class GuestEmailSender {
     }
 
     public boolean send(String to, String subject, String body) {
+        return send(to, subject, body, null);
+    }
+
+    /// Gửi HTML có text thay thế để hỗ trợ client email không render HTML.
+    public boolean send(String to, String subject, String body, String htmlBody) {
         if (!StringUtils.hasText(to)) return false;
 
         if (!isReal()) {
@@ -56,17 +63,19 @@ public class GuestEmailSender {
         JavaMailSender sender = mailSenderProvider.getIfAvailable();
 
         try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(fromEmail());
-            message.setTo(to.trim());
-            message.setSubject(subject);
-            message.setText(body);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromEmail());
+            helper.setTo(to.trim());
+            helper.setSubject(subject);
+            helper.setText(body, StringUtils.hasText(htmlBody) ? htmlBody : LockREmailTemplate.render(subject, body));
+            helper.addInline("lockr-logo", new ClassPathResource("email/lockr-logo.png"), "image/png");
             sender.send(message);
             return true;
         } catch (Exception ex) {
             // Hỏng kênh email không được làm hỏng đơn hàng. Không log nội dung vì
             // email chứa mã mở tủ.
-            log.warn("Failed to email {}: {}", maskedEmail(to), ex.getMessage());
+            log.warn("Failed to email {} ({}): {}", maskedEmail(to), ex.getClass().getSimpleName(), ex.getMessage());
             return false;
         }
     }
