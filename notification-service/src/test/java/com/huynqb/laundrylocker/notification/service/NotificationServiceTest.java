@@ -140,7 +140,13 @@ class NotificationServiceTest {
         assertThat(result.id()).isEqualTo(5L);
         assertThat(result.isRead()).isFalse();
         verify(fcmPushNotificationService).sendToUser(eq(7L), eq("Tiêu đề"), eq("Nội dung"), eq(Map.of(
-                "notificationId", "5", "type", "SYSTEM", "referenceType", "ORDER", "referenceId", "42")));
+                "notificationId", "5",
+                "type", "SYSTEM",
+                "referenceType", "ORDER",
+                "referenceId", "42",
+                "title", "Tiêu đề",
+                "body", "Nội dung",
+                "content", "Nội dung")));
         verify(notificationRepository, never()).save(any());
         assertThatThrownBy(() -> service.resend(9L)).isInstanceOf(NotFoundException.class);
     }
