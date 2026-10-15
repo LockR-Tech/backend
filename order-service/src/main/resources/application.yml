@@ -14,6 +14,11 @@ spring:
           default:
             connectTimeout: ${APP_FEIGN_CONNECT_TIMEOUT_MS:2000}
             readTimeout: ${APP_FEIGN_READ_TIMEOUT_MS:5000}
+          notification-service:
+            # Email delivery uses SMTP synchronously; Gmail/Brevo may take longer than the
+            # short default used by ordinary internal API calls.
+            connectTimeout: 3000
+            readTimeout: 15000
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:15432/order_db}
     username: ${SPRING_DATASOURCE_USERNAME:order_user}
@@ -62,6 +67,12 @@ logging:
 
 resilience4j:
   circuitbreaker:
+    instances:
+      # Keep slow SMTP responses from counting as slow calls on the generic 4s rule and
+      # opening this Feign circuit for every sender/receiver email that follows.
+      NotificationClientnotifyGuestGuestNotificationRequest:
+        base-config: default
+        slow-call-duration-threshold: 15s
     configs:
       default:
         register-health-indicator: true

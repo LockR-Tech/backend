@@ -66,6 +66,18 @@ public class DroneDeliveryMailer {
                 + "  Tủ nhận: " + destination + "\n\n"
                 + "Kiện hàng: " + parcel + "\n\n"
                 + "Khi hàng vào tủ, người nhận sẽ được gửi mã mở ô. Bạn theo dõi hành trình trong ứng dụng Lock.R.\n";
+        String senderHtml = DroneDeliveryEmailTemplate.launched(
+                nameOr(order.getSenderName(), "bạn"),
+                order.getOrderCode(),
+                "Đơn hàng đang trên đường",
+                "Đơn hàng của bạn đã được phóng đi" + drone + " và đang được chuyển tới người nhận.",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Người nhận", nameOr(order.getReceiverName(), "—")),
+                        new DroneDeliveryEmailTemplate.Detail("Điện thoại", nameOr(order.getReceiverPhone(), "—")),
+                        new DroneDeliveryEmailTemplate.Detail("Email", nameOr(order.getReceiverEmail(), "—")),
+                        new DroneDeliveryEmailTemplate.Detail("Tủ nhận", destination),
+                        new DroneDeliveryEmailTemplate.Detail("Kiện hàng", parcel)),
+                "Khi kiện hàng vào tủ, người nhận sẽ nhận hướng dẫn và mã mở ô qua email.");
 
         String receiverBody = "Xin chào " + nameOr(order.getReceiverName(), "bạn") + ",\n\n"
                 + "Bạn có một đơn hàng " + order.getOrderCode() + " đang được giao tới bạn" + drone + ".\n\n"
@@ -76,11 +88,24 @@ public class DroneDeliveryMailer {
                 + "Kiện hàng: " + parcel + "\n"
                 + "Nơi nhận: " + destination + "\n\n"
                 + "Khi hàng vào tủ, bạn sẽ nhận được email kèm mã mở ô và hạn lấy hàng.\n";
+        String receiverHtml = DroneDeliveryEmailTemplate.launched(
+                nameOr(order.getReceiverName(), "bạn"),
+                order.getOrderCode(),
+                "Bạn có một đơn hàng đang được gửi tới",
+                "Đơn hàng đang được chuyển tới bạn" + drone + ".",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Người gửi", nameOr(order.getSenderName(), "—")),
+                        new DroneDeliveryEmailTemplate.Detail("Điện thoại", nameOr(order.getSenderPhone(), "—")),
+                        new DroneDeliveryEmailTemplate.Detail("Email", nameOr(order.getSenderEmail(), "—")),
+                        new DroneDeliveryEmailTemplate.Detail("Kiện hàng", parcel),
+                        new DroneDeliveryEmailTemplate.Detail("Nơi nhận", destination)),
+                "Khi hàng vào tủ, bạn sẽ nhận email có mã mở ô và thời hạn lấy hàng.");
 
         return new Outcome(
-                send(order.getSenderEmail(), "Đơn hàng " + order.getOrderCode() + " đã được drone phóng đi", senderBody),
+                send(order.getSenderEmail(), "Đơn hàng " + order.getOrderCode() + " đã được drone phóng đi", senderBody,
+                        senderHtml),
                 send(order.getReceiverEmail(), "Bạn có đơn hàng " + order.getOrderCode() + " đang được giao bằng drone",
-                        receiverBody));
+                        receiverBody, receiverHtml));
     }
 
     /**
@@ -107,8 +132,24 @@ public class DroneDeliveryMailer {
                                 + nameOr(order.getPickupAddress(), "điểm lấy hàng") + ".\n"
                         : "Kiện hàng: chưa được lấy, vẫn ở chỗ bạn.\n")
                 + "\nBạn xem chi tiết và trạng thái hoàn tiền trong ứng dụng Lock.R.\n";
+        String refundMessage = refundExpected
+                ? "Yêu cầu hoàn tiền đã được ghi nhận; quản trị viên sẽ chuyển khoản về tài khoản ngân hàng của bạn."
+                : "Đơn chưa thanh toán nên không phát sinh hoàn tiền.";
+        String returnMessage = parcelCollected
+                ? "Kỹ thuật viên sẽ liên hệ và mang kiện trả tại "
+                        + nameOr(order.getPickupAddress(), "điểm lấy hàng") + "."
+                : "Kiện chưa được lấy và vẫn ở chỗ bạn.";
+        String senderHtml = DroneDeliveryEmailTemplate.failed(
+                nameOr(order.getSenderName(), "bạn"),
+                order.getOrderCode(),
+                "Rất tiếc, đơn hàng drone không thể giao hoàn tất.",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Lý do", why),
+                        new DroneDeliveryEmailTemplate.Detail("Hoàn tiền", refundMessage),
+                        new DroneDeliveryEmailTemplate.Detail("Kiện hàng", returnMessage)),
+                "Bạn xem chi tiết đơn và trạng thái hoàn tiền trong ứng dụng Lock.R.");
         boolean sender = send(order.getSenderEmail(),
-                "Đơn hàng " + order.getOrderCode() + " giao không hoàn tất", senderBody);
+                "Đơn hàng " + order.getOrderCode() + " giao không hoàn tất", senderBody, senderHtml);
 
         boolean receiver = false;
         if (tellReceiver) {
@@ -118,13 +159,23 @@ public class DroneDeliveryMailer {
                     + "Lý do: " + why + "\n\n"
                     + "Kiện hàng sẽ được trả lại người gửi. Vui lòng liên hệ người gửi ("
                     + nameOr(order.getSenderPhone(), "—") + ") nếu cần.\n";
+            String receiverHtml = DroneDeliveryEmailTemplate.failed(
+                    nameOr(order.getReceiverName(), "bạn"),
+                    order.getOrderCode(),
+                    "Đơn hàng do " + nameOr(order.getSenderName(), "người gửi")
+                            + " gửi cho bạn không thể giao hoàn tất.",
+                    List.of(
+                            new DroneDeliveryEmailTemplate.Detail("Lý do", why),
+                            new DroneDeliveryEmailTemplate.Detail("Kiện hàng", "Đơn vị vận hành sẽ trả kiện cho người gửi."),
+                            new DroneDeliveryEmailTemplate.Detail("Liên hệ người gửi", nameOr(order.getSenderPhone(), "—"))),
+                    "Bạn có thể liên hệ người gửi nếu cần hỗ trợ thêm.");
             receiver = send(order.getReceiverEmail(),
-                    "Đơn hàng " + order.getOrderCode() + " gửi cho bạn không hoàn tất", receiverBody);
+                    "Đơn hàng " + order.getOrderCode() + " gửi cho bạn không hoàn tất", receiverBody, receiverHtml);
         }
         return new Outcome(sender, receiver);
     }
 
-    private boolean send(String email, String subject, String body) {
+    private boolean send(String email, String subject, String body, String htmlBody) {
         if (!StringUtils.hasText(email)) {
             return false;
         }
@@ -132,11 +183,12 @@ public class DroneDeliveryMailer {
             // Không gửi SMS (phone = null), nhưng notification-service bắt buộc `smsMessage`
             // khác rỗng với mọi yêu cầu — thiếu thì cả yêu cầu bị từ chối 400 và thư không đi.
             var response = notificationClient.notifyGuest(
-                    new GuestNotification.Request(null, email.trim(), subject, "Lock.R: " + subject, body));
+                    new GuestNotification.Request(null, email.trim(), subject, "Lock.R: " + subject, body, htmlBody));
             GuestNotification.Result result = response == null ? null : response.data();
             return result != null && result.emailSent();
         } catch (Exception ex) {
-            log.warn("Could not email {} about a drone order: {}", mask(email), ex.getMessage());
+            log.warn("Could not email {} about a drone order ({}): {}", mask(email),
+                    ex.getClass().getSimpleName(), ex.getMessage(), ex);
             return false;
         }
     }
