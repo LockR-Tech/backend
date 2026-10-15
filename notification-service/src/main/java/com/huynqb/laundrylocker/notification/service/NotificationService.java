@@ -253,11 +253,21 @@ public class NotificationService {
             case DomainEventNames.LOCKER_REPORT_CLAIMED -> "Báo cáo đang được xử lý";
             case DomainEventNames.LOCKER_REPORT_RESOLVED -> "Báo cáo đã được xử lý xong";
             case DomainEventNames.LOCKER_REPORT_ROUTED -> "Phiếu sự cố mới cần xử lý";
-            case DomainEventNames.LOCKER_REPORT_ASSIGNED -> "Bạn được giao việc bảo trì";
+            case DomainEventNames.LOCKER_REPORT_ASSIGNED -> "MAINTENANCE_SCHEDULE".equals(payload.get("referenceType"))
+                    ? "Lịch kiểm tra mới"
+                    : "LOCKER_REPORT_RATING".equals(payload.get("referenceType"))
+                            ? "Đánh giá dịch vụ mới"
+                            : "LOCKER".equals(payload.get("referenceType"))
+                                    ? "Phân công phụ trách tủ"
+                                    : "Bạn được giao việc bảo trì";
             case DomainEventNames.LOCKER_SCHEDULE_DUE -> "Lịch kiểm tra định kỳ tới hạn";
             // locker-service gửi sự kiện của KTV drone trên cùng routing key locker.*, type riêng drone.*
             case "drone.report.routed" -> "Phiếu sự cố drone mới cần xử lý";
-            case "drone.report.assigned" -> "Bạn được giao phiếu sự cố drone";
+            case "drone.report.assigned" -> "MAINTENANCE_SCHEDULE".equals(payload.get("referenceType"))
+                    ? "Lịch kiểm tra drone mới"
+                    : "LOCKER_REPORT_RATING".equals(payload.get("referenceType"))
+                            ? "Đánh giá dịch vụ drone"
+                            : "Bạn được giao phiếu sự cố drone";
             case "drone.schedule.due" -> "Lịch kiểm tra drone tới hạn";
             default -> "Notification";
         };
@@ -309,6 +319,9 @@ public class NotificationService {
         data.put("type", notification.getType());
         data.put("referenceType", notification.getReferenceType() == null ? "" : notification.getReferenceType());
         data.put("referenceId", notification.getReferenceId() == null ? "" : String.valueOf(notification.getReferenceId()));
+        data.put("title", notification.getTitle() == null ? "" : notification.getTitle());
+        data.put("body", notification.getMessage() == null ? "" : notification.getMessage());
+        data.put("content", notification.getMessage() == null ? "" : notification.getMessage());
         return data;
     }
 

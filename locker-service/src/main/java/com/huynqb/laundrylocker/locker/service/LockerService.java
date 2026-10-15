@@ -1695,6 +1695,9 @@ public class LockerService {
         if (saved.getDroneUnitId() != null) {
             markDroneMaintenancePending(saved.getDroneUnitId(), null, saved.getTitle());
         }
+        if (saved.getAssignedTechnicianId() != null) {
+            notifyScheduleAssignment(saved);
+        }
         return toSchedule(saved);
     }
 
@@ -2075,7 +2078,11 @@ public class LockerService {
             requireTechnician(technicianId, scheduleTechnicianRole(schedule));
         }
         schedule.setAssignedTechnicianId(technicianId);
-        return toSchedule(scheduleRepository.save(schedule));
+        MaintenanceSchedule saved = scheduleRepository.save(schedule);
+        if (technicianId != null) {
+            notifyScheduleAssignment(saved);
+        }
+        return toSchedule(saved);
     }
 
     /// Cập nhật thông tin lịch kiểm tra định kỳ (chu kỳ, ưu tiên, checklist, mô tả, KTV)
@@ -2094,6 +2101,7 @@ public class LockerService {
                 && !request.assignedTechnicianId().equals(schedule.getAssignedTechnicianId())) {
             requireTechnician(request.assignedTechnicianId(), scheduleTechnicianRole(schedule));
             schedule.setAssignedTechnicianId(request.assignedTechnicianId());
+            notifyScheduleAssignment(schedule);
         }
         if (StringUtils.hasText(request.priority())) {
             schedule.setPriority(request.priority());
@@ -3170,6 +3178,17 @@ public class LockerService {
         }
     }
 
+    private void notifyScheduleAssignment(MaintenanceSchedule schedule) {
+        if (schedule == null || schedule.getAssignedTechnicianId() == null) {
+            return;
+        }
+        boolean isLocker = schedule.getLockerId() != null;
+        String eventType = isLocker ? DomainEventNames.LOCKER_REPORT_ASSIGNED : DRONE_REPORT_ASSIGNED;
+        String target = isLocker ? "tủ " + lockerLabel(schedule.getLockerId()) : "drone " + droneLabel(schedule.getDroneUnitId());
+        String msg = "Bạn được phân công lịch kiểm tra định kỳ \"" + schedule.getTitle() + "\" tại " + target + ".";
+        publishStaffNotification(eventType, schedule.getAssignedTechnicianId(), schedule.getId(), "MAINTENANCE_SCHEDULE", msg);
+    }
+
     // Best-effort: maintenance still needs to see status/SLA even if user-service
     // is briefly unreachable, so a contact lookup failure must never break the list.
     private UserSummary lookupUserQuietly(Long userId) {
@@ -3421,7 +3440,16 @@ public class LockerService {
         rating.setUserId(userId);
         rating.setRating(request.rating());
         rating.setComment(request.comment());
-        return toRating(ratingRepository.save(rating));
+        LockerReportRating saved = ratingRepository.save(rating);
+        if (report.getAssignedToUserId() != null) {
+            boolean drone = isDroneReport(report);
+            String target = drone ? "drone " + droneLabel(report.getDroneUnitId()) : "tủ " + lockerLabel(report.getLockerId());
+            String commentPart = StringUtils.hasText(saved.getComment()) ? ": \"" + saved.getComment().trim() + "\"" : ".";
+            String msg = "Khách hàng đã đánh giá " + saved.getRating() + "★ cho phiếu RPT-" + report.getId() + " (" + target + ")" + commentPart;
+            String eventType = drone ? DRONE_REPORT_ASSIGNED : DomainEventNames.LOCKER_REPORT_ASSIGNED;
+            publishStaffNotification(eventType, report.getAssignedToUserId(), report.getId(), "LOCKER_REPORT_RATING", msg);
+        }
+        return toRating(saved);
     }
 
     @Transactional(readOnly = true)
