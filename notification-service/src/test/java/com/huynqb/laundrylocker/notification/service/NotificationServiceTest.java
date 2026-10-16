@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.notification.service;
 
+import com.huynqb.laundrylocker.common.event.DomainEvent;
+import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.notification.dto.AdminBroadcastRequest;
 import com.huynqb.laundrylocker.notification.dto.NotificationResponse;
@@ -194,6 +196,67 @@ class NotificationServiceTest {
         verify(webSocketNotificationService).sendToUser(eq(3L), any());
         verify(webSocketNotificationService).sendToUser(eq(4L), any());
         verify(webSocketNotificationService, times(2)).broadcast(any());
+    }
+
+    @Test
+    @DisplayName("sự kiện đơn không kèm message: chỉ cập nhật realtime, không tạo thông báo tiếng Anh trùng")
+    void orderEventWithoutMessageOnlyPushesRealtimeUpdate() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.ORDER_CREATED, "order-service",
+                Map.of("orderId", 21L, "userId", 7L, "status", "INITIALIZED")));
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.ORDER_STATUS_CHANGED, "order-service",
+                Map.of("orderId", 21L, "userId", 7L, "status", "STORING")));
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.PAYMENT_COMPLETED, "payment-service",
+                Map.of("paymentId", 3L, "orderId", 21L, "userId", 7L, "amount", 15000)));
+
+        verify(notificationRepository, never()).save(any(NotificationMessage.class));
+        verify(fcmPushNotificationService, never()).sendToUser(anyLong(), anyString(), anyString(), anyMap());
+        verify(webSocketNotificationService, times(3)).sendOrderUpdate(eq(7L), anyMap());
+    }
+
+    @Test
+    @DisplayName("nạp ví thành công: thông báo tiếng Việt kèm số tiền, tham chiếu giao dịch ví")
+    void topUpCompletedIsNotifiedInVietnamese() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.PAYMENT_COMPLETED, "payment-service",
+                Map.of("paymentId", 55L, "orderId", 0L, "userId", 7L, "amount", 100000)));
+
+        NotificationMessage saved = savedNotification();
+        assertThat(saved.getTitle()).isEqualTo("Nạp ví thành công");
+        assertThat(saved.getMessage()).isEqualTo("Đã cộng 100.000đ vào ví LockR.");
+        assertThat(saved.getReferenceType()).isEqualTo("WALLET");
+        assertThat(saved.getReferenceId()).isEqualTo(55L);
+    }
+
+    @Test
+    @DisplayName("thanh toán đơn lỗi: thông báo tiếng Việt, mở được đơn liên quan")
+    void orderPaymentFailedIsNotifiedInVietnamese() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.PAYMENT_FAILED, "payment-service",
+                Map.of("paymentId", 56L, "orderId", 21L, "userId", 7L, "amount", "15000.00")));
+
+        NotificationMessage saved = savedNotification();
+        assertThat(saved.getTitle()).isEqualTo("Thanh toán thất bại");
+        assertThat(saved.getMessage()).contains("15.000đ").contains("đơn #21").doesNotContain("event received");
+        assertThat(saved.getReferenceType()).isEqualTo("ORDER");
+        assertThat(saved.getReferenceId()).isEqualTo(21L);
+    }
+
+    @Test
+    @DisplayName("sự kiện kèm message (phiếu sự cố) giữ nguyên nội dung gửi kèm")
+    void eventWithMessageKeepsItsMessage() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.LOCKER_REPORT_RESOLVED, "locker-service",
+                Map.of("userId", 7L, "referenceId", 9L, "referenceType", "LOCKER_REPORT",
+                        "message", "Báo cáo lỗi tủ A của bạn đã được xử lý xong.")));
+
+        NotificationMessage saved = savedNotification();
+        assertThat(saved.getTitle()).isEqualTo("Báo cáo đã được xử lý xong");
+        assertThat(saved.getMessage()).isEqualTo("Báo cáo lỗi tủ A của bạn đã được xử lý xong.");
+        assertThat(saved.getReferenceType()).isEqualTo("LOCKER_REPORT");
+    }
+
+    private NotificationMessage savedNotification() {
+        org.mockito.ArgumentCaptor<NotificationMessage> captor =
+                org.mockito.ArgumentCaptor.forClass(NotificationMessage.class);
+        verify(notificationRepository).save(captor.capture());
+        return captor.getValue();
     }
 
     private static NotificationMessage notification(Long id, Long userId) {

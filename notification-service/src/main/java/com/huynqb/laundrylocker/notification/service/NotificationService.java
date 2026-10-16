@@ -243,13 +243,29 @@ public class NotificationService {
             log.debug("No userId in {} event, skipping direct user notification", event.type());
             return;
         }
+        // Sự kiện không kèm `message` (order.*, payment.*) chỉ để đồng bộ realtime ở trên: service phát
+        // sự kiện tự gửi thông báo tiếng Việt chi tiết riêng, tạo thêm ở đây thành ra mỗi việc báo hai lần,
+        // một lần là câu tiếng Anh "<type> event received". Riêng nạp ví và thanh toán lỗi chưa nơi nào
+        // báo nên soạn nội dung ở đây.
+        Object rawMessage = payload.get("message");
+        String message = rawMessage != null && StringUtils.hasText(String.valueOf(rawMessage))
+                ? String.valueOf(rawMessage)
+                : paymentMessage(event.type(), payload);
+        if (message == null) {
+            log.debug("{} event has no message, realtime update only", event.type());
+            return;
+        }
+        boolean topUp = isTopUp(event.type(), payload);
+        if (topUp) {
+            referenceId = asLong(payload.get("paymentId"));
+        }
         String title = switch (event.type()) {
             case DomainEventNames.ORDER_CREATED -> "Đơn hàng mới";
             case DomainEventNames.ORDER_STATUS_CHANGED -> "Trạng thái đơn hàng thay đổi";
             case DomainEventNames.ORDER_BOX_RELOCATED -> "Đơn hàng được chuyển sang ô mới";
             case DomainEventNames.DELIVERY_STATUS_CHANGED -> "Trạng thái giao hàng thay đổi";
-            case DomainEventNames.PAYMENT_COMPLETED -> "Thanh toán thành công";
-            case DomainEventNames.PAYMENT_FAILED -> "Thanh toán thất bại";
+            case DomainEventNames.PAYMENT_COMPLETED -> topUp ? "Nạp ví thành công" : "Thanh toán thành công";
+            case DomainEventNames.PAYMENT_FAILED -> topUp ? "Nạp ví không thành công" : "Thanh toán thất bại";
             case DomainEventNames.LOCKER_REPORT_CLAIMED -> "Báo cáo đang được xử lý";
             case DomainEventNames.LOCKER_REPORT_RESOLVED -> "Báo cáo đã được xử lý xong";
             case DomainEventNames.LOCKER_REPORT_ROUTED -> "Phiếu sự cố mới cần xử lý";
@@ -269,11 +285,49 @@ public class NotificationService {
                             ? "Đánh giá dịch vụ drone"
                             : "Bạn được giao phiếu sự cố drone";
             case "drone.schedule.due" -> "Lịch kiểm tra drone tới hạn";
-            default -> "Notification";
+            default -> "Thông báo";
         };
-        Object message = payload.getOrDefault("message", event.type() + " event received");
-        String referenceType = String.valueOf(payload.getOrDefault("referenceType", "ORDER"));
-        create(new NotificationRequest(userId, title, String.valueOf(message), event.type(), referenceId, referenceType));
+        String referenceType = String.valueOf(payload.getOrDefault("referenceType", topUp ? "WALLET" : "ORDER"));
+        create(new NotificationRequest(userId, title, message, event.type(), referenceId, referenceType));
+    }
+
+    /// Nạp ví = giao dịch không gắn đơn (orderId 0 hoặc thiếu).
+    private boolean isTopUp(String type, Map<String, Object> payload) {
+        if (!DomainEventNames.PAYMENT_COMPLETED.equals(type) && !DomainEventNames.PAYMENT_FAILED.equals(type)) {
+            return false;
+        }
+        Long orderId = asLong(payload.get("orderId"));
+        return orderId == null || orderId <= 0;
+    }
+
+    /// Nội dung cho các sự kiện thanh toán mà không service nào tự báo: nạp ví (thành công/lỗi) và
+    /// thanh toán đơn lỗi. Thanh toán đơn thành công do order-service báo kèm mã đơn ⇒ null.
+    private String paymentMessage(String type, Map<String, Object> payload) {
+        boolean completed = DomainEventNames.PAYMENT_COMPLETED.equals(type);
+        if (!completed && !DomainEventNames.PAYMENT_FAILED.equals(type)) {
+            return null;
+        }
+        String amount = formatVnd(payload.get("amount"));
+        if (isTopUp(type, payload)) {
+            return completed
+                    ? "Đã cộng " + amount + " vào ví LockR."
+                    : "Giao dịch nạp " + amount + " vào ví chưa thành công. Vui lòng thử lại.";
+        }
+        if (completed) {
+            return null;
+        }
+        return "Thanh toán " + amount + " cho đơn #" + asLong(payload.get("orderId"))
+                + " chưa thành công. Vui lòng thử lại hoặc chọn phương thức khác.";
+    }
+
+    private static String formatVnd(Object amount) {
+        try {
+            long value = new java.math.BigDecimal(String.valueOf(amount)).setScale(0, java.math.RoundingMode.HALF_UP)
+                    .longValueExact();
+            return String.format(java.util.Locale.forLanguageTag("vi-VN"), "%,dđ", value);
+        } catch (RuntimeException ex) {
+            return "khoản tiền";
+        }
     }
 
     private boolean isOrderRelated(String type, String referenceType) {

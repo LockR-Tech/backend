@@ -261,8 +261,9 @@ public class OrderService {
         LockerOrder saved = orderRepository.save(order);
         addHistory(saved.getId(), saved.getStatus(), saved.getStatus(), userId,
                 "Rental extended by " + hours + "h until " + saved.getPickupDeadline());
-        notifyQuietly(saved.getUserId(), "Rental extended",
-                "Rental " + saved.getOrderCode() + " extended until " + saved.getPickupDeadline(),
+        notifyQuietly(saved.getUserId(), "Đã gia hạn thuê ô",
+                "Đơn thuê " + saved.getOrderCode() + " được gia hạn thêm " + hours + " giờ, tới "
+                        + formatDeadline(saved.getPickupDeadline()) + ".",
                 "ORDER_RENTAL_EXTENDED", saved.getId());
         publishStatusChanged(saved, saved.getStatus());
         return toResponse(saved);
@@ -651,9 +652,9 @@ public class OrderService {
             notificationClient.requestNotification(
                     new NotificationRequest(
                             saved.getUserId(),
-                            "Order delegated",
-                            "Order " + saved.getOrderCode() + " pickup delegated to " + request.phone()
-                                    + ". New PIN issued.",
+                            "Đã uỷ quyền nhận hàng",
+                            "Đơn " + saved.getOrderCode() + " đã uỷ quyền cho " + request.phone()
+                                    + " lấy hộ. Mã lấy hàng đã đổi, mã cũ không còn dùng được.",
                             "ORDER_DELEGATED",
                             saved.getId(),
                             "ORDER"));
@@ -929,16 +930,19 @@ public class OrderService {
                 continue;
             }
             boolean rental = "RENTAL".equalsIgnoreCase(order.getType());
+            String deadline = formatDeadline(order.getPickupDeadline());
             notifyQuietly(order.getUserId(),
-                    rental ? "Rental expired" : "Pickup overdue",
+                    rental ? "Đã hết giờ thuê ô" : "Đơn hàng quá hạn lấy",
                     (rental
-                            ? "Rental " + order.getOrderCode() + " expired at " + order.getPickupDeadline()
-                            : "Order " + order.getOrderCode() + " passed its pickup deadline " + order.getPickupDeadline())
-                            + ". Overtime fee applies.",
+                            ? "Đơn thuê " + order.getOrderCode() + " đã hết giờ lúc " + deadline
+                                    + ". Vui lòng lấy đồ hoặc gia hạn; phí quá giờ đang được tính."
+                            : "Đơn " + order.getOrderCode() + " đã quá hạn lấy hàng (" + deadline
+                                    + "). Người nhận lấy càng sớm càng tốt; phí quá giờ đang được tính."),
                     "ORDER_PICKUP_OVERDUE", order.getId());
             if (order.getReceiverId() != null) {
-                notifyQuietly(order.getReceiverId(), "Pickup overdue",
-                        "Parcel " + order.getOrderCode() + " is still waiting. Overtime fee applies.",
+                notifyQuietly(order.getReceiverId(), "Kiện hàng đang chờ bạn quá hạn",
+                        "Kiện hàng của đơn " + order.getOrderCode() + " vẫn đang chờ trong tủ, đã quá hạn lấy "
+                                + deadline + ". Phí quá giờ đang được tính.",
                         "ORDER_PICKUP_OVERDUE", order.getId());
             }
             order.setLastReminderAt(now);
@@ -2161,18 +2165,38 @@ public class OrderService {
     }
 
     private void notifyStatus(LockerOrder order, String oldStatus) {
+        String[] text = statusNotification(order);
+        if (text == null) {
+            return;
+        }
         try {
             notificationClient.requestNotification(
-                    new NotificationRequest(
-                            order.getUserId(),
-                            "Order " + order.getStatus().toLowerCase(),
-                            "Order " + order.getOrderCode() + " changed from " + oldStatus + " to " + order.getStatus(),
-                            "ORDER_STATUS",
-                            order.getId(),
-                            "ORDER"));
+                    new NotificationRequest(order.getUserId(), text[0], text[1], "ORDER_STATUS", order.getId(), "ORDER"));
         } catch (Exception ex) {
             log.warn("Could not call notification-service for order {}: {}", order.getId(), ex.getMessage());
         }
+    }
+
+    /// {tiêu đề, nội dung} báo cho chủ đơn khi đổi trạng thái; null khi bước đó đã có thông báo riêng
+    /// (gửi hàng vào ô → "Đã gửi hàng vào tủ", quá hạn → "Đồ đã chuyển vào kho").
+    static String[] statusNotification(LockerOrder order) {
+        String code = order.getOrderCode();
+        boolean rental = "RENTAL".equalsIgnoreCase(order.getType());
+        return switch (String.valueOf(order.getStatus())) {
+            case "STORING" -> rental
+                    ? new String[] {"Bắt đầu thuê ô",
+                            "Đơn thuê " + code + " đã bắt đầu. Dùng mã của đơn để mở ô nhiều lần tới khi hết giờ."}
+                    : "SEND".equalsIgnoreCase(order.getType()) ? null
+                    : new String[] {"Đã cất đồ vào tủ", "Đồ của đơn " + code + " đã được cất vào ô."};
+            case "COMPLETED" -> new String[] {"Đơn hàng hoàn tất",
+                    "Đơn " + code + " đã hoàn tất. Cảm ơn bạn đã dùng Lock.R!"};
+            case "CANCELED" -> new String[] {"Đơn hàng đã huỷ", "Đơn " + code + " đã được huỷ."
+                    + ("PAID".equalsIgnoreCase(order.getPaymentStatus())
+                            || "REFUND_PENDING".equalsIgnoreCase(order.getPaymentStatus())
+                            ? " Khoản đã thanh toán sẽ được hoàn theo chính sách hoàn tiền." : "")};
+            case "EXPIRED" -> null;
+            default -> new String[] {"Cập nhật đơn hàng", "Đơn " + code + " đã được cập nhật trạng thái."};
+        };
     }
 
     private void publish(String eventName, LockerOrder order, Map<String, Object> payload) {
