@@ -79,6 +79,8 @@ class LockerServiceDroneFleetTest {
     private ReportAttachmentService attachmentService;
     @Mock
     private RabbitTemplate rabbitTemplate;
+    @Mock
+    private TechnicianPresenceRepository presenceRepository;
 
     private LockerService service;
 
@@ -103,7 +105,8 @@ class LockerServiceDroneFleetTest {
                         orderClient,
                         attachmentService,
                         rabbitTemplate,
-                        new LockerRules(settings));
+                        new LockerRules(settings),
+                        presenceRepository);
 
         when(droneUnitRepository.save(any(DroneUnit.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0, DroneUnit.class));

@@ -68,6 +68,7 @@ class LockerServiceSlaAndQueueTest {
     @Mock private OrderClient orderClient;
     @Mock private ReportAttachmentService attachmentService;
     @Mock private RabbitTemplate rabbitTemplate;
+    @Mock private TechnicianPresenceRepository presenceRepository;
 
     private LockerService service;
     private BusinessSettings settings;
@@ -80,7 +81,8 @@ class LockerServiceSlaAndQueueTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
-                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, new LockerRules(settings));
+                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, new LockerRules(settings),
+                presenceRepository);
         locker = new LockerUnit();
         locker.setId(LOCKER_ID);
         locker.setName("Tủ A");

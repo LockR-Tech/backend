@@ -62,6 +62,7 @@ class LockerServiceForceOpenAndIncidentTest {
     @Mock private OrderClient orderClient;
     @Mock private ReportAttachmentService attachmentService;
     @Mock private RabbitTemplate rabbitTemplate;
+    @Mock private TechnicianPresenceRepository presenceRepository;
 
     private LockerService service;
     private LockerUnit locker;
@@ -73,7 +74,8 @@ class LockerServiceForceOpenAndIncidentTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
-                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults());
+                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults(),
+                presenceRepository);
         locker = new LockerUnit();
         locker.setId(LOCKER_ID);
         locker.setName("Tủ A");
