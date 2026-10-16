@@ -83,6 +83,7 @@ public class LockerService {
     /// (ADR-0005), không còn @Value/hằng số cứng. TTL ô RESERVED nên ≥ `app.order.auto-cancel-hours`
     /// để không bao giờ nhả ô sớm hơn order-service.
     private final LockerRules rules;
+    private final TechnicianPresenceRepository presenceRepository;
 
     /// #6 Trang thai hop le cua bai dap drone.
     private static final java.util.Set<String> LANDING_PAD_STATUSES =
@@ -2449,6 +2450,28 @@ public class LockerService {
         if (latitude == null || longitude == null) {
             return new RecoveryAssignment(null, null);
         }
+
+        // 1. Ưu tiên KTV tủ đang trong ca trực (on-duty) có tọa độ GPS thực tế gần điểm rơi
+        var liveCandidate = presenceRepository.findByOnDutyTrueAndTechnicianType(LOCKER_TECHNICIAN).stream()
+                .filter(p -> p.getLatitude() != null && p.getLongitude() != null)
+                .filter(p -> p.getLastLocatedAt() != null && p.getLastLocatedAt().isAfter(LocalDateTime.now().minusMinutes(60)))
+                .filter(p -> activeTechnician(p.getUserId(), LOCKER_TECHNICIAN) != null)
+                .sorted(Comparator
+                        .comparingDouble((TechnicianPresence p) -> distanceMeters(latitude, longitude, p.getLatitude(), p.getLongitude()))
+                        .thenComparingLong(p -> activeWorkload(p.getUserId())))
+                .findFirst();
+
+        if (liveCandidate.isPresent()) {
+            Long techId = liveCandidate.get().getUserId();
+            Long responsibilityLockerId = lockerRepository.findAll().stream()
+                    .filter(l -> techId.equals(l.getAssignedTechnicianId()))
+                    .map(LockerUnit::getId)
+                    .findFirst()
+                    .orElse(null);
+            return new RecoveryAssignment(techId, responsibilityLockerId);
+        }
+
+        // 2. Fallback: tìm KTV phụ trách tủ gần điểm rơi nhất
         return lockerRepository.findAll().stream()
                 .filter(locker -> "ACTIVE".equalsIgnoreCase(locker.getStatus()))
                 .filter(locker -> locker.getLatitude() != null && locker.getLongitude() != null)

@@ -7,6 +7,7 @@ import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.locker.dto.*;
 import com.huynqb.laundrylocker.locker.service.LockerService;
 import com.huynqb.laundrylocker.locker.service.ReportAttachmentService;
+import com.huynqb.laundrylocker.locker.service.TechnicianPresenceService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -20,6 +21,7 @@ public class LockerController {
 
     private final LockerService lockerService;
     private final ReportAttachmentService attachmentService;
+    private final TechnicianPresenceService presenceService;
 
     @PostMapping("/api/lockers")
     public ApiResponse<LockerResponse> createLocker(@Valid @RequestBody LockerRequest request) {
@@ -458,6 +460,38 @@ public class LockerController {
     public ApiResponse<Void> adminDeleteSchedule(@PathVariable Long id) {
         lockerService.deleteSchedule(id);
         return ApiResponse.ok("SCHEDULE_DELETED", "Schedule deleted", null);
+    }
+
+    // ---- Technician Presence & Live Location (LOCKER_TECHNICIAN & DRONE_TECHNICIAN) ----
+
+    @PostMapping("/api/maintenance/technician/presence")
+    public ApiResponse<TechnicianPresenceResponse> updateTechnicianPresence(
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestBody TechnicianPresenceRequest request) {
+        return ApiResponse.ok(
+                "TECHNICIAN_PRESENCE_UPDATED",
+                "Technician presence updated",
+                presenceService.updatePresence(userId, roles, request));
+    }
+
+    @GetMapping("/api/maintenance/technician/presence")
+    public ApiResponse<TechnicianPresenceResponse> getTechnicianPresence(
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(presenceService.getPresence(userId, roles));
+    }
+
+    @GetMapping({"/api/maintenance/technicians/presence", "/api/admin/maintenance/technicians/presence"})
+    public ApiResponse<List<TechnicianPresenceResponse>> listActiveTechnicianPresences(
+            @RequestParam(required = false) String type) {
+        return ApiResponse.ok(presenceService.getActivePresences(type));
+    }
+
+    @GetMapping("/internal/technicians/presence")
+    public ApiResponse<List<TechnicianPresenceResponse>> internalActiveTechnicians(
+            @RequestParam(required = false) String type) {
+        return ApiResponse.ok(presenceService.getActivePresences(type));
     }
 
     // ---- Drone fleet (role DRONE_TECHNICIAN/ADMIN qua gateway) ----
