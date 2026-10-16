@@ -484,7 +484,11 @@ public class LockerController {
 
     @GetMapping({"/api/maintenance/technicians/presence", "/api/admin/maintenance/technicians/presence"})
     public ApiResponse<List<TechnicianPresenceResponse>> listActiveTechnicianPresences(
-            @RequestParam(required = false) String type) {
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false, defaultValue = "false") boolean all) {
+        if (all) {
+            return ApiResponse.ok(presenceService.getAllPresences());
+        }
         return ApiResponse.ok(presenceService.getActivePresences(type));
     }
 

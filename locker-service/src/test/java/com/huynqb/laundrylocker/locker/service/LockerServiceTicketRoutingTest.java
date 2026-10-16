@@ -64,6 +64,7 @@ class LockerServiceTicketRoutingTest {
     @Mock private OrderClient orderClient;
     @Mock private ReportAttachmentService attachmentService;
     @Mock private RabbitTemplate rabbitTemplate;
+    @Mock private TechnicianPresenceRepository presenceRepository;
 
     private LockerService service;
     private LockerUnit locker;
@@ -75,7 +76,8 @@ class LockerServiceTicketRoutingTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
-                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults());
+                iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults(),
+                presenceRepository);
         locker = new LockerUnit();
         locker.setId(LOCKER_ID);
         locker.setName("Tủ A");
@@ -250,7 +252,8 @@ class LockerServiceTicketRoutingTest {
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneMaintenanceLogRepository,
                 iotClient, userClient, orderClient, attachmentService, rabbitTemplate,
-                TestLockerRules.of(Map.of("app.maintenance.require-resolution-photo", true)));
+                TestLockerRules.of(Map.of("app.maintenance.require-resolution-photo", true)),
+                presenceRepository);
         box.setStatus("FAULT");
         LockerReport open = report(55L, "IN_PROGRESS", TECH);
         when(reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(eq(BOX_ID), anyList()))
