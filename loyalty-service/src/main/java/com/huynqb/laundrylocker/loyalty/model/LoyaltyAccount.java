@@ -28,6 +28,11 @@ public class LoyaltyAccount {
     @Column(nullable = false, length = 30)
     private String tier = "BRONZE";
 
+    /// Tổng điểm đã tích từ trước tới nay (điểm đơn hoàn tất + điều chỉnh tay); dùng điểm không làm giảm.
+    /// Hạng tính theo cột này.
+    @Column(name = "lifetime_points", nullable = false)
+    private Integer lifetimePoints = 0;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

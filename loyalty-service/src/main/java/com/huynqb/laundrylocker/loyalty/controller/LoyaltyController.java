@@ -59,6 +59,14 @@ public class LoyaltyController {
         return summary(userId);
     }
 
+    /// Xem trước dùng điểm cho đơn `orderTotal` đồng (số tiền SAU mã giảm giá) của chính người gọi.
+    @GetMapping("/api/loyalty/redeem-preview")
+    public ApiResponse<RedeemPreviewResponse> redeemPreview(
+            @RequestHeader(value = "X-User-Id", required = false) Long callerId,
+            @RequestParam(value = "orderTotal", required = false) java.math.BigDecimal orderTotal) {
+        return ApiResponse.ok(loyaltyService.redeemPreview(requireCaller(callerId), orderTotal));
+    }
+
     @GetMapping("/api/loyalty/points/history")
     public ApiResponse<List<PointTransactionResponse>> history(@org.springframework.web.bind.annotation.RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(loyaltyService.history(userId));
@@ -149,6 +157,18 @@ public class LoyaltyController {
     @GetMapping("/api/admin/loyalty/statistics")
     public ApiResponse<LoyaltyStatisticsResponse> adminStatistics() {
         return ApiResponse.ok(loyaltyService.statistics());
+    }
+
+    /// order-service trừ điểm cho đơn vừa tạo (chỉ trong cụm — gateway chặn mọi đường /internal).
+    @PostMapping("/internal/loyalty/redemptions")
+    public ApiResponse<OrderRedemptionResponse> redeemForOrder(@Valid @RequestBody OrderRedemptionRequest request) {
+        return ApiResponse.ok(loyaltyService.redeemForOrder(request));
+    }
+
+    /// order-service hoàn điểm đơn đã dùng khi đơn huỷ / hoàn tiền. Idempotent.
+    @PostMapping("/internal/loyalty/redemptions/{orderId}/refund")
+    public ApiResponse<OrderRedemptionRefundResponse> refundOrderRedemption(@PathVariable Long orderId) {
+        return ApiResponse.ok(loyaltyService.refundOrderRedemption(orderId));
     }
 
     @GetMapping("/internal/loyalty/users/{userId}")

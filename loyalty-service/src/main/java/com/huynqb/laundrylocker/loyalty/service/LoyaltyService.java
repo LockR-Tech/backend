@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -34,6 +35,19 @@ public class LoyaltyService {
     private static final List<String> TIERS = List.of("BRONZE", "SILVER", "GOLD", "PLATINUM");
     /// Loại giao dịch điểm tự cộng khi đơn hoàn tất; DB chỉ cho một dòng loại này mỗi orderId.
     public static final String ORDER_EARN_TYPE = "ORDER_EARN";
+    /// Trừ điểm để giảm tiền một đơn (điểm âm); DB chỉ cho một dòng mỗi orderId.
+    public static final String ORDER_REDEEM_TYPE = "ORDER_REDEEM";
+    /// Hoàn đúng số điểm đã trừ khi đơn bị huỷ/hoàn tiền (điểm dương); DB chỉ cho một dòng mỗi orderId.
+    public static final String ORDER_REDEEM_REFUND_TYPE = "ORDER_REDEEM_REFUND";
+    public static final String ADJUSTMENT_TYPE = "ADJUSTMENT";
+    /// Đổi điểm lấy phần thưởng (luồng cũ).
+    public static final String REDEEM_TYPE = "REDEEM";
+    /// Các loại chỉ hệ thống được ghi — admin điều chỉnh tay không được dùng.
+    private static final Set<String> RESERVED_TYPES =
+            Set.of(ORDER_EARN_TYPE, ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE);
+    /// Dùng/hoàn điểm không làm đổi tổng điểm đã tích (hạng); mọi loại khác (tích, điều chỉnh tay) thì có.
+    private static final Set<String> SPENDING_TYPES =
+            Set.of(ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE, REDEEM_TYPE);
 
     private BusinessTime time = BusinessTime.system();
 
@@ -47,12 +61,13 @@ public class LoyaltyService {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "LOYALTY_USER_REQUIRED", "Thiếu userId của tài khoản cần điều chỉnh điểm");
         }
-        if (ORDER_EARN_TYPE.equalsIgnoreCase(request.type() == null ? "" : request.type().trim())) {
+        String type = StringUtils.hasText(request.type()) ? request.type().trim() : ADJUSTMENT_TYPE;
+        if (RESERVED_TYPES.contains(type.toUpperCase(Locale.ROOT))) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
-                    "LOYALTY_TYPE_RESERVED", "Loại " + ORDER_EARN_TYPE + " chỉ dành cho điểm tự cộng khi đơn hoàn tất");
+                    "LOYALTY_TYPE_RESERVED", "Loại " + type.toUpperCase(Locale.ROOT)
+                            + " chỉ dành cho điểm hệ thống tự ghi theo đơn hàng");
         }
-        return applyPoints(request.userId(), request.orderId(), request.points(),
-                StringUtils.hasText(request.type()) ? request.type() : "ADJUSTMENT");
+        return applyPoints(request.userId(), request.orderId(), request.points(), type);
     }
 
     /// Cộng điểm khi đơn hoàn tất — mỗi đơn đúng một lần. Sự kiện giao lại/xử lý song song bị chặn bởi kiểm tra
@@ -71,27 +86,138 @@ public class LoyaltyService {
     }
 
     private LoyaltyAccountResponse applyPoints(Long userId, Long orderId, int points, String type) {
-        LoyaltyAccount account =
-                accountRepository
-                        .findByUserId(userId)
-                        .orElseGet(
-                                () -> {
-                                    LoyaltyAccount created = new LoyaltyAccount();
-                                    created.setUserId(userId);
-                                    return created;
-                                });
+        return applyPoints(lockedAccountOrNew(userId), orderId, points, type, null);
+    }
+
+    /// Ghi một giao dịch điểm vào tài khoản ĐÃ KHOÁ: đổi số dư, tổng điểm đã tích (trừ các loại dùng/hoàn
+    /// điểm) và hạng theo tổng điểm đã tích.
+    private LoyaltyAccountResponse applyPoints(
+            LoyaltyAccount account, Long orderId, int points, String type, BigDecimal amount) {
         account.setPoints(account.getPoints() + points);
-        account.setTier(resolveTier(account.getPoints()));
+        if (!SPENDING_TYPES.contains(type.toUpperCase(Locale.ROOT))) {
+            account.setLifetimePoints(Math.max(0, lifetimeOf(account) + points));
+        }
+        account.setTier(resolveTier(lifetimeOf(account)));
 
         PointTransaction transaction = new PointTransaction();
-        transaction.setUserId(userId);
+        transaction.setUserId(account.getUserId());
         transaction.setOrderId(orderId);
         transaction.setPoints(points);
         transaction.setType(type);
+        transaction.setAmount(amount);
         LoyaltyAccountResponse response = toResponse(accountRepository.save(account));
-        // Flush ngay để unique index chặn cộng trùng ném lỗi trong lời gọi này (rollback cả phần cộng điểm).
+        // Flush ngay để unique index chặn ghi trùng theo đơn ném lỗi trong lời gọi này (rollback cả phần đổi điểm).
         transactionRepository.saveAndFlush(transaction);
         return response;
+    }
+
+    /// Tài khoản đã khoá hàng; chưa có thì tạo mới (chưa lưu — lưu cùng giao dịch đầu tiên).
+    private LoyaltyAccount lockedAccountOrNew(Long userId) {
+        return accountRepository.findByUserIdForUpdate(userId).orElseGet(() -> {
+            LoyaltyAccount created = new LoyaltyAccount();
+            created.setUserId(userId);
+            return created;
+        });
+    }
+
+    private static int lifetimeOf(LoyaltyAccount account) {
+        return account.getLifetimePoints() == null ? 0 : account.getLifetimePoints();
+    }
+
+    // ------------------------------------------------------------------ dùng điểm thanh toán đơn
+
+    /// Khách xem trước được dùng tối đa bao nhiêu điểm cho đơn `orderTotal` đồng (số tiền sau mã giảm giá).
+    @Transactional(readOnly = true)
+    public RedeemPreviewResponse redeemPreview(Long userId, BigDecimal orderTotal) {
+        int balance = accountRepository.findByUserId(userId).map(LoyaltyAccount::getPoints).orElse(0);
+        int maxPoints = rules.maxRedeemablePoints(balance, orderTotal);
+        return new RedeemPreviewResponse(
+                rules.redeemEnabled(),
+                balance,
+                rules.redeemVndPerPoint(),
+                rules.redeemMaxPercent(),
+                rules.redeemMinPoints(),
+                maxPoints,
+                rules.redeemValue(maxPoints));
+    }
+
+    /// Trừ điểm cho đơn vừa tạo. Số điểm kẹp theo cùng quy tắc với {@link #redeemPreview}. Idempotent theo
+    /// orderId: gọi lại trả đúng kết quả lần đầu, không trừ thêm. Khoá hàng tài khoản nên hai lần trừ đồng
+    /// thời không làm điểm âm; unique index (order_id) WHERE type = 'ORDER_REDEEM' chặn nốt trường hợp còn lại.
+    @Transactional
+    public OrderRedemptionResponse redeemForOrder(OrderRedemptionRequest request) {
+        if (request.userId() == null || request.orderId() == null) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_REDEMPTION_INVALID", "Thiếu userId hoặc orderId của đơn dùng điểm");
+        }
+        int requested = request.requestedPoints() == null ? 0 : request.requestedPoints();
+        if (requested <= 0) {
+            return OrderRedemptionResponse.none();
+        }
+        Optional<PointTransaction> existing = existingRedemption(request);
+        if (existing.isPresent()) {
+            return redemptionOf(existing.get());
+        }
+        LoyaltyAccount account = accountRepository.findByUserIdForUpdate(request.userId()).orElse(null);
+        if (account == null) {
+            return OrderRedemptionResponse.none();
+        }
+        // Lần gọi song song cùng đơn có thể vừa commit trong lúc chờ khoá.
+        existing = existingRedemption(request);
+        if (existing.isPresent()) {
+            return redemptionOf(existing.get());
+        }
+        int points = rules.clampRedeemPoints(requested, account.getPoints(), request.orderTotal());
+        if (points <= 0) {
+            return OrderRedemptionResponse.none();
+        }
+        BigDecimal discount = rules.redeemValue(points);
+        applyPoints(account, request.orderId(), -points, ORDER_REDEEM_TYPE, discount);
+        return new OrderRedemptionResponse(points, discount);
+    }
+
+    /// Hoàn đúng số điểm đơn đã dùng (đơn huỷ / hoàn tiền). Idempotent: đơn không dùng điểm hoặc đã hoàn
+    /// thì trả 0 và không ghi gì.
+    @Transactional
+    public OrderRedemptionRefundResponse refundOrderRedemption(Long orderId) {
+        if (orderId == null) {
+            return new OrderRedemptionRefundResponse(0);
+        }
+        PointTransaction redemption =
+                transactionRepository.findFirstByOrderIdAndType(orderId, ORDER_REDEEM_TYPE).orElse(null);
+        if (redemption == null
+                || transactionRepository.existsByOrderIdAndType(orderId, ORDER_REDEEM_REFUND_TYPE)) {
+            return new OrderRedemptionRefundResponse(0);
+        }
+        LoyaltyAccount account = accountRepository.findByUserIdForUpdate(redemption.getUserId()).orElse(null);
+        // Kiểm lại dưới khoá: lần hoàn song song có thể vừa commit.
+        if (account == null || transactionRepository.existsByOrderIdAndType(orderId, ORDER_REDEEM_REFUND_TYPE)) {
+            return new OrderRedemptionRefundResponse(0);
+        }
+        int points = Math.abs(redemption.getPoints());
+        if (points == 0) {
+            return new OrderRedemptionRefundResponse(0);
+        }
+        applyPoints(account, orderId, points, ORDER_REDEEM_REFUND_TYPE, redemption.getAmount());
+        return new OrderRedemptionRefundResponse(points);
+    }
+
+    private Optional<PointTransaction> existingRedemption(OrderRedemptionRequest request) {
+        Optional<PointTransaction> existing =
+                transactionRepository.findFirstByOrderIdAndType(request.orderId(), ORDER_REDEEM_TYPE);
+        if (existing.isPresent() && !request.userId().equals(existing.get().getUserId())) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_REDEMPTION_CONFLICT",
+                    "Đơn #" + request.orderId() + " đã dùng điểm của tài khoản khác",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+        return existing;
+    }
+
+    private OrderRedemptionResponse redemptionOf(PointTransaction transaction) {
+        int points = Math.abs(transaction.getPoints());
+        BigDecimal amount = transaction.getAmount() != null ? transaction.getAmount() : rules.redeemValue(points);
+        return new OrderRedemptionResponse(points, amount);
     }
 
     @Transactional(readOnly = true)
@@ -112,18 +238,20 @@ public class LoyaltyService {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "LOYALTY_POINTS_INVALID", "Số điểm đổi phải lớn hơn 0");
         }
-        int balance = accountRepository.findByUserId(request.userId()).map(LoyaltyAccount::getPoints).orElse(0);
-        if (balance < points) {
+        // Khoá hàng trước khi đọc số dư: hai lần đổi đồng thời không được cùng thấy đủ điểm.
+        LoyaltyAccount account = accountRepository.findByUserIdForUpdate(request.userId()).orElse(null);
+        int balance = account == null ? 0 : account.getPoints();
+        if (account == null || balance < points) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "LOYALTY_POINTS_INSUFFICIENT", "Không đủ điểm để đổi (hiện có " + balance + " điểm)");
         }
-        return applyPoints(request.userId(), null, -points, "REDEEM");
+        return applyPoints(account, null, -points, REDEEM_TYPE, null);
     }
 
     /// Đổi tem: số tem phải dương và không vượt số tem đang có.
     @Transactional
     public LoyaltyAccountResponse redeemStamp(RedeemStampRequest request) {
-        LoyaltyAccount account = accountRepository.findByUserId(request.userId()).orElseThrow(() -> new com.huynqb.laundrylocker.common.exception.NotFoundException("LoyaltyAccount", request.userId()));
+        LoyaltyAccount account = accountRepository.findByUserIdForUpdate(request.userId()).orElseThrow(() -> new com.huynqb.laundrylocker.common.exception.NotFoundException("LoyaltyAccount", request.userId()));
         int stamps = request.stamps() == null ? 0 : request.stamps();
         if (stamps <= 0 || account.getStamps() < stamps) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
@@ -136,11 +264,7 @@ public class LoyaltyService {
 
     @Transactional
     public LoyaltyAccountResponse addStamp(Long userId, Integer count) {
-        LoyaltyAccount account = accountRepository.findByUserId(userId).orElseGet(() -> {
-            LoyaltyAccount created = new LoyaltyAccount();
-            created.setUserId(userId);
-            return created;
-        });
+        LoyaltyAccount account = lockedAccountOrNew(userId);
         account.setStamps(account.getStamps() + (count == null ? rules.stampIncrement() : count));
         return toResponse(accountRepository.save(account));
     }
@@ -207,7 +331,8 @@ public class LoyaltyService {
 
         Map<String, Long> tiers = new LinkedHashMap<>();
         TIERS.forEach(tier -> tiers.put(tier, 0L));
-        accountRepository.countByTier()
+        LoyaltyRules.TierThresholds thresholds = rules.tierThresholds();
+        accountRepository.countByLifetimeTier(thresholds.silver(), thresholds.gold(), thresholds.platinum())
                 .forEach(row -> tiers.merge(row.getTier(), row.getMembers() == null ? 0L : row.getMembers(), Long::sum));
 
         long totalMembers = asLong(accounts.getTotalMembers());
@@ -238,12 +363,16 @@ public class LoyaltyService {
         return new BigDecimal(value.toString()).setScale(2, RoundingMode.HALF_UP).doubleValue();
     }
 
-    private String resolveTier(int points) {
-        return rules.tierFor(points);
+    private String resolveTier(int lifetimePoints) {
+        return rules.tierFor(lifetimePoints);
     }
 
+    /// Hạng luôn tính lại theo mốc đang áp dụng (admin đổi mốc thì tài khoản chưa đổi điểm cũng thấy ngay).
     private LoyaltyAccountResponse toResponse(LoyaltyAccount account) {
-        return new LoyaltyAccountResponse(account.getId(), account.getUserId(), account.getPoints(), account.getStamps(), account.getTier());
+        int lifetime = lifetimeOf(account);
+        return new LoyaltyAccountResponse(
+                account.getId(), account.getUserId(), account.getPoints(), account.getStamps(),
+                resolveTier(lifetime), lifetime);
     }
 
     private PointTransactionResponse toTransaction(PointTransaction transaction) {

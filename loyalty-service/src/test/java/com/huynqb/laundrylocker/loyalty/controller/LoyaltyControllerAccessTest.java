@@ -30,7 +30,7 @@ class LoyaltyControllerAccessTest {
 
     @Test
     void accountByIdIsSelfOrAdmin() {
-        when(loyaltyService.getByUser(7L)).thenReturn(new LoyaltyAccountResponse(1L, 7L, 10, 0, "BRONZE"));
+        when(loyaltyService.getByUser(7L)).thenReturn(new LoyaltyAccountResponse(1L, 7L, 10, 0, "BRONZE", 10));
 
         assertEquals(7L, controller.getByUser(7L, 7L, "CUSTOMER").data().userId());
         assertEquals(7L, controller.getByUser(7L, 1L, "ADMIN").data().userId());
@@ -57,6 +57,18 @@ class LoyaltyControllerAccessTest {
         assertEquals("AUTH_REQUIRED", error.getCode());
         assertEquals(HttpStatus.UNAUTHORIZED, error.getStatus());
         verify(loyaltyService, never()).redeemPoints(any());
+    }
+
+    @Test
+    void redeemPreviewIsForTheSignedInCallerOnly() {
+        when(loyaltyService.redeemPreview(7L, new java.math.BigDecimal("15000"))).thenReturn(
+                new com.huynqb.laundrylocker.loyalty.dto.RedeemPreviewResponse(
+                        true, 500, 100, 50, 10, 75, new java.math.BigDecimal("7500")));
+
+        assertEquals(75, controller.redeemPreview(7L, new java.math.BigDecimal("15000")).data().maxPoints());
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> controller.redeemPreview(null, new java.math.BigDecimal("15000")));
+        assertEquals("AUTH_REQUIRED", error.getCode());
     }
 
     @Test
