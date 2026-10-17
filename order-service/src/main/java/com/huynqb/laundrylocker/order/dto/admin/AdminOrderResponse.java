@@ -85,7 +85,10 @@ public record AdminOrderResponse(
         PaymentInfo payment,
         DroneInfo drone,
         /// Chỉ có ở API chi tiết; null ở danh sách.
-        List<TimelineEvent> timeline) {
+        List<TimelineEvent> timeline,
+        /// Điểm thưởng đã dùng cho đơn và số tiền được giảm nhờ điểm (giống OrderResponse).
+        Integer pointsUsed,
+        BigDecimal pointsDiscount) {
 
     public record Person(Long id, String fullName, String phoneNumber, String email, String status) {
     }

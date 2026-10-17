@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 public interface PointTransactionRepository extends JpaRepository<PointTransaction, Long> {
 
@@ -14,16 +15,23 @@ public interface PointTransactionRepository extends JpaRepository<PointTransacti
 
     boolean existsByOrderIdAndType(Long orderId, String type);
 
+    /// ORDER_REDEEM / ORDER_REDEEM_REFUND có unique index theo order_id nên mỗi đơn có tối đa một dòng.
+    Optional<PointTransaction> findFirstByOrderIdAndType(Long orderId, String type);
+
     /// Tổng hợp giao dịch điểm cho thống kê admin (một lượt quét bảng). Điểm phát ra là
-    /// tổng giao dịch dương; điểm đã dùng là tổng trị tuyệt đối giao dịch âm. Các mốc thời
-    /// gian đã quy về múi giờ lưu trữ.
+    /// tổng giao dịch dương trừ hoàn điểm đã dùng (ORDER_REDEEM_REFUND); điểm đã dùng là tổng trị
+    /// tuyệt đối giao dịch âm trừ đi phần đã hoàn lại. Các mốc thời gian đã quy về múi giờ lưu trữ.
     @Query(value = """
             SELECT COUNT(*) AS "transactions",
-                   COALESCE(SUM(points) FILTER (WHERE points > 0), 0) AS "pointsIssued",
-                   COALESCE(-SUM(points) FILTER (WHERE points < 0), 0) AS "pointsRedeemed",
-                   COALESCE(SUM(points) FILTER (WHERE points > 0 AND created_at >= :monthStart), 0)
+                   COALESCE(SUM(points) FILTER (WHERE points > 0 AND type <> 'ORDER_REDEEM_REFUND'), 0)
+                       AS "pointsIssued",
+                   COALESCE(-SUM(points) FILTER (WHERE points < 0 OR type = 'ORDER_REDEEM_REFUND'), 0)
+                       AS "pointsRedeemed",
+                   COALESCE(SUM(points) FILTER (WHERE points > 0 AND type <> 'ORDER_REDEEM_REFUND'
+                                                AND created_at >= :monthStart), 0)
                        AS "pointsIssuedThisMonth",
-                   COALESCE(-SUM(points) FILTER (WHERE points < 0 AND created_at >= :monthStart), 0)
+                   COALESCE(-SUM(points) FILTER (WHERE (points < 0 OR type = 'ORDER_REDEEM_REFUND')
+                                                 AND created_at >= :monthStart), 0)
                        AS "pointsRedeemedThisMonth",
                    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= :activeSince) AS "activeMembers"
             FROM {h-schema}point_transactions

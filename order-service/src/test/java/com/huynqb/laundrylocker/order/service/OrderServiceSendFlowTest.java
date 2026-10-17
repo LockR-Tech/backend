@@ -59,6 +59,9 @@ class OrderServiceSendFlowTest {
     @Mock private LockerLookupClient lockerLookupClient;
     @Mock private NotificationClient notificationClient;
     @Mock private QrTokenService qrTokenService;
+    @Mock private OrderBenefitService benefits;
+    @Mock private PromotionViews promotionViews;
+    @Mock private PaidOrderEffects paidEffects;
 
     private OrderService orderService;
 
@@ -84,7 +87,7 @@ class OrderServiceSendFlowTest {
                         "app.order.require-payment-before-drop", true,
                         "app.order.send-confirm-requires-open", true,
                         "app.order.receiver-notify-sms", false,
-                        "app.order.receiver-notify-email", false)));
+                        "app.order.receiver-notify-email", false)), benefits, promotionViews, paidEffects);
     }
 
     @Test

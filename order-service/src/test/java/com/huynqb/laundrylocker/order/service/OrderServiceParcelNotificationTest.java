@@ -61,6 +61,9 @@ class OrderServiceParcelNotificationTest {
     @Mock private LockerLookupClient lockerLookupClient;
     @Mock private NotificationClient notificationClient;
     @Mock private QrTokenService qrTokenService;
+    @Mock private OrderBenefitService benefits;
+    @Mock private PromotionViews promotionViews;
+    @Mock private PaidOrderEffects paidEffects;
 
     private OrderService service(boolean sms, boolean email) {
         OrderService service = new OrderService(
@@ -71,7 +74,7 @@ class OrderServiceParcelNotificationTest {
                         "app.order.require-payment-before-drop", true,
                         "app.order.send-confirm-requires-open", true,
                         "app.order.receiver-notify-sms", sms,
-                        "app.order.receiver-notify-email", email)));
+                        "app.order.receiver-notify-email", email)), benefits, promotionViews, paidEffects);
         // Cột DB lưu giờ UTC như container production, bất kể múi giờ máy chạy test.
         service.setTime(new BusinessTime(ZoneOffset.UTC, BusinessTime.DEFAULT_BUSINESS_ZONE, Clock.systemUTC()));
         return service;

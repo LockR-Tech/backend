@@ -50,6 +50,21 @@ public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long>,
     @Query("select o from LockerOrder o where o.id = :id")
     Optional<LockerOrder> findByIdForUpdate(@Param("id") Long id);
 
+    /// Đơn huỷ/hoàn tiền có dùng điểm mà loyalty-service chưa xác nhận hoàn điểm.
+    @Query("""
+            select o.id from LockerOrder o
+            where o.pointsUsed > 0 and o.pointsRefundedAt is null
+              and (o.status = 'CANCELED' or o.paymentStatus = 'REFUNDED')
+            order by o.id""")
+    List<Long> findPointsRefundPending(org.springframework.data.domain.Pageable page);
+
+    /// Ghi nhận đã hoàn điểm. Giao dịch riêng: gọi sau khi giao dịch huỷ đơn đã commit.
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    @Query("update LockerOrder o set o.pointsRefundedAt = :at where o.id = :id and o.pointsRefundedAt is null")
+    int markPointsRefunded(@Param("id") Long id, @Param("at") java.time.LocalDateTime at);
+
     @Query("select o from LockerOrder o where (o.sendBoxId = :boxId or o.receiveBoxId = :boxId or o.reservedBoxId = :boxId or o.sourceBoxId = :boxId) and o.status not in ('COMPLETED', 'CANCELED', 'EXPIRED') order by o.createdAt desc")
     List<LockerOrder> findActiveByBoxId(@Param("boxId") Long boxId);
 

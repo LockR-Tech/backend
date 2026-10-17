@@ -58,6 +58,9 @@ class OrderServiceHandoverAndCompletionTest {
     @Mock private LockerLookupClient lockerLookupClient;
     @Mock private NotificationClient notificationClient;
     @Mock private QrTokenService qrTokenService;
+    @Mock private OrderBenefitService benefits;
+    @Mock private PromotionViews promotionViews;
+    @Mock private PaidOrderEffects paidEffects;
 
     private OrderService orderService;
 
@@ -79,7 +82,7 @@ class OrderServiceHandoverAndCompletionTest {
                 lockerLookupClient,
                 notificationClient,
                 qrTokenService,
-                TestOrderRules.defaults());
+                TestOrderRules.defaults(), benefits, promotionViews, paidEffects);
         lenient().when(orderRepository.save(any(LockerOrder.class))).thenAnswer(i -> i.getArgument(0));
         lenient().when(detailRepository.findByOrderId(any())).thenReturn(List.of());
     }
@@ -152,7 +155,6 @@ class OrderServiceHandoverAndCompletionTest {
         order.setStatus("INITIALIZED");
         order.setPaymentStatus("PAID");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
-        when(promotionUsageRepository.findByOrderId(21L)).thenReturn(List.of());
 
         orderService.cancel(21L, null, 10L);
 

@@ -54,6 +54,9 @@ class OrderServiceRentalPaymentTest {
     @Mock private LockerLookupClient lockerLookupClient;
     @Mock private NotificationClient notificationClient;
     @Mock private QrTokenService qrTokenService;
+    @Mock private OrderBenefitService benefits;
+    @Mock private PromotionViews promotionViews;
+    @Mock private PaidOrderEffects paidEffects;
 
     private OrderService orderService;
 
@@ -77,7 +80,7 @@ class OrderServiceRentalPaymentTest {
                 qrTokenService,
                 TestOrderRules.of(java.util.Map.of(
                         "app.order.rental-rate-standard", 5000,
-                        "app.order.require-payment-before-drop", true)));
+                        "app.order.require-payment-before-drop", true)), benefits, promotionViews, paidEffects);
     }
 
     @Test
@@ -145,7 +148,7 @@ class OrderServiceRentalPaymentTest {
         });
         when(orderRepository.findById(21L)).thenAnswer(invocation -> Optional.ofNullable(savedRef[0]));
 
-        var response = orderService.createRental(new RentalOrderRequest(5L, 901L, "STANDARD", 4, null, null), 44L);
+        var response = orderService.createRental(new RentalOrderRequest(5L, 901L, "STANDARD", 4, null, null, null), 44L);
 
         assertNull(response.pickupDeadline());
     }

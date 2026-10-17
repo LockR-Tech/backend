@@ -5,6 +5,7 @@ import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
+import com.huynqb.laundrylocker.order.client.LoyaltyClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.PaymentRefundClient;
 import com.huynqb.laundrylocker.order.client.PaymentReportClient;
@@ -40,6 +41,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         "app.order.release-sweep-cron=-",
         "app.order.overdue-release-cron=-",
         "app.order.reconcile-cron=-",
+        "app.order.points-refund-sweep-cron=-",
         "app.order.reminder-interval-ms=86400000",
         "app.drone.demo.scheduler-delay-ms=86400000",
         "app.drone.telemetry.enabled=false"
@@ -76,6 +78,8 @@ public abstract class OrderServicePostgresTestBase {
     protected NotificationClient notificationClient;
     @MockitoBean
     protected PaymentRefundClient paymentRefundClient;
+    @MockitoBean
+    protected LoyaltyClient loyaltyClient;
     @MockitoBean
     protected PaymentReportClient paymentReportClient;
     @MockitoBean

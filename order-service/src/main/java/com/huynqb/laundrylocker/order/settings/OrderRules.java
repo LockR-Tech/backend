@@ -188,6 +188,11 @@ public class OrderRules {
         return settings.getInt(EXTEND_MAX_HOURS);
     }
 
+    /// Số mã giảm giá tối đa mỗi đơn; 0 = tạm ngưng mã giảm giá.
+    public int maxVouchersPerOrder() {
+        return Math.max(0, settings.getInt(MAX_VOUCHERS_PER_ORDER));
+    }
+
     public boolean requirePaymentBeforeDrop() {
         return settings.getBoolean(REQUIRE_PAYMENT_BEFORE_DROP);
     }

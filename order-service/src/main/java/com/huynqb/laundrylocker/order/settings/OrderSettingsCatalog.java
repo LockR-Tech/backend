@@ -82,6 +82,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String INCIDENT_RECOVERY_SLA_HOURS = "app.order.incident-recovery-sla-hours";
     public static final String INCIDENT_APPROVAL_REQUIRED = "app.order.incident-approval-required";
     public static final String INCIDENT_DISPUTE_ALLOWED = "app.order.incident-dispute-allowed";
+    public static final String MAX_VOUCHERS_PER_ORDER = "app.order.max-vouchers-per-order";
 
     private static final String PRICING = "Giá & phí";
     private static final String DEADLINES = "Thời hạn & tự động hoá";
@@ -90,6 +91,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     private static final String DRONE = "Giao hàng drone";
     private static final String RECEIVER = "Thông báo cho người nhận";
     private static final String INCIDENT = "Sự cố & bồi thường";
+    private static final String VOUCHER = "Mã giảm giá";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -163,6 +165,12 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Danh sách giờ hiển thị trên app, phân tách bằng dấu phẩy.", "2,4,8,12,24", 1, 8760, "giờ").asPublic(),
                 integer(EXTEND_DEFAULT_HOURS, RENTAL, "Số giờ gia hạn mặc định trên app", "", 2, 1, 8760, "giờ").asPublic(),
                 integer(EXTEND_MAX_HOURS, RENTAL, "Số giờ gia hạn tối đa mỗi lần", "", 24, 1, 8760, "giờ").asPublic(),
+
+                integer(MAX_VOUCHERS_PER_ORDER, VOUCHER, "Số mã giảm giá tối đa mỗi đơn",
+                        "Số mã giảm giá khách được áp vào một đơn (gửi hàng, thuê ô, giao drone). 0 = tạm ngưng "
+                                + "mọi mã giảm giá. Lớn hơn 1 thì chỉ các mã đánh dấu \"dùng kèm được\" mới cộng dồn "
+                                + "với nhau. Điểm thưởng luôn dùng được thêm, không tính vào số mã.",
+                        1, 0, 5, "mã").asPublic(),
 
                 bool(REQUIRE_PAYMENT_BEFORE_DROP, PAYMENT, "Bắt buộc thanh toán trước khi bỏ hàng",
                         "Chặn mở ô bỏ hàng, xác nhận bỏ hàng và kết thúc thuê khi đơn chưa thanh toán.",

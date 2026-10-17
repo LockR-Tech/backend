@@ -81,6 +81,34 @@ class LoyaltyStatisticsQueryTest {
     }
 
     @Test
+    void tierDistributionUsesLifetimePointsAndRedeemRefundsNetOut() {
+        lifetimeAccount(11L, 0, 100);
+        lifetimeAccount(12L, 0, 600);
+        lifetimeAccount(13L, 50, 2500);
+        lifetimeAccount(14L, 10, 9000);
+
+        transaction(11L, 300, "ORDER_EARN", LocalDateTime.of(2026, 9, 2, 3, 0));
+        transaction(11L, -100, "ORDER_REDEEM", LocalDateTime.of(2026, 9, 3, 3, 0));
+        transaction(11L, 100, "ORDER_REDEEM_REFUND", LocalDateTime.of(2026, 9, 4, 3, 0));
+        transaction(11L, -40, "ORDER_REDEEM", LocalDateTime.of(2026, 9, 5, 3, 0));
+        em.flush();
+        em.clear();
+
+        Map<String, Long> tiers = accountRepository.countByLifetimeTier(500, 2000, 5000).stream()
+                .collect(Collectors.toMap(
+                        LoyaltyAccountRepository.TierCount::getTier,
+                        LoyaltyAccountRepository.TierCount::getMembers));
+        assertEquals(Map.of("BRONZE", 1L, "SILVER", 1L, "GOLD", 1L, "PLATINUM", 1L), tiers);
+
+        PointTransactionRepository.TransactionAggregate transactions =
+                transactionRepository.aggregate(MONTH_START, ACTIVE_SINCE);
+        // Hoàn điểm đã dùng không tính là điểm phát ra; điểm đã dùng tính ròng (100 − 100 + 40).
+        assertEquals(300L, transactions.getPointsIssued().longValue());
+        assertEquals(40L, transactions.getPointsRedeemed().longValue());
+        assertEquals(40L, transactions.getPointsRedeemedThisMonth().longValue());
+    }
+
+    @Test
     void emptyTablesYieldZeroInsteadOfNull() {
         LoyaltyAccountRepository.AccountAggregate accounts = accountRepository.aggregate(MONTH_START);
         assertEquals(0L, accounts.getTotalMembers().longValue());
@@ -108,6 +136,14 @@ class LoyaltyStatisticsQueryTest {
                 .setParameter("at", createdAt)
                 .setParameter("id", account.getId())
                 .executeUpdate();
+    }
+
+    private void lifetimeAccount(Long userId, int points, int lifetimePoints) {
+        LoyaltyAccount account = new LoyaltyAccount();
+        account.setUserId(userId);
+        account.setPoints(points);
+        account.setLifetimePoints(lifetimePoints);
+        em.persistAndFlush(account);
     }
 
     private void transaction(Long userId, int points, String type, LocalDateTime createdAt) {

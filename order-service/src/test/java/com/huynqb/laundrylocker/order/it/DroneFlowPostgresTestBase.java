@@ -235,7 +235,7 @@ public abstract class DroneFlowPostgresTestBase extends OrderServicePostgresTest
                 "Nguyễn Văn Gửi", "0901000111", "gui@gmail.com",
                 "Trần Thị Nhận", "0902000222", "nhan@gmail.com",
                 weightGrams, "DOCUMENT", "Hồ sơ", null, null, null, null, false, true,
-                "STANDARD");
+                "STANDARD", null, null);
     }
 
     protected DroneDeliveryOrderResponse book() {

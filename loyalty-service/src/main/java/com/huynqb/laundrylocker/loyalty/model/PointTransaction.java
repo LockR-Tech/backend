@@ -28,6 +28,10 @@ public class PointTransaction {
     @Column(nullable = false, length = 30)
     private String type;
 
+    /// Số tiền đơn được giảm nhờ giao dịch dùng điểm (ORDER_REDEEM / ORDER_REDEEM_REFUND); null với loại khác.
+    @Column(precision = 14, scale = 2)
+    private java.math.BigDecimal amount;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

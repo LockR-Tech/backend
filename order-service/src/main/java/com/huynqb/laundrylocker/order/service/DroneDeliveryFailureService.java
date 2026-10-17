@@ -66,6 +66,8 @@ public class DroneDeliveryFailureService {
     private final LockerDroneClient lockerDroneClient;
     private final NotificationClient notificationClient;
     private final DroneDeliveryMailer mailer;
+    /// Trả lượt mã giảm giá + hoàn điểm thưởng khi đơn đóng.
+    private final OrderBenefitService benefits;
 
     /**
      * @param reason   mã trong {@link DroneFailureReasons}
@@ -128,6 +130,7 @@ public class DroneDeliveryFailureService {
         order.setPinCode(null);
         order.setStatus("CANCELED");
         order.setDeliveryStage("FAILED");
+        benefits.releaseBenefits(order);
         orderRepository.save(order);
 
         if (mission != null && mission.getEndedAt() == null) {
@@ -199,9 +202,9 @@ public class DroneDeliveryFailureService {
     }
 
     /// Đơn đã PAID, hoặc đang nợ phụ thu cân lệch nhưng đã trả phần phí ban đầu.
+    /// Đơn 0đ nhờ mã giảm giá/điểm thưởng (PAID mà chưa thu đồng nào) không có gì để hoàn.
     private static boolean hasCollectedMoney(LockerOrder order) {
-        return "PAID".equalsIgnoreCase(order.getPaymentStatus())
-                || (order.getPaidAmount() != null && order.getPaidAmount().signum() > 0);
+        return OrderBenefitService.collectedMoney(order);
     }
 
     /// Chưa phóng: trả drone đang giữ riêng về rảnh. Đã phóng: drone phải được kiểm tra (và lấy

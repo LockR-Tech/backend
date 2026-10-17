@@ -26,5 +26,7 @@ public record CreateOrderRequest(
         List<OrderItemRequest> items,
         String promotionCode,
         List<String> promotionCodes,
-        BigDecimal totalPrice) {
+        BigDecimal totalPrice,
+        /// Số điểm thưởng muốn dùng (tuỳ chọn); loyalty-service kẹp theo quy tắc admin.
+        Integer pointsToUse) {
 }
