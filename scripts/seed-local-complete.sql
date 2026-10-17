@@ -287,6 +287,23 @@ VALUES
 
 SELECT setval('locker_schema.drone_delivery_requests_id_seq', 5, true);
 
+-- Ca trực và vị trí GPS của KTV quanh khu vực Đại học FPT TP.HCM
+INSERT INTO locker_schema.technician_presences
+(user_id, technician_type, on_duty, latitude, longitude, accuracy_m, heading_deg, speed_ms, altitude_m, battery_level, device_info, shift_started_at, shift_ended_at, last_located_at, created_at, updated_at)
+VALUES
+(3,  'DRONE_TECHNICIAN',  TRUE,  10.841122, 106.809783, 4.5, 90.0,  0.0, 18.5, 92, 'Cổng chính ĐH FPT Tòa Alpha, Khu Công Nghệ Cao',   NOW() - INTERVAL '3 hours', NULL,                        NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '3 hours', NOW()),
+(4,  'LOCKER_TECHNICIAN', TRUE,  10.842415, 106.808540, 5.0, 180.0, 0.5, 19.0, 86, 'Tòa nhà Gamma & KTX ĐH FPT, Đường D1 Khu CNC',      NOW() - INTERVAL '4 hours', NULL,                        NOW() - INTERVAL '5 minutes', NOW() - INTERVAL '4 hours', NOW()),
+(11, 'LOCKER_TECHNICIAN', TRUE,  10.846820, 106.819540, 5.5, 270.0, 1.2, 18.0, 81, '245 Nguyễn Văn Tăng, P. Long Thạnh Mỹ (gần ĐH FPT)', NOW() - INTERVAL '5 hours', NULL,                        NOW() - INTERVAL '7 minutes', NOW() - INTERVAL '5 hours', NOW())
+ON CONFLICT (user_id) DO UPDATE SET
+    technician_type = EXCLUDED.technician_type,
+    on_duty = EXCLUDED.on_duty,
+    latitude = EXCLUDED.latitude,
+    longitude = EXCLUDED.longitude,
+    device_info = EXCLUDED.device_info,
+    shift_started_at = EXCLUDED.shift_started_at,
+    last_located_at = EXCLUDED.last_located_at,
+    updated_at = NOW();
+
 
 -- =====================================================================
 -- 5) order_db — đơn hàng, lịch sử, đánh giá, khiếu nại, khuyến mãi, drone mission
@@ -513,6 +530,19 @@ VALUES
 (4, 21, 5,    2, 2, 'LAUNCHING',      3,    'acc-idem-0021',    'lch-idem-0021',    NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '30 minutes');
 
 SELECT setval('order_schema.drone_missions_id_seq', 4, true);
+
+-- KTV drone đang trong ca và vị trí gần nhất app gửi lên quanh ĐH FPT
+INSERT INTO order_schema.drone_technician_presence
+(user_id, on_duty, latitude, longitude, location_at, duty_changed_at, updated_at)
+VALUES
+(3, TRUE, 10.841122, 106.809783, NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '3 hours', NOW())
+ON CONFLICT (user_id) DO UPDATE SET
+    on_duty = EXCLUDED.on_duty,
+    latitude = EXCLUDED.latitude,
+    longitude = EXCLUDED.longitude,
+    location_at = EXCLUDED.location_at,
+    duty_changed_at = EXCLUDED.duty_changed_at,
+    updated_at = NOW();
 
 
 -- =====================================================================

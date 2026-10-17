@@ -28,6 +28,10 @@ public final class DomainEventNames {
      * Trạng thái chuyến giao hàng (drone) thay đổi: dispatched/approaching/arrived/delivered/delayed/failed.
      */
     public static final String DELIVERY_STATUS_CHANGED = "delivery.status.changed";
+    /**
+     * Trạng thái ca trực (vào ca/hết ca) hoặc toạ độ GPS của KTV (kiosk/drone) thay đổi realtime.
+     */
+    public static final String TECHNICIAN_PRESENCE_UPDATED = "technician.presence.updated";
 
     private DomainEventNames() {
     }

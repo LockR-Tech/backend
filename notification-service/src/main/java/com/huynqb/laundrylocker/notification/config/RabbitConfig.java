@@ -93,6 +93,11 @@ public class RabbitConfig {
     }
 
     @Bean
+    Binding technicianPresenceUpdatedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.TECHNICIAN_PRESENCE_UPDATED);
+    }
+
+    @Bean
     MessageConverter domainEventMessageConverter() {
         SimpleMessageConverter converter = new SimpleMessageConverter();
         converter.setAllowedListPatterns(

@@ -1,5 +1,7 @@
 package com.huynqb.laundrylocker.locker.service;
 
+import com.huynqb.laundrylocker.common.event.DomainEvent;
+import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.locker.client.UserClient;
@@ -9,13 +11,16 @@ import com.huynqb.laundrylocker.locker.model.TechnicianPresence;
 import com.huynqb.laundrylocker.locker.repository.TechnicianPresenceRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -25,6 +30,7 @@ public class TechnicianPresenceService {
 
     private final TechnicianPresenceRepository presenceRepository;
     private final UserClient userClient;
+    private final RabbitTemplate rabbitTemplate;
 
     @Transactional
     public TechnicianPresenceResponse updatePresence(Long userId, String roles, TechnicianPresenceRequest request) {
@@ -74,7 +80,45 @@ public class TechnicianPresenceService {
         }
 
         TechnicianPresence saved = presenceRepository.save(presence);
-        return toResponse(saved);
+        TechnicianPresenceResponse resp = toResponse(saved);
+        publishPresenceUpdated(resp);
+        return resp;
+    }
+
+    private void publishPresenceUpdated(TechnicianPresenceResponse resp) {
+        if (rabbitTemplate == null || resp == null) return;
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("userId", resp.userId());
+            if (resp.userName() != null) payload.put("userName", resp.userName());
+            if (resp.technicianType() != null) payload.put("technicianType", resp.technicianType());
+            payload.put("onDuty", Boolean.TRUE.equals(resp.onDuty()));
+            if (resp.latitude() != null) payload.put("latitude", resp.latitude());
+            if (resp.longitude() != null) payload.put("longitude", resp.longitude());
+            if (resp.accuracyM() != null) payload.put("accuracyM", resp.accuracyM());
+            if (resp.headingDeg() != null) payload.put("headingDeg", resp.headingDeg());
+            if (resp.speedMs() != null) payload.put("speedMs", resp.speedMs());
+            if (resp.altitudeM() != null) payload.put("altitudeM", resp.altitudeM());
+            if (resp.batteryLevel() != null) payload.put("batteryLevel", resp.batteryLevel());
+            if (resp.deviceInfo() != null) payload.put("deviceInfo", resp.deviceInfo());
+            if (resp.shiftStartedAt() != null) payload.put("shiftStartedAt", resp.shiftStartedAt().toString());
+            if (resp.shiftEndedAt() != null) payload.put("shiftEndedAt", resp.shiftEndedAt().toString());
+            if (resp.lastLocatedAt() != null) payload.put("lastLocatedAt", resp.lastLocatedAt().toString());
+            if (resp.updatedAt() != null) payload.put("updatedAt", resp.updatedAt().toString());
+
+            rabbitTemplate.convertAndSend(
+                    DomainEventNames.EXCHANGE,
+                    DomainEventNames.TECHNICIAN_PRESENCE_UPDATED,
+                    DomainEvent.of(
+                            DomainEventNames.TECHNICIAN_PRESENCE_UPDATED,
+                            "locker-service",
+                            payload
+                    )
+            );
+            log.info("Published TECHNICIAN_PRESENCE_UPDATED event for KTV #{} (onDuty={})", resp.userId(), resp.onDuty());
+        } catch (Exception ex) {
+            log.warn("Failed to publish TECHNICIAN_PRESENCE_UPDATED for user {}: {}", resp.userId(), ex.getMessage());
+        }
     }
 
     @Transactional(readOnly = true)
@@ -103,10 +147,19 @@ public class TechnicianPresenceService {
     }
 
     @Transactional(readOnly = true)
+    public List<TechnicianPresenceResponse> getAllPresences(String filterType) {
+        List<TechnicianPresence> list;
+        if (StringUtils.hasText(filterType)) {
+            list = presenceRepository.findByTechnicianType(filterType.trim().toUpperCase());
+        } else {
+            list = presenceRepository.findAllByOrderByLastLocatedAtDesc();
+        }
+        return list.stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
     public List<TechnicianPresenceResponse> getAllPresences() {
-        return presenceRepository.findAllByOrderByLastLocatedAtDesc().stream()
-                .map(this::toResponse)
-                .toList();
+        return getAllPresences(null);
     }
 
     @Transactional(readOnly = true)
