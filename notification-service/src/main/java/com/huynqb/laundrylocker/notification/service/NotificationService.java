@@ -212,6 +212,19 @@ public class NotificationService {
         notificationRepository.delete(findOwned(id, userId));
     }
 
+    public Map<String, Object> broadcastTechnicianPresence(Map<String, Object> payload) {
+        Map<String, Object> wsMsg = new HashMap<>(payload);
+        wsMsg.putIfAbsent("type", DomainEventNames.TECHNICIAN_PRESENCE_UPDATED);
+        wsMsg.putIfAbsent("timestamp", java.time.LocalDateTime.now().toString());
+        webSocketNotificationService.sendToDestination("/topic/technicians/presence", wsMsg);
+        webSocketNotificationService.sendToDestination("/topic/notifications", wsMsg);
+        Long techId = asLong(payload.get("userId"));
+        if (techId != null) {
+            webSocketNotificationService.sendToDestination("/topic/technicians/" + techId + "/presence", wsMsg);
+        }
+        return wsMsg;
+    }
+
     @Transactional
     public void consumeDomainEvent(DomainEvent event) {
         Map<String, Object> payload = event.payload();
@@ -223,6 +236,10 @@ public class NotificationService {
             wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
             webSocketNotificationService.sendToDestination("/topic/notifications", wsMsg);
             webSocketNotificationService.sendToDestination("/topic/lockers", wsMsg);
+        }
+
+        if (DomainEventNames.TECHNICIAN_PRESENCE_UPDATED.equals(event.type())) {
+            broadcastTechnicianPresence(payload);
         }
 
         Long userId = asLong(payload.get("userId"));

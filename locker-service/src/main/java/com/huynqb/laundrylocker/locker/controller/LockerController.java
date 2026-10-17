@@ -487,7 +487,7 @@ public class LockerController {
             @RequestParam(required = false) String type,
             @RequestParam(required = false, defaultValue = "false") boolean all) {
         if (all) {
-            return ApiResponse.ok(presenceService.getAllPresences());
+            return ApiResponse.ok(presenceService.getAllPresences(type));
         }
         return ApiResponse.ok(presenceService.getActivePresences(type));
     }

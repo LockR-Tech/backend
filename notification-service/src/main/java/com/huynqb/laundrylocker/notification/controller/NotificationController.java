@@ -58,6 +58,19 @@ public class NotificationController {
     }
 
     /**
+     * Đẩy trạng thái ca trực/vị trí KTV realtime cho admin console qua STOMP /topic/technicians/presence.
+     * Internal only — gateway chặn /internal/** ra ngoài.
+     */
+    @PostMapping("/internal/technicians/presence")
+    public ApiResponse<Map<String, Object>> technicianPresence(
+            @RequestBody Map<String, Object> payload) {
+        return ApiResponse.ok(
+                "TECHNICIAN_PRESENCE_BROADCAST",
+                "Technician presence broadcast",
+                notificationService.broadcastTechnicianPresence(payload));
+    }
+
+    /**
      * Gửi tin cho người KHÔNG có tài khoản Lock.R (người nhận hàng, người được uỷ
      * quyền lấy hộ) qua SMS và/hoặc email. Internal only — gateway chặn /internal/**
      * ra ngoài, nếu không ai cũng gửi được tin nhắn dưới tên Lock.R.

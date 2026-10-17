@@ -16,6 +16,8 @@ public interface TechnicianPresenceRepository extends JpaRepository<TechnicianPr
 
     List<TechnicianPresence> findByOnDutyTrueAndTechnicianType(String technicianType);
 
+    List<TechnicianPresence> findByTechnicianType(String technicianType);
+
     List<TechnicianPresence> findAllByOrderByLastLocatedAtDesc();
 }
 
