@@ -5,7 +5,6 @@ import com.huynqb.laundrylocker.common.dto.OrderSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.order.dto.*;
-import com.huynqb.laundrylocker.order.model.Promotion;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
 import com.huynqb.laundrylocker.order.service.DroneDeliveryQueryService;
 import com.huynqb.laundrylocker.order.service.DroneMissionProgressService;
@@ -677,26 +676,30 @@ public class OrderController {
     }
 
     @PostMapping("/api/admin/promotions")
-    public ApiResponse<Promotion> createPromotion(
+    public ApiResponse<PromotionView> createPromotion(
             @Valid @RequestBody PromotionRequest request,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         return ApiResponse.ok("PROMOTION_CREATED", "Promotion created", orderService.createPromotion(request, userId));
     }
 
+    /// lockerId > 0: mã của tủ đó; lockerId=0 hoặc scope=GLOBAL: chỉ mã toàn hệ thống;
+    /// scope=LOCKER: mọi mã theo tủ. Mỗi mã kèm lockerCode/lockerName (null = toàn hệ thống).
     @GetMapping("/api/admin/promotions")
-    public ApiResponse<List<Promotion>> promotions(
+    public ApiResponse<List<PromotionView>> promotions(
             @RequestParam(required = false) String code,
-            @RequestParam(required = false) String status) {
-        return ApiResponse.ok(orderService.promotions(code, status));
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Long lockerId,
+            @RequestParam(required = false) String scope) {
+        return ApiResponse.ok(orderService.promotions(code, status, lockerId, scope));
     }
 
     @GetMapping("/api/admin/promotions/{promotionId}")
-    public ApiResponse<Promotion> promotion(@PathVariable Long promotionId) {
-        return ApiResponse.ok(orderService.promotion(promotionId));
+    public ApiResponse<PromotionView> promotion(@PathVariable Long promotionId) {
+        return ApiResponse.ok(orderService.promotionView(promotionId));
     }
 
     @PutMapping("/api/admin/promotions/{promotionId}")
-    public ApiResponse<Promotion> updatePromotion(
+    public ApiResponse<PromotionView> updatePromotion(
             @PathVariable Long promotionId, @Valid @RequestBody PromotionRequest request) {
         return ApiResponse.ok("PROMOTION_UPDATED", "Promotion updated", orderService.updatePromotion(promotionId, request));
     }
@@ -709,28 +712,29 @@ public class OrderController {
 
     // Ảnh khuyến mãi: client upload thẳng lên Cloudinary rồi gửi MediaUpload (ADR-0004).
     @PutMapping("/api/admin/promotions/{promotionId}/image")
-    public ApiResponse<Promotion> updatePromotionImage(
+    public ApiResponse<PromotionView> updatePromotionImage(
             @PathVariable Long promotionId,
             @RequestBody MediaUpload request,
             @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(
                 "PROMOTION_IMAGE_UPDATED", "Promotion image updated",
-                promotionImageService.updateImage(promotionId, request, userId));
+                orderService.adminView(promotionImageService.updateImage(promotionId, request, userId)));
     }
 
     @DeleteMapping("/api/admin/promotions/{promotionId}/image")
-    public ApiResponse<Promotion> removePromotionImage(@PathVariable Long promotionId) {
+    public ApiResponse<PromotionView> removePromotionImage(@PathVariable Long promotionId) {
         return ApiResponse.ok(
-                "PROMOTION_IMAGE_REMOVED", "Promotion image removed", promotionImageService.removeImage(promotionId));
+                "PROMOTION_IMAGE_REMOVED", "Promotion image removed",
+                orderService.adminView(promotionImageService.removeImage(promotionId)));
     }
 
     @GetMapping("/api/admin/promotions/status/{status}")
-    public ApiResponse<List<Promotion>> promotionsByStatus(@PathVariable String status) {
+    public ApiResponse<List<PromotionView>> promotionsByStatus(@PathVariable String status) {
         return ApiResponse.ok(orderService.promotionsByStatus(status));
     }
 
     @GetMapping("/api/admin/promotions/search")
-    public ApiResponse<List<Promotion>> searchPromotions(@RequestParam(required = false) String keyword) {
+    public ApiResponse<List<PromotionView>> searchPromotions(@RequestParam(required = false) String keyword) {
         return ApiResponse.ok(orderService.searchPromotions(keyword));
     }
 
@@ -739,24 +743,28 @@ public class OrderController {
         return ApiResponse.ok(orderService.validatePromotion(code));
     }
 
+    /// Có lockerId: mã toàn hệ thống + mã của đúng tủ đó; không có: tất cả. Mỗi mã kèm
+    /// lockerId/lockerCode/lockerName (null = toàn hệ thống).
     @GetMapping("/api/promotions/active")
-    public ApiResponse<List<Promotion>> activePromotions() {
-        return ApiResponse.ok(orderService.activePromotions());
+    public ApiResponse<List<PromotionView>> activePromotions(@RequestParam(required = false) Long lockerId) {
+        return ApiResponse.ok(orderService.activePromotions(lockerId));
     }
 
     @GetMapping("/api/admin/promotions/active")
-    public ApiResponse<List<Promotion>> adminActivePromotions() {
-        return activePromotions();
+    public ApiResponse<List<PromotionView>> adminActivePromotions(@RequestParam(required = false) Long lockerId) {
+        return activePromotions(lockerId);
     }
 
-    // Validate mã cho client: lockerId để check scope theo tủ; X-User-Id (gateway
-    // gắn khi có JWT) để check lượt dùng còn lại của chính user đó.
+    // Validate mã cho client: lockerId để check scope theo tủ (mã theo tủ mà thiếu/khác tủ ⇒ valid:false);
+    // orderTotal để check đơn tối thiểu; X-User-Id (gateway gắn khi có JWT) để check lượt dùng còn lại
+    // của chính user đó. Trả {code, valid, reason?, promotion}.
     @GetMapping("/api/promotions/validate/{code}")
     public ApiResponse<Map<String, Object>> validatePromotion(
             @PathVariable String code,
             @RequestParam(required = false) Long lockerId,
+            @RequestParam(required = false) java.math.BigDecimal orderTotal,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return ApiResponse.ok(orderService.validatePromotion(code, lockerId, userId));
+        return ApiResponse.ok(orderService.validatePromotion(code, lockerId, userId, orderTotal, true));
     }
 
     // ---- Ví voucher của user (lưu mã -> dùng khi đặt đơn) ----
@@ -769,11 +777,13 @@ public class OrderController {
                 orderService.claimPromotion(promotionId, userId));
     }
 
+    /// Có lockerId: chỉ mã toàn hệ thống + mã của đúng tủ đó. Mỗi mã kèm lockerCode/lockerName.
     @GetMapping("/api/promotions/vouchers/my")
     public ApiResponse<List<Map<String, Object>>> myVouchers(
             @RequestHeader("X-User-Id") Long userId,
-            @RequestParam(required = false) String status) {
-        return ApiResponse.ok(orderService.myVouchers(userId, status));
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Long lockerId) {
+        return ApiResponse.ok(orderService.myVouchers(userId, status, lockerId));
     }
 
     @GetMapping("/internal/orders/stores/{storeId}/ratings")

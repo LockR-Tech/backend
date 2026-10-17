@@ -10,5 +10,7 @@ public record RentalOrderRequest(
         String cellType,
         @NotNull @Min(1) Integer hours,
         String note,
-        String promotionCode) {
+        String promotionCode,
+        /// Số điểm thưởng muốn dùng (tuỳ chọn); loyalty-service kẹp theo quy tắc admin.
+        Integer pointsToUse) {
 }

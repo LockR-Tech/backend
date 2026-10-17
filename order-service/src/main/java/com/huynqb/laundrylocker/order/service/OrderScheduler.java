@@ -11,6 +11,20 @@ import org.springframework.stereotype.Component;
 public class OrderScheduler {
 
     private final OrderService orderService;
+    private final OrderBenefitService benefits;
+
+    // Đơn huỷ/hoàn tiền có dùng điểm mà lúc huỷ loyalty-service lỗi: thử hoàn điểm lại (idempotent).
+    @Scheduled(cron = "${app.order.points-refund-sweep-cron:0 */10 * * * *}")
+    public void retryPointRefunds() {
+        try {
+            int refunded = benefits.retryPendingPointRefunds(50);
+            if (refunded > 0) {
+                log.info("Refunded loyalty points of {} canceled/refunded orders on retry", refunded);
+            }
+        } catch (Exception ex) {
+            log.warn("Loyalty point refund retry job failed: {}", ex.getMessage());
+        }
+    }
 
     @Scheduled(fixedDelayString = "${app.order.reminder-interval-ms:600000}", initialDelay = 60000)
     public void remindOverduePickups() {

@@ -43,6 +43,7 @@ class DroneOrderMaintenanceServiceTest {
     private com.huynqb.laundrylocker.order.repository.DronePickupRepository pickupRepository;
     @Mock
     private DroneDeliveryMailer mailer;
+    @Mock private OrderBenefitService benefits;
 
     @org.junit.jupiter.api.BeforeEach
     void mailerReportsNothingSent() {
@@ -60,7 +61,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
@@ -107,7 +108,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -141,7 +142,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setSourceBoxId(8001L);
         DroneMission mission = new DroneMission();
@@ -191,7 +192,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -224,7 +225,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -257,7 +258,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -300,7 +301,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -328,7 +329,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setStatus("AWAITING_DISPATCH");
         order.setSourceBoxId(8001L);
@@ -376,6 +377,8 @@ class DroneOrderMaintenanceServiceTest {
         assertNull(mission.getFailedStage());
         verify(historyRepository).save(any());
         verify(notificationClient).requestNotification(any());
+        // Đơn huỷ ⇒ trả lượt mã giảm giá + hoàn điểm thưởng.
+        verify(benefits).releaseBenefits(order);
     }
 
     @Test
@@ -419,7 +422,7 @@ class DroneOrderMaintenanceServiceTest {
                 lockerClient,
                 historyRepository,
                 notificationClient,
-                TestOrderRules.of(java.util.Map.of("app.order.drone-flights-suspended", true)), pickupRepository, mailer);
+                TestOrderRules.of(java.util.Map.of("app.order.drone-flights-suspended", true)), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
 
@@ -475,6 +478,7 @@ class DroneOrderMaintenanceServiceTest {
                 .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IDLE", 87, true)));
 
         assertTrue(service.cancelUnpaidSurcharge(21L, 44L, null));
+        verify(benefits).releaseBenefits(order);
 
         assertEquals("CANCELED", order.getStatus());
         assertEquals("CANCELED", order.getDeliveryStage());
@@ -551,7 +555,7 @@ class DroneOrderMaintenanceServiceTest {
                 lockerClient,
                 historyRepository,
                 notificationClient,
-                TestOrderRules.defaults(), pickupRepository, mailer);
+                TestOrderRules.defaults(), pickupRepository, mailer, benefits);
     }
 
     private DroneMission inFlightMission(String status) {
@@ -576,7 +580,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -605,7 +609,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -657,7 +661,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         awaitingLoading(order);
 
@@ -679,7 +683,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = awaitingLoading(order);
 
@@ -698,6 +702,48 @@ class DroneOrderMaintenanceServiceTest {
     }
 
     @Test
+    void weightSurchargeIsTheBaseFeeDifferenceNotReducedByVoucherOrPoints() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = awaitingLoading(order);
+        // Phí 15.000 đ, mã giảm 3.000 đ, điểm giảm 2.000 đ ⇒ khách đã trả 10.000 đ.
+        order.setDiscount(java.math.BigDecimal.valueOf(3000));
+        order.setPointsUsed(20);
+        order.setPointsDiscount(java.math.BigDecimal.valueOf(2000));
+        order.setTotalPrice(java.math.BigDecimal.valueOf(10000));
+        order.setPaidAmount(java.math.BigDecimal.valueOf(10000));
+
+        DroneMissionResponse response = service.confirmLoading(
+                21L, 99L, "load-1", new ConfirmDroneLoadingRequest(1200, null, true, true, true, null));
+
+        // fee(1200 g) − fee(500 g) = 24.000 − 15.000; không phải 24.000 − 10.000.
+        assertEquals(0, java.math.BigDecimal.valueOf(9000).compareTo(response.weightSurcharge()));
+        assertEquals(0, java.math.BigDecimal.valueOf(19000).compareTo(order.getTotalPrice()));
+        assertEquals(0, java.math.BigDecimal.valueOf(24000).compareTo(order.getOriginalPrice()));
+        assertEquals("UNPAID", order.getPaymentStatus());
+        assertEquals(0, java.math.BigDecimal.valueOf(9000).compareTo(mission.getWeightSurcharge()));
+    }
+
+    @Test
+    void reloadingAfterADroneSwapDoesNotChargeTheSurchargeTwice() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = awaitingLoading(order);
+        // Lần nạp trước đã thu 9.000 đ phụ thu cho 1.200 g.
+        mission.setWeightSurcharge(java.math.BigDecimal.valueOf(9000));
+        order.setTotalPrice(java.math.BigDecimal.valueOf(24000));
+        order.setOriginalPrice(java.math.BigDecimal.valueOf(24000));
+        order.setPaidAmount(java.math.BigDecimal.valueOf(24000));
+
+        DroneMissionResponse response = service.confirmLoading(
+                21L, 99L, "load-2", new ConfirmDroneLoadingRequest(1200, null, true, true, true, null));
+
+        assertEquals(0, java.math.BigDecimal.valueOf(9000).compareTo(response.weightSurcharge()));
+        assertEquals(0, java.math.BigDecimal.valueOf(24000).compareTo(order.getTotalPrice()));
+        assertEquals("PAID", order.getPaymentStatus());
+    }
+
+    @Test
     void confirmLoadingDoesNotChargeWithinScaleToleranceOrWhenLighter() {
         DroneOrderMaintenanceService service =
                 new DroneOrderMaintenanceService(
@@ -707,7 +753,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         awaitingLoading(order);
 
@@ -730,7 +776,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setPaymentStatus("UNPAID");
         DroneMission mission = new DroneMission();

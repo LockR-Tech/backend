@@ -40,6 +40,8 @@ public class DroneOrderMaintenanceService {
     private final OrderRules rules;
     private final DronePickupRepository pickupRepository;
     private final DroneDeliveryMailer mailer;
+    /// Trả lượt mã giảm giá + hoàn điểm thưởng khi đơn bị huỷ.
+    private final OrderBenefitService benefits;
 
     private static final java.security.SecureRandom SEAL_RANDOM = new java.security.SecureRandom();
     private static final java.time.ZoneId FLIGHT_ZONE = java.time.ZoneId.of("Asia/Ho_Chi_Minh");
@@ -147,7 +149,7 @@ public class DroneOrderMaintenanceService {
         String sealCode = StringUtils.hasText(request.sealCode())
                 ? request.sealCode().trim()
                 : generateSealCode();
-        BigDecimal surcharge = applyWeightSurcharge(order, request.payloadWeightGrams());
+        BigDecimal surcharge = applyWeightSurcharge(order, request.payloadWeightGrams(), mission.getWeightSurcharge());
         mission.setPayloadWeightGrams(request.payloadWeightGrams());
         mission.setSealCode(sealCode);
         BigDecimal earlier = mission.getWeightSurcharge();
@@ -277,6 +279,7 @@ public class DroneOrderMaintenanceService {
         order.setStaffId(userId);
         order.setStatus("CANCELED");
         order.setDeliveryStage("CANCELED");
+        benefits.releaseBenefits(order);
         orderRepository.save(order);
 
         OrderStatusHistory history = new OrderStatusHistory();
@@ -369,6 +372,7 @@ public class DroneOrderMaintenanceService {
         order.setPinCode(null);
         order.setStatus("CANCELED");
         order.setDeliveryStage("CANCELED");
+        benefits.releaseBenefits(order);
         orderRepository.save(order);
         addJourneyEvent(order.getId(), "ACCEPTED", "CANCELED", customerUserId,
                 note + " — đội bay dỡ kiện khỏi drone và trả lại người gửi");
@@ -509,17 +513,21 @@ public class DroneOrderMaintenanceService {
         }
     }
 
-    /// Cân thực tế vượt khối lượng khai báo quá sai số cho phép thì tính lại phí theo cân
-    /// thực tế; phần chênh cộng vào tổng đơn và đơn về UNPAID để khách trả thêm (cùng cơ
-    /// chế gia hạn thuê: `paidAmount` giữ nguyên, checkout chỉ thu phần còn thiếu). Kiện
-    /// nhẹ hơn khai báo không hoàn lại. Trả về phần thu thêm, null khi không thu.
-    private BigDecimal applyWeightSurcharge(LockerOrder order, int actualWeightGrams) {
+    /// Cân thực tế vượt khối lượng khai báo quá sai số cho phép thì thu thêm phần chênh PHÍ GỐC
+    /// fee(thực tế) − fee(khai báo), trừ phần phụ thu đã tính ở lần nạp trước (`alreadyCharged`, khi đổi
+    /// drone phải nạp lại). Mã giảm giá/điểm thưởng chỉ giảm phí ban đầu, không giảm phụ thu — nên không
+    /// so với `totalPrice` đã giảm. Phần chênh cộng vào tổng đơn và đơn về UNPAID để khách trả thêm (cùng
+    /// cơ chế gia hạn thuê: `paidAmount` giữ nguyên, checkout chỉ thu phần còn thiếu). Kiện nhẹ hơn khai
+    /// báo không hoàn lại. Trả về phần thu thêm, null khi không thu.
+    private BigDecimal applyWeightSurcharge(LockerOrder order, int actualWeightGrams, BigDecimal alreadyCharged) {
         int declared = order.getParcelWeightGrams() == null ? 0 : order.getParcelWeightGrams();
         if (actualWeightGrams <= declared + rules.droneWeightToleranceGrams()) {
             return null;
         }
         BigDecimal current = order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice();
-        BigDecimal surcharge = rules.droneDeliveryFee(actualWeightGrams).subtract(current);
+        BigDecimal surcharge = rules.droneDeliveryFee(actualWeightGrams)
+                .subtract(rules.droneDeliveryFee(declared))
+                .subtract(alreadyCharged == null ? BigDecimal.ZERO : alreadyCharged);
         if (surcharge.signum() <= 0) {
             return null;
         }

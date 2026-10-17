@@ -86,5 +86,8 @@ public record OrderResponse(
         LocalDateTime deliveryBlockedAt,
         String failureReason,
         String failureReasonLabel,
-        LocalDateTime failedAt) {
+        LocalDateTime failedAt,
+        /// Điểm thưởng đã dùng cho đơn và số tiền được giảm nhờ điểm (sau mã giảm giá).
+        Integer pointsUsed,
+        BigDecimal pointsDiscount) {
 }

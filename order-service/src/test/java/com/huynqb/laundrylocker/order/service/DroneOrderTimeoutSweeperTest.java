@@ -41,6 +41,7 @@ class DroneOrderTimeoutSweeperTest {
     private LockerClient lockerClient;
     @Mock
     private NotificationClient notificationClient;
+    @Mock private OrderBenefitService benefits;
     @Mock
     private DroneOrderMaintenanceService maintenanceService;
     @Mock
@@ -63,6 +64,8 @@ class DroneOrderTimeoutSweeperTest {
         verify(historyRepository).save(any());
         verify(notificationClient).requestNotification(any());
         verify(refundService, never()).refundCanceledOrder(anyLong(), any());
+        // Đơn tự huỷ ⇒ trả lượt mã giảm giá + hoàn điểm thưởng.
+        verify(benefits).releaseBenefits(order);
     }
 
     @Test
@@ -195,7 +198,7 @@ class DroneOrderTimeoutSweeperTest {
     private DroneOrderTimeoutSweeper sweeper(Map<String, ?> overrides) {
         return new DroneOrderTimeoutSweeper(
                 orderRepository,
-                new DroneOrderExpiryService(orderRepository, historyRepository, lockerClient, notificationClient),
+                new DroneOrderExpiryService(orderRepository, historyRepository, lockerClient, notificationClient, benefits),
                 maintenanceService,
                 failureService,
                 refundService,

@@ -107,7 +107,14 @@ public record DroneDeliveryOrderResponse(
         /// Đơn đang gặp sự cố nhưng chưa kết thúc; null khi không bị chặn.
         DroneIncidentLinkView block,
         /// Đơn đã kết thúc "giao không hoàn tất"; null với đơn khác.
-        DroneIncidentLinkView failure) {
+        DroneIncidentLinkView failure,
+        /// Giá gốc, mã giảm giá và điểm thưởng: totalPrice = max(originalPrice − discount − pointsDiscount, 0)
+        /// (phụ thu cân lệch cộng thêm vào cả originalPrice lẫn totalPrice).
+        BigDecimal originalPrice,
+        BigDecimal discount,
+        String promotionCode,
+        Integer pointsUsed,
+        BigDecimal pointsDiscount) {
 
     /** Constructor tương thích cho response ngay sau khi tạo đơn/chưa có mission. */
     public DroneDeliveryOrderResponse(
@@ -128,6 +135,7 @@ public record DroneDeliveryOrderResponse(
                 null, null, null, null, null, false, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null,
+                null, null, null, null, null,
                 null, null, null, null, null);
     }
 }

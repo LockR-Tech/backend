@@ -51,7 +51,12 @@ public record CreateDroneDeliveryOrderRequest(
         Boolean prohibitedItemsDeclared,
 
         /// DEMO | STANDARD; bỏ trống thì theo cấu hình.
-        String fulfillmentMode) {
+        String fulfillmentMode,
+
+        /// Mã giảm giá (tuỳ chọn); mã theo tủ được kiểm theo TỦ GỬI hệ thống chọn.
+        @Size(max = 100) String promotionCode,
+        /// Số điểm thưởng muốn dùng (tuỳ chọn); loyalty-service kẹp theo quy tắc admin.
+        Integer pointsToUse) {
 
     /// Số điện thoại 9–15 chữ số, cho phép dấu `+` đầu.
     public static final String PHONE = "^[+]?[0-9]{9,15}$";

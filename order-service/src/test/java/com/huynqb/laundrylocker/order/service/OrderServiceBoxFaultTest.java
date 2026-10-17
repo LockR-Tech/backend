@@ -58,6 +58,9 @@ class OrderServiceBoxFaultTest {
     @Mock private LockerLookupClient lockerLookupClient;
     @Mock private NotificationClient notificationClient;
     @Mock private QrTokenService qrTokenService;
+    @Mock private OrderBenefitService benefits;
+    @Mock private PromotionViews promotionViews;
+    @Mock private PaidOrderEffects paidEffects;
 
     private OrderService orderService;
 
@@ -79,7 +82,7 @@ class OrderServiceBoxFaultTest {
                 lockerLookupClient,
                 notificationClient,
                 qrTokenService,
-                TestOrderRules.defaults());
+                TestOrderRules.defaults(), benefits, promotionViews, paidEffects);
     }
 
     @Test

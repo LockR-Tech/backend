@@ -402,7 +402,7 @@ class DroneHomePickupFlowPostgresTest extends DroneFlowPostgresTestBase {
                 r.description(), r.parcelLengthCm(), r.parcelWidthCm(), r.parcelHeightCm(), r.declaredValue(),
                 r.fragile(),
                 "prohibitedItemsDeclared".equals(field) ? (Boolean) value : r.prohibitedItemsDeclared(),
-                r.fulfillmentMode());
+                r.fulfillmentMode(), null, null);
     }
 
     static String code(Runnable call) {

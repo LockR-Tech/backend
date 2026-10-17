@@ -105,9 +105,10 @@ public class DroneRefundService {
     }
 
     /// Đơn đã PAID, hoặc đang nợ phụ thu cân lệch (UNPAID) nhưng đã trả phần phí ban đầu.
+    /// Đơn 0đ nhờ mã giảm giá/điểm thưởng (PAID, chưa thu đồng nào) không có gì để hoàn.
     private static boolean hasCollectedMoney(LockerOrder order) {
         if ("PAID".equalsIgnoreCase(order.getPaymentStatus())) {
-            return true;
+            return OrderBenefitService.collectedMoney(order);
         }
         return "UNPAID".equalsIgnoreCase(order.getPaymentStatus())
                 && order.getPaidAmount() != null
