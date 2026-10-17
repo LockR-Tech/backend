@@ -139,7 +139,8 @@ class OrderPaymentEventListenerTest {
 
     private OrderPaymentEventListener listener() {
         return new OrderPaymentEventListener(
-                orderRepository, droneLateRefunds, rabbitTemplate, notificationClient, dronePickupService);
+                orderRepository, droneLateRefunds,
+                new PaidOrderEffects(rabbitTemplate, notificationClient, dronePickupService, orderRepository));
     }
 
     private static LockerOrder droneOrder(String status, String paymentStatus) {
