@@ -1,0 +1,125 @@
+package com.huynqb.laundrylocker.order.service;
+
+import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.order.client.LockerCellClient;
+import com.huynqb.laundrylocker.order.client.LockerClient;
+import com.huynqb.laundrylocker.order.client.NotificationClient;
+import com.huynqb.laundrylocker.order.client.UserClient;
+import com.huynqb.laundrylocker.order.dto.CellDto;
+import com.huynqb.laundrylocker.order.dto.CreateDroneDeliveryOrderRequest;
+import com.huynqb.laundrylocker.order.model.LockerOrder;
+import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
+import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
+import com.huynqb.laundrylocker.order.settings.TestOrderRules;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/// Đặt đơn drone với mã giảm giá + điểm: mã theo tủ kiểm theo TỦ GỬI, phí gốc rồi mã rồi điểm, đơn 0đ
+/// được ghi đã thanh toán (mở lượt tìm KTV sau commit).
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class DroneOrderBookingBenefitsTest {
+
+    @Mock private LockerOrderRepository orderRepository;
+    @Mock private OrderStatusHistoryRepository historyRepository;
+    @Mock private UserClient userClient;
+    @Mock private LockerClient lockerClient;
+    @Mock private LockerCellClient lockerCellClient;
+    @Mock private NotificationClient notificationClient;
+    @Mock private RabbitTemplate rabbitTemplate;
+    @Mock private DroneSourceLockerSelector sourceLockerSelector;
+    @Mock private DroneDeliveryQueryService queryService;
+    @Mock private OrderBenefitService benefits;
+    @Mock private PaidOrderEffects paidEffects;
+
+    private DroneOrderBookingService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new DroneOrderBookingService(
+                orderRepository, historyRepository, userClient, lockerClient, lockerCellClient, notificationClient,
+                rabbitTemplate, TestOrderRules.of(Map.of()), sourceLockerSelector, queryService, benefits, paidEffects);
+        when(sourceLockerSelector.select(10.77, 106.70, 5L, null)).thenReturn(new DroneSourceLockerSelector.Selection(
+                OrderBenefitServiceTest.locker(7L, "TU07", "Tủ Thư viện"),
+                OrderBenefitServiceTest.locker(5L, "TU05", "Tủ Ký túc xá"), 300, 2000));
+        when(lockerCellClient.findAvailable(5L, null, "DRONE"))
+                .thenReturn(ApiResponse.ok(new CellDto(9001L, 1, "M", "DRONE", 0, 0, "AVAILABLE", null)));
+        when(orderRepository.saveAndFlush(any(LockerOrder.class))).thenAnswer(inv -> {
+            LockerOrder order = inv.getArgument(0);
+            if (order.getId() == null) {
+                order.setId(21L);
+            }
+            return order;
+        });
+    }
+
+    @Test
+    void voucherIsCheckedAtTheSourceLockerThenPointsThenFreeCheck() {
+        service.create(request(" tutv ", 40), 44L, "idem-1");
+
+        ArgumentCaptor<LockerOrder> order = ArgumentCaptor.forClass(LockerOrder.class);
+        InOrder steps = inOrder(benefits, paidEffects);
+        // Tủ gửi (7) — không phải tủ nhận (5, lockerId của đơn drone).
+        steps.verify(benefits).applyVouchers(order.capture(), eq(List.of("TUTV")), eq(7L));
+        steps.verify(benefits).redeemPoints(any(LockerOrder.class), eq(40));
+        steps.verify(paidEffects).settleIfFree(any(LockerOrder.class));
+        assertEquals(5L, order.getValue().getLockerId());
+        assertEquals(7L, order.getValue().getSourceLockerId());
+        assertEquals(0, new BigDecimal("15000").compareTo(order.getValue().getOriginalPrice()));
+    }
+
+    @Test
+    void fullyDiscountedDroneOrderTellsTheSenderNoPaymentIsNeeded() {
+        when(paidEffects.settleIfFree(any(LockerOrder.class))).thenReturn(true);
+
+        service.create(request("FREE", null), 44L, "idem-2");
+
+        verify(notificationClient).requestNotification(org.mockito.ArgumentMatchers.argThat(
+                n -> n.message().contains("giảm giá toàn bộ")));
+    }
+
+    @Test
+    void invalidVoucherReleasesTheReservedCell() {
+        doThrow(new BusinessException("PROMOTION_INVALID", "Mã TUTV: chỉ áp dụng tại Tủ Thư viện"))
+                .when(benefits).applyVouchers(any(), any(), any());
+
+        assertThrows(BusinessException.class, () -> service.create(request("TUTV", null), 44L, "idem-3"));
+
+        verify(lockerClient).releaseBox(9001L);
+        verify(paidEffects, never()).settleIfFree(any());
+    }
+
+    private static CreateDroneDeliveryOrderRequest request(String promotionCode, Integer pointsToUse) {
+        return new CreateDroneDeliveryOrderRequest(
+                5L, null,
+                "12 Nguyễn Huệ, Quận 1", 10.77, 106.70, null,
+                "Nguyễn Văn Gửi", "0901000111", "gui@gmail.com",
+                "Trần Thị Nhận", "0902000222", "nhan@gmail.com",
+                500, "DOCUMENT", null, null, null, null, null, null, true,
+                "STANDARD", promotionCode, pointsToUse);
+    }
+}

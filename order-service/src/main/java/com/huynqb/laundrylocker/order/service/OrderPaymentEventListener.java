@@ -13,10 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 
 import com.huynqb.laundrylocker.order.model.LockerOrder;
-import com.huynqb.laundrylocker.order.client.NotificationClient;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -29,9 +26,8 @@ public class OrderPaymentEventListener {
 
     private final LockerOrderRepository orderRepository;
     private final DroneLateRefundScheduler droneLateRefunds;
-    private final RabbitTemplate rabbitTemplate;
-    private final NotificationClient notificationClient;
-    private final DronePickupService dronePickupService;
+    /// Báo "đã thanh toán" + mở lượt lấy hàng drone — dùng chung với đơn 0đ (OrderBenefitService).
+    private final PaidOrderEffects paidEffects;
 
     @RabbitListener(queues = RabbitConfig.ORDER_PAYMENT_QUEUE)
     @Transactional
@@ -85,8 +81,7 @@ public class OrderPaymentEventListener {
                                 log.info("Order {} marked PAID via payment event", orderId);
                                 // Đơn drone đã huỷ: khoản này sắp được hoàn, không báo "thanh toán thành công".
                                 if (!canceledDrone) {
-                                    publishPaymentCompleted(saved);
-                                    startDronePickupAfterCommit(saved);
+                                    paidEffects.afterPaid(saved);
                                 }
                             }
                         });
@@ -125,39 +120,8 @@ public class OrderPaymentEventListener {
         order.setPaidAt(LocalDateTime.now());
         LockerOrder saved = orderRepository.save(order);
         log.info("Drone order {} marked PAID via payment {}", order.getId(), paymentId);
-        publishPaymentCompleted(saved);
-        startDronePickupAfterCommit(saved);
+        paidEffects.afterPaid(saved);
         return true;
-    }
-
-    /**
-     * Đơn drone vừa trả đủ tiền: mở lượt lấy hàng và mời KTV drone rảnh gần người gửi nhất. Chạy SAU
-     * khi việc ghi nhận thanh toán commit — lỗi lúc tìm KTV không được làm mất việc đơn đã PAID;
-     * {@link DroneDispatchSweeper} mở lại lượt lấy hàng nếu bước này lỡ.
-     */
-    private void startDronePickupAfterCommit(LockerOrder order) {
-        if (!"DRONE_DELIVERY".equals(order.getType()) || !"AWAITING_DISPATCH".equals(order.getDeliveryStage())) {
-            return;
-        }
-        Long orderId = order.getId();
-        Runnable start = () -> {
-            try {
-                dronePickupService.startForPaidOrder(orderId);
-            } catch (RuntimeException ex) {
-                log.warn("Could not open pickup for paid drone order {}: {}", orderId, ex.getMessage());
-            }
-        };
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            start.run();
-                        }
-                    });
-        } else {
-            start.run();
-        }
     }
 
     private static java.math.BigDecimal decimal(Object value) {
@@ -176,35 +140,6 @@ public class OrderPaymentEventListener {
             return Long.parseLong(value.toString());
         } catch (NumberFormatException ex) {
             return null;
-        }
-    }
-
-    private void publishPaymentCompleted(LockerOrder order) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("orderId", order.getId());
-        payload.put("orderCode", order.getOrderCode());
-        payload.put("userId", order.getUserId());
-        payload.put("status", order.getStatus());
-        payload.put("paymentStatus", "PAID");
-        try {
-            rabbitTemplate.convertAndSend(
-                    DomainEventNames.EXCHANGE,
-                    DomainEventNames.ORDER_STATUS_CHANGED,
-                    DomainEvent.of(DomainEventNames.ORDER_STATUS_CHANGED, "order-service", payload));
-        } catch (Exception ex) {
-            log.warn("Could not publish order status changed for paid order {}: {}", order.getId(), ex.getMessage());
-        }
-
-        try {
-            notificationClient.requestNotification(new com.huynqb.laundrylocker.common.dto.NotificationRequest(
-                    order.getUserId(),
-                    "Thanh toán thành công",
-                    "Đơn hàng " + order.getOrderCode() + " đã được thanh toán thành công",
-                    "PAYMENT_COMPLETED",
-                    order.getId(),
-                    "ORDER"));
-        } catch (Exception ex) {
-            log.warn("Could not notify user {} for paid order {}: {}", order.getUserId(), order.getId(), ex.getMessage());
         }
     }
 }

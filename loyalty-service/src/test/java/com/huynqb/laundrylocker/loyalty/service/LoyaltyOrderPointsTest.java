@@ -53,6 +53,7 @@ class LoyaltyOrderPointsTest {
         account.setUserId(7L);
         account.setPoints(100);
         when(accountRepository.findByUserId(7L)).thenReturn(Optional.of(account));
+        when(accountRepository.findByUserIdForUpdate(7L)).thenReturn(Optional.of(account));
         when(accountRepository.save(any(LoyaltyAccount.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 

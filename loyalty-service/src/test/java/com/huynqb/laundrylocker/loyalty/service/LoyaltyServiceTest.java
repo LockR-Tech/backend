@@ -51,6 +51,7 @@ class LoyaltyServiceTest {
         account = new LoyaltyAccount();
         account.setUserId(7L);
         when(accountRepository.findByUserId(7L)).thenReturn(Optional.of(account));
+        when(accountRepository.findByUserIdForUpdate(7L)).thenReturn(Optional.of(account));
         when(accountRepository.save(any(LoyaltyAccount.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(transactionRepository.save(any(PointTransaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
@@ -105,7 +106,9 @@ class LoyaltyServiceTest {
         when(accounts.getAveragePoints()).thenReturn(new java.math.BigDecimal("466.666666"));
         when(accounts.getMedianPoints()).thenReturn(200.5d);
         when(accountRepository.aggregate(monthStart)).thenReturn(accounts);
-        when(accountRepository.countByTier()).thenReturn(List.of(tier("SILVER", 3L), tier("BRONZE", 1L)));
+        // Hạng thống kê theo tổng điểm đã tích với mốc mặc định 500/2000/5000.
+        when(accountRepository.countByLifetimeTier(500, 2000, 5000))
+                .thenReturn(List.of(tier("SILVER", 3L), tier("BRONZE", 1L)));
 
         PointTransactionRepository.TransactionAggregate transactions =
                 mock(PointTransactionRepository.TransactionAggregate.class);

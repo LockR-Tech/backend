@@ -67,6 +67,9 @@ class OrderServiceDroneDeliveryTest {
     private NotificationClient notificationClient;
     @Mock
     private QrTokenService qrTokenService;
+    @Mock private OrderBenefitService benefits;
+    @Mock private PromotionViews promotionViews;
+    @Mock private PaidOrderEffects paidEffects;
 
     private OrderService orderService;
 
@@ -92,7 +95,7 @@ class OrderServiceDroneDeliveryTest {
                         lockerLookupClient,
                         notificationClient,
                         qrTokenService,
-                        new com.huynqb.laundrylocker.order.settings.OrderRules(settings));
+                        new com.huynqb.laundrylocker.order.settings.OrderRules(settings), benefits, promotionViews, paidEffects);
     }
 
     @Test

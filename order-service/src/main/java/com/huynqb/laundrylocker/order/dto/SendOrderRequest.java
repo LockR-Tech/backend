@@ -16,5 +16,7 @@ public record SendOrderRequest(
         @Email(message = "receiverEmail không hợp lệ") String receiverEmail,
         String note,
         BigDecimal totalPrice,
-        String promotionCode) {
+        String promotionCode,
+        /// Số điểm thưởng muốn dùng (tuỳ chọn); loyalty-service kẹp theo quy tắc admin.
+        Integer pointsToUse) {
 }

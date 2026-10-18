@@ -299,7 +299,9 @@ public class AdminOrderQueryService {
                 fees(o),
                 payment(o, payments),
                 drone(o, mission, lockers),
-                history == null ? null : timeline(history, users));
+                history == null ? null : timeline(history, users),
+                o.getPointsUsed(),
+                o.getPointsDiscount());
     }
 
     static Fees fees(LockerOrder o) {

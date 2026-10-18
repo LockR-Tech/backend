@@ -66,6 +66,9 @@ public class DroneOrderBookingService {
     private final OrderRules rules;
     private final DroneSourceLockerSelector sourceLockerSelector;
     private final DroneDeliveryQueryService queryService;
+    /// Mã giảm giá (kiểm theo TỦ GỬI) + điểm thưởng; đơn còn 0đ được ghi đã thanh toán ngay.
+    private final OrderBenefitService benefits;
+    private final PaidOrderEffects paidEffects;
 
     /// Báo trước cho người gửi: kiện sẽ đi qua tủ gửi nào, bao xa, phí bao nhiêu. Không giữ gì.
     @Transactional(readOnly = true)
@@ -170,14 +173,24 @@ public class DroneOrderBookingService {
             order.setOriginalPrice(fee);
 
             LockerOrder saved = orderRepository.saveAndFlush(order);
+            // Giá gốc → mã giảm giá → điểm thưởng (cần id đơn). Mã theo tủ kiểm theo tủ GỬI: tủ khách thật sự
+            // dùng dịch vụ là tủ drone cất cánh, tủ nhận chỉ là nơi người nhận tới lấy.
+            benefits.applyVouchers(saved,
+                    OrderBenefitService.normalizeCodes(request.promotionCode(), null), route.source().id());
+            benefits.redeemPoints(saved, request.pointsToUse());
+            saved = orderRepository.saveAndFlush(saved);
             addHistory(saved, userId,
                     "Đặt giao drone: lấy hàng tại " + pickupAddress
                             + " · tủ gửi " + lockerLabel(route.source())
                             + " · tủ nhận " + lockerLabel(route.destination()));
             publishCreated(saved);
+            // Mã giảm giá + điểm phủ hết phí ⇒ đã thanh toán, mở lượt tìm KTV lấy hàng sau commit.
+            boolean free = paidEffects.settleIfFree(saved);
             notifyQuietly(saved.getUserId(), "Đơn hàng mới",
                     "Đơn drone " + saved.getOrderCode()
-                            + " đã được tạo. Thanh toán để kỹ thuật viên tới lấy hàng.",
+                            + (free
+                                    ? " đã được tạo và được giảm giá toàn bộ. Hệ thống đang tìm kỹ thuật viên tới lấy hàng."
+                                    : " đã được tạo. Thanh toán để kỹ thuật viên tới lấy hàng."),
                     saved.getId());
             return queryService.get(saved.getId(), userId);
         } catch (RuntimeException failure) {

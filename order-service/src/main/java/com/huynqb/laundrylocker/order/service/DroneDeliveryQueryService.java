@@ -315,7 +315,12 @@ public class DroneDeliveryQueryService {
                                 : customer == null ? null : customer.email()),
                 order.getReceiverEmail(),
                 blockView(order),
-                failureView(order));
+                failureView(order),
+                order.getOriginalPrice(),
+                order.getDiscount(),
+                order.getPromotionCode(),
+                order.getPointsUsed(),
+                order.getPointsDiscount());
     }
 
     /// Hành trình cho khách, điều phối viên và admin: mọi dòng lịch sử (mới nhất trước) kèm người

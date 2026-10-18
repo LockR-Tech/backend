@@ -143,6 +143,17 @@ public class LockerOrder {
     @Column(name = "paid_amount", precision = 19, scale = 2, nullable = false)
     private BigDecimal paidAmount = BigDecimal.ZERO;
 
+    /// Số điểm thưởng khách dùng cho đơn (loyalty-service đã trừ) và số tiền đơn được giảm nhờ điểm.
+    @Column(name = "points_used", nullable = false)
+    private Integer pointsUsed = 0;
+
+    @Column(name = "points_discount", precision = 12, scale = 2, nullable = false)
+    private BigDecimal pointsDiscount = BigDecimal.ZERO;
+
+    /// Đã hoàn điểm cho đơn huỷ/hoàn tiền; null khi đơn dùng điểm mà chưa hoàn được (job thử lại).
+    @Column(name = "points_refunded_at")
+    private LocalDateTime pointsRefundedAt;
+
     @Column(name = "promotion_code")
     private String promotionCode;
 

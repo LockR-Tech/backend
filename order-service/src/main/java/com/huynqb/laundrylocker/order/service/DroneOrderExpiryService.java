@@ -26,6 +26,8 @@ public class DroneOrderExpiryService {
     private final OrderStatusHistoryRepository historyRepository;
     private final LockerClient lockerClient;
     private final NotificationClient notificationClient;
+    /// Trả lượt mã giảm giá + hoàn điểm thưởng khi đơn tự huỷ.
+    private final OrderBenefitService benefits;
 
     /// Đơn chưa thu đồng nào và đội bay chưa tiếp nhận. Đơn đang nợ phụ thu cân lệch đã có
     /// nhiệm vụ và đã thu phí ban đầu — không thuộc trường hợp này.
@@ -83,6 +85,7 @@ public class DroneOrderExpiryService {
         order.setPinCode(null);
         order.setStatus("CANCELED");
         order.setDeliveryStage("CANCELED");
+        benefits.releaseBenefits(order);
         orderRepository.save(order);
 
         OrderStatusHistory history = new OrderStatusHistory();
