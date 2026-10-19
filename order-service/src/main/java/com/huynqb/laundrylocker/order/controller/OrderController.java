@@ -798,7 +798,9 @@ public class OrderController {
 
     @PostMapping("/api/admin/scheduler/auto-cancel")
     public ApiResponse<Map<String, Object>> autoCancel() {
-        return ApiResponse.ok("SCHEDULER_AUTO_CANCEL_OK", "Auto cancel job completed", orderService.autoCancelUnconfirmedOrders());
+        Map<String, Object> result = orderService.autoCancelUnconfirmedOrders();
+        com.huynqb.laundrylocker.order.service.OrderScheduler.refundPaidCanceled(result, droneRefundService);
+        return ApiResponse.ok("SCHEDULER_AUTO_CANCEL_OK", "Auto cancel job completed", result);
     }
 
     @PostMapping("/api/admin/scheduler/release-boxes")

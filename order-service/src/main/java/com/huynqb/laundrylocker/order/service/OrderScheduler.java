@@ -12,6 +12,7 @@ public class OrderScheduler {
 
     private final OrderService orderService;
     private final OrderBenefitService benefits;
+    private final DroneRefundService refundService;
 
     // Đơn huỷ/hoàn tiền có dùng điểm mà lúc huỷ loyalty-service lỗi: thử hoàn điểm lại (idempotent).
     @Scheduled(cron = "${app.order.points-refund-sweep-cron:0 */10 * * * *}")
@@ -51,9 +52,25 @@ public class OrderScheduler {
     @Scheduled(cron = "${app.order.auto-cancel-cron:0 */2 * * * *}")
     public void sweepUnconfirmedReservations() {
         try {
-            orderService.autoCancelUnconfirmedOrders();
+            refundPaidCanceled(orderService.autoCancelUnconfirmedOrders(), refundService);
         } catch (Exception ex) {
             log.warn("Auto-cancel sweep job failed: {}", ex.getMessage());
+        }
+    }
+
+    /// Đơn đã trả tiền mà bị tự huỷ (không bỏ hàng kịp hạn) ⇒ tạo yêu cầu hoàn tiền. Gọi sau khi
+    /// lượt huỷ đã commit (yêu cầu lỗi thì đơn giữ PAID để admin xử lý tay).
+    public static void refundPaidCanceled(java.util.Map<String, Object> sweepResult, DroneRefundService refundService) {
+        Object ids = sweepResult == null ? null : sweepResult.get("paidCanceledOrderIds");
+        if (!(ids instanceof java.util.Collection<?> orderIds)) {
+            return;
+        }
+        for (Object id : orderIds) {
+            try {
+                refundService.refundCanceledOrder(((Number) id).longValue(), null);
+            } catch (Exception ex) {
+                log.warn("Refund of auto-canceled order {} failed: {}", id, ex.getMessage());
+            }
         }
     }
 

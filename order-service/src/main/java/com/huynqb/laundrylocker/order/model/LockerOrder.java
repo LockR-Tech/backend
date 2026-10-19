@@ -116,6 +116,11 @@ public class LockerOrder {
     @Column(name = "weight_unit", length = 20)
     private String weightUnit = "kg";
 
+    /// Loại ô của đơn thuê (STANDARD, XL…) đọc từ ô thật lúc tạo đơn — giá thuê, gia hạn và phí ở quá
+    /// giờ tính theo cột này. Đơn cũ (null) tra lại từ locker-service.
+    @Column(name = "rental_cell_type", length = 20)
+    private String rentalCellType;
+
     @Column(name = "extra_fee", precision = 12, scale = 2)
     private BigDecimal extraFee = BigDecimal.ZERO;
 

@@ -155,6 +155,23 @@ class DroneRefundServiceTest {
         verify(paymentRefundClient, never()).refundOrder(any(), any(), any());
     }
 
+    /// Đơn gửi hàng / thuê ô đã trả tiền rồi huỷ trước khi bỏ hàng cũng được tạo yêu cầu hoàn.
+    @Test
+    void refundsPaidLockerOrdersThatWereCanceledToo() {
+        for (String type : new String[]{"SEND", "RENTAL"}) {
+            LockerOrder order = order("CANCELED", "PAID");
+            order.setType(type);
+            order.setTotalPrice(BigDecimal.valueOf(15000));
+            order.setPaidAmount(BigDecimal.valueOf(15000));
+            when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+            when(paymentRefundClient.refundOrder(eq(21L), eq("Đơn ORD-21 bị huỷ"), eq(44L)))
+                    .thenReturn(ApiResponse.ok(new OrderRefundResult(21L, BigDecimal.valueOf(15000), 1)));
+
+            assertTrue(service.refundCanceledOrder(21L, 44L), type);
+            assertEquals("REFUND_PENDING", order.getPaymentStatus(), type);
+        }
+    }
+
     private LockerOrder order(String status, String paymentStatus) {
         LockerOrder order = new LockerOrder();
         order.setId(21L);

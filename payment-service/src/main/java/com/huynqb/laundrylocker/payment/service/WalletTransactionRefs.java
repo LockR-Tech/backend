@@ -3,7 +3,8 @@ package com.huynqb.laundrylocker.payment.service;
 import com.huynqb.laundrylocker.payment.model.WalletTransaction;
 
 /// Suy ra đơn hàng gốc của một biến động ví từ `referenceId` (định dạng
-/// `ORDERPAY-{orderId}`, xem {@link WalletService#debit}/callers).
+/// `ORDERPAY-{orderId}` cho lần trả đầu, `ORDERPAY-{orderId}-{n}` cho lần trả thứ n ≥ 2,
+/// xem {@link WalletService#debit}/callers).
 ///
 /// Dùng chung cho cả API admin ({@code AdminWalletTransactionResponse}) và API khách hàng
 /// ({@code WalletTransactionResponse}) — trước đây mỗi nơi tự suy luận riêng (hoặc không
@@ -16,6 +17,14 @@ final class WalletTransactionRefs {
     private WalletTransactionRefs() {
     }
 
+    /// Mã chống trùng của lần trả thứ `sequence` (bắt đầu từ 1) cho đơn. Lần đầu giữ dạng cũ
+    /// `ORDERPAY-{orderId}` để các biến động đã ghi trước đây vẫn khớp.
+    static String orderPaymentRef(Long orderId, long sequence) {
+        return sequence <= 1
+                ? ORDER_PAYMENT_REF_PREFIX + orderId
+                : ORDER_PAYMENT_REF_PREFIX + orderId + "-" + sequence;
+    }
+
     /// `null` khi biến động không phải thanh toán đơn (nạp ví, admin điều chỉnh…) hoặc
     /// `referenceId` không đúng định dạng.
     static Long relatedOrderId(WalletTransaction tx) {
@@ -24,8 +33,10 @@ final class WalletTransactionRefs {
                 || !tx.getReferenceId().startsWith(ORDER_PAYMENT_REF_PREFIX)) {
             return null;
         }
+        String rest = tx.getReferenceId().substring(ORDER_PAYMENT_REF_PREFIX.length());
+        int dash = rest.indexOf('-');
         try {
-            return Long.parseLong(tx.getReferenceId().substring(ORDER_PAYMENT_REF_PREFIX.length()));
+            return Long.parseLong(dash < 0 ? rest : rest.substring(0, dash));
         } catch (NumberFormatException ex) {
             return null;
         }

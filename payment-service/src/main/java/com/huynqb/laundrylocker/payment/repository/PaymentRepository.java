@@ -16,6 +16,9 @@ public interface PaymentRepository extends JpaRepository<PaymentRecord, Long>, J
 
     Optional<PaymentRecord> findByReferenceId(String referenceId);
 
+    /// Giao dịch đã ghi nhận theo mã giao dịch ngân hàng (chống webhook SePay gửi lại).
+    Optional<PaymentRecord> findFirstByReferenceTransactionId(String referenceTransactionId);
+
     List<PaymentRecord> findByContentContaining(String content);
 
     List<PaymentRecord> findByOrderIdIn(Collection<Long> orderIds);
