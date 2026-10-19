@@ -130,6 +130,41 @@ class OrderPaymentEventListenerTest {
         verify(notificationClient).requestNotification(any());
     }
 
+    /// Khách chuyển thiếu cho đơn gửi hàng: khoản đó được cộng vào số đã trả nhưng đơn chưa PAID,
+    /// chuyển bù đủ thì mới PAID.
+    @Test
+    void underpaidLockerOrderStaysUnpaidUntilTheRestArrives() {
+        OrderPaymentEventListener listener = listener();
+        LockerOrder order = droneOrder("INITIALIZED", "UNPAID");
+        order.setType("SEND");
+        order.setTotalPrice(new java.math.BigDecimal("15000"));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        listener.onPaymentEvent(paid(601L, "1000"));
+        assertEquals("UNPAID", order.getPaymentStatus());
+        assertEquals(0, new java.math.BigDecimal("1000").compareTo(order.getPaidAmount()));
+
+        listener.onPaymentEvent(paid(602L, "14000"));
+        assertEquals("PAID", order.getPaymentStatus());
+        assertEquals(0, new java.math.BigDecimal("15000").compareTo(order.getPaidAmount()));
+    }
+
+    /// Đơn thuê ô đã huỷ (vd khách bấm huỷ ở kiosk lúc chuyển khoản còn chờ) mà tiền mới về ⇒ hoàn lại.
+    @Test
+    void moneyArrivingAfterALockerOrderWasCanceledIsSentBack() {
+        OrderPaymentEventListener listener = listener();
+        LockerOrder order = droneOrder("CANCELED", "UNPAID");
+        order.setType("RENTAL");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        listener.onPaymentEvent(paid(603L, "20000"));
+
+        verify(droneLateRefunds).schedule(21L);
+        verify(notificationClient, never()).requestNotification(any());
+    }
+
     private static DomainEvent paid(long paymentId, String amount) {
         return DomainEvent.of(
                 DomainEventNames.PAYMENT_COMPLETED,

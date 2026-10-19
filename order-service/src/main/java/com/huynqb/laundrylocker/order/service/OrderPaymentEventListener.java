@@ -53,16 +53,13 @@ public class OrderPaymentEventListener {
                 .findByIdForUpdate(orderId)
                 .ifPresent(
                         order -> {
-                            // Đơn drone đã huỷ mà tiền mới về (chuyển khoản còn chờ lúc huỷ):
-                            // lúc huỷ chưa có gì để hoàn, nên phải hoàn khoản này bây giờ.
-                            boolean canceledDrone = "DRONE_DELIVERY".equals(order.getType())
-                                    && "CANCELED".equals(order.getStatus());
-                            if (canceledDrone) {
+                            // Đơn đã huỷ mà tiền mới về (vd khách bấm huỷ ở kiosk lúc chuyển khoản còn
+                            // chờ): lúc huỷ chưa có gì để hoàn, nên phải hoàn khoản này bây giờ.
+                            boolean canceled = "CANCELED".equals(order.getStatus());
+                            if (canceled) {
                                 droneLateRefunds.schedule(orderId);
                             }
-                            if ("DRONE_DELIVERY".equals(order.getType())
-                                    && !canceledDrone
-                                    && applyDronePayment(order, event.payload())) {
+                            if (!canceled && applyPayment(order, event.payload())) {
                                 return;
                             }
                             // Sự kiện thanh toán tới trễ không được lật đơn đang chờ hoàn / đã hoàn về PAID.
@@ -71,16 +68,16 @@ public class OrderPaymentEventListener {
                                     && !"REFUNDED".equals(order.getPaymentStatus())) {
                                 order.setPaymentStatus("PAID");
                                 order.setPaidAt(LocalDateTime.now());
-                                // Ghi nhận khách đã trả tới mức tổng hiện tại; lần gia hạn
-                                // hoặc tính phí quá hạn sau đó chỉ thu phần chênh lệch.
+                                // Sự kiện cũ không mang số tiền: ghi nhận khách đã trả tới mức tổng hiện
+                                // tại; lần gia hạn hoặc tính phí quá hạn sau đó chỉ thu phần chênh lệch.
                                 order.setPaidAmount(
                                         order.getTotalPrice() == null
                                                 ? java.math.BigDecimal.ZERO
                                                 : order.getTotalPrice());
                                 LockerOrder saved = orderRepository.save(order);
                                 log.info("Order {} marked PAID via payment event", orderId);
-                                // Đơn drone đã huỷ: khoản này sắp được hoàn, không báo "thanh toán thành công".
-                                if (!canceledDrone) {
+                                // Đơn đã huỷ: khoản này sắp được hoàn, không báo "thanh toán thành công".
+                                if (!canceled) {
                                     paidEffects.afterPaid(saved);
                                 }
                             }
@@ -88,15 +85,15 @@ public class OrderPaymentEventListener {
     }
 
     /**
-     * Đơn drone đang chạy: cộng ĐÚNG số tiền của lần thanh toán này vào `paidAmount` và chỉ
-     * lật `PAID` khi đã đủ tổng đơn. Trước đây mọi sự kiện đều gán `paidAmount = totalPrice`,
-     * nên sự kiện lặp lại của lần trả đầu (cổng thanh toán gửi lại callback) tới sau khi đã cộng phụ thu cân
-     * lệch lật đơn về `PAID` dù chưa thu phần chênh.
+     * Cộng ĐÚNG số tiền của lần thanh toán này vào `paidAmount` và chỉ lật `PAID` khi đã đủ tổng
+     * đơn (mọi loại đơn). Trước đây mọi sự kiện đều gán `paidAmount = totalPrice`, nên khoản chuyển
+     * thiếu, hay sự kiện lặp lại của lần trả đầu tới sau khi đơn drone đã cộng phụ thu cân lệch,
+     * lật đơn về `PAID` dù chưa thu đủ.
      *
      * @return false khi sự kiện không mang số tiền/mã thanh toán (nguồn phát cũ) — nơi gọi
      *     dùng cách ghi nhận cũ.
      */
-    private boolean applyDronePayment(LockerOrder order, Map<String, Object> payload) {
+    private boolean applyPayment(LockerOrder order, Map<String, Object> payload) {
         java.math.BigDecimal amount = decimal(payload.get("amount"));
         Long paymentId = payload.get("paymentId") == null ? null : longValue(payload.get("paymentId"));
         if (amount == null || paymentId == null) {
@@ -113,13 +110,13 @@ public class OrderPaymentEventListener {
         order.setPaidAmount(paid);
         if (paid.compareTo(total) < 0) {
             orderRepository.save(order);
-            log.info("Drone order {} received {} but still owes {}", order.getId(), amount, total.subtract(paid));
+            log.info("Order {} received {} but still owes {}", order.getId(), amount, total.subtract(paid));
             return true;
         }
         order.setPaymentStatus("PAID");
         order.setPaidAt(LocalDateTime.now());
         LockerOrder saved = orderRepository.save(order);
-        log.info("Drone order {} marked PAID via payment {}", order.getId(), paymentId);
+        log.info("Order {} marked PAID via payment {}", order.getId(), paymentId);
         paidEffects.afterPaid(saved);
         return true;
     }

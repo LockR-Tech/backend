@@ -372,6 +372,26 @@ public class SepayService {
         return BigDecimal.ZERO;
     }
 
+    /// Webhook biến động số dư báo `transferType = out` cho tiền chuyển ĐI từ tài khoản nhận.
+    public boolean isOutgoingTransfer(Map<String, Object> body) {
+        Object type = body.get("transferType");
+        return type != null && "out".equalsIgnoreCase(type.toString().trim());
+    }
+
+    /// Mã giao dịch ngân hàng của webhook (`referenceCode`, không có thì `id` của SePay) — dùng để
+    /// nhận ra webhook gửi lại. null khi webhook không mang mã nào.
+    public String bankTransactionId(Map<String, Object> body) {
+        Object refCode = body.get("referenceCode");
+        if (refCode != null && StringUtils.hasText(refCode.toString())) {
+            return refCode.toString().trim();
+        }
+        Object id = body.get("id");
+        if (id != null && StringUtils.hasText(id.toString())) {
+            return "SEPAY-" + id.toString().trim();
+        }
+        return null;
+    }
+
     public String parseReferenceIdFromContent(String content) {
         if (!StringUtils.hasText(content)) return null;
         // 1. Quét tìm chuỗi TOPUP_...

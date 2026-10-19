@@ -60,6 +60,11 @@ public class OrderRules {
         return settings.getInt(MAX_OVERTIME_PERCENT);
     }
 
+    /// Giá mỗi giờ ở quá hạn thuê = giá thuê mỗi giờ của loại ô × tỉ lệ này / 100 (≥ 100%).
+    public int rentalOvertimeRatePercent() {
+        return Math.max(100, settings.getInt(RENTAL_OVERTIME_RATE_PERCENT));
+    }
+
     public int sendPickupHours() {
         return settings.getInt(SEND_PICKUP_HOURS);
     }

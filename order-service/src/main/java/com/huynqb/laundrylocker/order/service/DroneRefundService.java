@@ -17,7 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 
 /**
- * Tạo yêu cầu hoàn tiền cho đơn drone bị huỷ trước khi bay.
+ * Tạo yêu cầu hoàn tiền cho đơn đã thu tiền mà bị huỷ — đơn drone huỷ trước khi bay, và cả đơn
+ * gửi hàng / thuê ô đã trả tiền nhưng huỷ (hoặc bị tự huỷ) trước khi bỏ hàng.
  *
  * <p>Đơn drone phải trả tiền trước khi đội bay tiếp nhận, nên đơn bị huỷ (khách huỷ lúc
  * chờ điều phối, hoặc đội bay huỷ trước khi phóng) là đơn đã thu tiền mà không giao.
@@ -57,7 +58,6 @@ public class DroneRefundService {
     private boolean refund(Long orderId, Long actorUserId, boolean latePayment) {
         LockerOrder order = orderRepository.findByIdForUpdate(orderId).orElse(null);
         if (order == null
-                || !"DRONE_DELIVERY".equals(order.getType())
                 || !"CANCELED".equals(order.getStatus())
                 || !(latePayment || hasCollectedMoney(order))) {
             return false;
@@ -65,10 +65,10 @@ public class DroneRefundService {
         OrderRefundResult result;
         try {
             ApiResponse<OrderRefundResult> response =
-                    paymentRefundClient.refundOrder(orderId, "Đơn drone " + order.getOrderCode() + " bị huỷ", actorUserId);
+                    paymentRefundClient.refundOrder(orderId, refundReason(order), actorUserId);
             result = response == null ? null : response.data();
         } catch (RuntimeException ex) {
-            log.warn("Refund request for canceled drone order {} failed, order stays PAID: {}", orderId, ex.getMessage());
+            log.warn("Refund request for canceled order {} failed, order stays PAID: {}", orderId, ex.getMessage());
             addHistory(order, actorUserId, "Chưa tạo được yêu cầu hoàn tiền — cần admin xử lý tay");
             return false;
         }
@@ -95,13 +95,17 @@ public class DroneRefundService {
                     "Đã ghi nhận yêu cầu hoàn tiền",
                     "Đơn " + order.getOrderCode() + " đã huỷ. Yêu cầu hoàn " + amount.toBigInteger()
                             + " đ đã được ghi nhận; admin sẽ chuyển khoản về tài khoản ngân hàng của bạn.",
-                    "DRONE_DELIVERY_STATUS_CHANGED",
+                    "DRONE_DELIVERY".equals(order.getType()) ? "DRONE_DELIVERY_STATUS_CHANGED" : "ORDER_REFUND_PENDING",
                     order.getId(),
                     "ORDER"));
         } catch (RuntimeException ignored) {
             // Yêu cầu hoàn đã được ghi; thông báo chỉ là kênh báo nhanh.
         }
         return true;
+    }
+
+    private static String refundReason(LockerOrder order) {
+        return ("DRONE_DELIVERY".equals(order.getType()) ? "Đơn drone " : "Đơn ") + order.getOrderCode() + " bị huỷ";
     }
 
     /// Đơn đã PAID, hoặc đang nợ phụ thu cân lệch (UNPAID) nhưng đã trả phần phí ban đầu.

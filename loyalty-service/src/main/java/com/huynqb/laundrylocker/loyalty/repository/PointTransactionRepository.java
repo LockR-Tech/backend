@@ -18,19 +18,28 @@ public interface PointTransactionRepository extends JpaRepository<PointTransacti
     /// ORDER_REDEEM / ORDER_REDEEM_REFUND có unique index theo order_id nên mỗi đơn có tối đa một dòng.
     Optional<PointTransaction> findFirstByOrderIdAndType(Long orderId, String type);
 
+    /// Tổng điểm các giao dịch một loại của một đơn (vd các lần thu hồi điểm đã tích, mang dấu âm).
+    @Query("SELECT COALESCE(SUM(t.points), 0) FROM PointTransaction t WHERE t.orderId = :orderId AND t.type = :type")
+    long sumPointsByOrderIdAndType(@Param("orderId") Long orderId, @Param("type") String type);
+
     /// Tổng hợp giao dịch điểm cho thống kê admin (một lượt quét bảng). Điểm phát ra là
-    /// tổng giao dịch dương trừ hoàn điểm đã dùng (ORDER_REDEEM_REFUND); điểm đã dùng là tổng trị
-    /// tuyệt đối giao dịch âm trừ đi phần đã hoàn lại. Các mốc thời gian đã quy về múi giờ lưu trữ.
+    /// tổng giao dịch dương trừ hoàn điểm đã dùng (ORDER_REDEEM_REFUND) và trừ điểm thu hồi khi đơn được
+    /// hoàn tiền (ORDER_EARN_REVERSAL, âm); điểm đã dùng là tổng trị tuyệt đối giao dịch âm khác
+    /// trừ đi phần đã hoàn lại. Các mốc thời gian đã quy về múi giờ lưu trữ.
     @Query(value = """
             SELECT COUNT(*) AS "transactions",
-                   COALESCE(SUM(points) FILTER (WHERE points > 0 AND type <> 'ORDER_REDEEM_REFUND'), 0)
+                   COALESCE(SUM(points) FILTER (WHERE (points > 0 AND type <> 'ORDER_REDEEM_REFUND')
+                                                OR type = 'ORDER_EARN_REVERSAL'), 0)
                        AS "pointsIssued",
-                   COALESCE(-SUM(points) FILTER (WHERE points < 0 OR type = 'ORDER_REDEEM_REFUND'), 0)
+                   COALESCE(-SUM(points) FILTER (WHERE (points < 0 AND type <> 'ORDER_EARN_REVERSAL')
+                                                 OR type = 'ORDER_REDEEM_REFUND'), 0)
                        AS "pointsRedeemed",
-                   COALESCE(SUM(points) FILTER (WHERE points > 0 AND type <> 'ORDER_REDEEM_REFUND'
+                   COALESCE(SUM(points) FILTER (WHERE ((points > 0 AND type <> 'ORDER_REDEEM_REFUND')
+                                                       OR type = 'ORDER_EARN_REVERSAL')
                                                 AND created_at >= :monthStart), 0)
                        AS "pointsIssuedThisMonth",
-                   COALESCE(-SUM(points) FILTER (WHERE (points < 0 OR type = 'ORDER_REDEEM_REFUND')
+                   COALESCE(-SUM(points) FILTER (WHERE ((points < 0 AND type <> 'ORDER_EARN_REVERSAL')
+                                                        OR type = 'ORDER_REDEEM_REFUND')
                                                  AND created_at >= :monthStart), 0)
                        AS "pointsRedeemedThisMonth",
                    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= :activeSince) AS "activeMembers"

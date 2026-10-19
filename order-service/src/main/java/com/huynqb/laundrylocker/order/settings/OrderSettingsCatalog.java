@@ -25,6 +25,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String OVERTIME_FEE_PER_HOUR = "app.order.pickup-overtime-fee-per-hour";
     public static final String MAX_OVERTIME_FEE = "app.order.pickup-max-overtime-fee";
     public static final String MAX_OVERTIME_PERCENT = "app.order.pickup-max-overtime-percent";
+    public static final String RENTAL_OVERTIME_RATE_PERCENT = "app.order.rental-overtime-rate-percent";
     public static final String SEND_PICKUP_HOURS = "app.order.send-pickup-hours-limit";
     public static final String DRONE_PICKUP_HOURS = "app.order.drone-pickup-hours-limit";
     public static final String AUTO_CANCEL_HOURS = "app.order.auto-cancel-hours";
@@ -110,11 +111,12 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(STORAGE_ITEM_FEE, PRICING, "Phí lưu trữ mỗi món",
                         "Đơn giá mỗi dòng hàng khi tạo đơn lưu trữ có danh sách món.", 5000, 0, 10_000_000, "VND").asPublic(),
                 integer(OVERTIME_FEE_PER_HOUR, PRICING, "Phí quá hạn mỗi giờ",
-                        "Tính theo số giờ trọn vẹn sau hạn lấy hàng.", 500, 0, 10_000_000, "VND/giờ").asPublic(),
+                        "Đơn gửi hàng: tính theo số giờ trọn vẹn sau hạn lấy hàng.", 500, 0, 10_000_000, "VND/giờ").asPublic(),
                 integer(MAX_OVERTIME_FEE, PRICING, "Trần phí quá hạn",
-                        "Phí quá hạn không vượt số tiền này.", 50000, 0, 100_000_000, "VND").asPublic(),
+                        "Đơn gửi hàng: phí quá hạn không vượt số tiền này.", 50000, 0, 100_000_000, "VND").asPublic(),
                 integer(MAX_OVERTIME_PERCENT, PRICING, "Trần phí quá hạn theo % giá đơn",
-                        "Phí quá hạn không vượt tỉ lệ này của tổng tiền đơn.", 50, 0, 1000, "%").asPublic(),
+                        "Đơn gửi hàng: phí quá hạn không vượt tỉ lệ này của giá đơn (không tính phí quá hạn đã cộng).",
+                        50, 0, 1000, "%").asPublic(),
 
                 integer(SEND_PICKUP_HOURS, DEADLINES, "Hạn người nhận lấy hàng gửi",
                         "Tính từ lúc người gửi bỏ hàng vào ô.", 48, 1, 720, "giờ").asPublic(),
@@ -165,6 +167,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Danh sách giờ hiển thị trên app, phân tách bằng dấu phẩy.", "2,4,8,12,24", 1, 8760, "giờ").asPublic(),
                 integer(EXTEND_DEFAULT_HOURS, RENTAL, "Số giờ gia hạn mặc định trên app", "", 2, 1, 8760, "giờ").asPublic(),
                 integer(EXTEND_MAX_HOURS, RENTAL, "Số giờ gia hạn tối đa mỗi lần", "", 24, 1, 8760, "giờ").asPublic(),
+                integer(RENTAL_OVERTIME_RATE_PERCENT, RENTAL, "Phí ở quá giờ thuê (theo % giá thuê)",
+                        "Mỗi giờ ở quá hạn thuê (giờ đã bắt đầu tính trọn giờ) = giá thuê mỗi giờ của loại ô × tỉ lệ "
+                                + "này. Tối thiểu 100% để ở quá giờ không rẻ hơn gia hạn; không áp trần phí quá hạn "
+                                + "của đơn gửi hàng.", 100, 100, 1000, "%").asPublic(),
 
                 integer(MAX_VOUCHERS_PER_ORDER, VOUCHER, "Số mã giảm giá tối đa mỗi đơn",
                         "Số mã giảm giá khách được áp vào một đơn (gửi hàng, thuê ô, giao drone). 0 = tạm ngưng "

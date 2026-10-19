@@ -13,7 +13,9 @@ import org.springframework.context.annotation.Configuration;
 import java.util.List;
 
 /// Hàng đợi riêng của loyalty-service gắn vào exchange chung `laundry.events` với routing key
-/// `order.completed` (order-service phát một lần khi đơn vừa chuyển sang COMPLETED) — dùng để cộng điểm.
+/// `order.completed` (order-service phát một lần khi đơn vừa chuyển sang COMPLETED) — dùng để cộng điểm —
+/// và `payment.refunded` (admin xác nhận đã hoàn tiền) — dùng để thu hồi điểm đã tích. Một hàng đợi,
+/// một listener ({@link com.huynqb.laundrylocker.loyalty.service.OrderCompletedPointsListener}).
 @Configuration
 public class RabbitConfig {
 
@@ -34,6 +36,13 @@ public class RabbitConfig {
         return BindingBuilder.bind(loyaltyOrderEventsQueue)
                 .to(laundryEventsExchange)
                 .with(DomainEventNames.ORDER_COMPLETED);
+    }
+
+    @Bean
+    Binding loyaltyPaymentRefundedBinding(Queue loyaltyOrderEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(loyaltyOrderEventsQueue)
+                .to(laundryEventsExchange)
+                .with(DomainEventNames.PAYMENT_REFUNDED);
     }
 
     /// order-service gửi DomainEvent bằng Java serialization (SimpleMessageConverter) — chỉ cho phép các lớp

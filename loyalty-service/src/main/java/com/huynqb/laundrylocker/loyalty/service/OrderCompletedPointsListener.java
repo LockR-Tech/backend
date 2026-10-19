@@ -15,6 +15,9 @@ import java.util.Map;
 /// Cộng điểm từ sự kiện `order.completed` (order-service phát một lần khi đơn vừa chuyển sang COMPLETED,
 /// sau commit). Tính theo `paidAmount` của đơn; đơn chưa thanh toán (`paymentStatus` khác PAID) hoặc 0đ
 /// không được điểm. eventId không ổn định nên chống trùng theo orderId (LoyaltyService + unique index).
+///
+/// Cùng hàng đợi nhận `payment.refunded` (payment-service, khi admin xác nhận đã hoàn tiền): thu hồi điểm
+/// đã tích theo tỉ lệ tiền đã hoàn ({@link LoyaltyService#reverseOrderEarn}).
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -26,6 +29,10 @@ public class OrderCompletedPointsListener {
 
     @RabbitListener(queues = RabbitConfig.LOYALTY_ORDER_QUEUE)
     public void onOrderCompleted(DomainEvent event) {
+        if (event != null && DomainEventNames.PAYMENT_REFUNDED.equals(event.type()) && event.payload() != null) {
+            onPaymentRefunded(event.payload());
+            return;
+        }
         if (event == null || !DomainEventNames.ORDER_COMPLETED.equals(event.type()) || event.payload() == null) {
             return;
         }
@@ -47,6 +54,15 @@ public class OrderCompletedPointsListener {
         } catch (DataIntegrityViolationException duplicate) {
             // Sự kiện được giao lại/xử lý song song: đơn này đã được cộng điểm.
             log.info("Loyalty points for order {} already awarded", orderId);
+        }
+    }
+
+    private void onPaymentRefunded(Map<String, Object> payload) {
+        Long orderId = longValue(payload.get("orderId"));
+        int reversed = loyaltyService.reverseOrderEarn(
+                orderId, decimal(payload.get("refundedAmount")), decimal(payload.get("paidAmount")));
+        if (reversed > 0) {
+            log.info("Reversed {} loyalty points of refunded order {}", reversed, orderId);
         }
     }
 

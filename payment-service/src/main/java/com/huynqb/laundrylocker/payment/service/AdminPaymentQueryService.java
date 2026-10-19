@@ -114,10 +114,15 @@ public class AdminPaymentQueryService {
             walletTransactionRepository.findFirstBySourceAndReferenceId(WalletService.SOURCE_TOPUP, payment.getReferenceId())
                     .ifPresent(walletTransactions::add);
         } else if ("WALLET".equalsIgnoreCase(payment.getMethod())) {
+            // Lần trả bằng ví thứ n của đơn ứng với biến động ví mã thứ n.
+            long sequence = 1 + orderPayments.stream()
+                    .filter(p -> "WALLET".equalsIgnoreCase(p.getMethod()) && "COMPLETED".equals(p.getStatus()))
+                    .filter(p -> p.getId() != null && payment.getId() != null && p.getId() < payment.getId())
+                    .count();
             walletTransactionRepository
                     .findFirstBySourceAndReferenceId(
                             WalletService.SOURCE_ORDER_PAYMENT,
-                            WalletTransactionRefs.ORDER_PAYMENT_REF_PREFIX + payment.getOrderId())
+                            WalletTransactionRefs.orderPaymentRef(payment.getOrderId(), sequence))
                     .filter(tx -> Objects.equals(tx.getUserId(), payment.getUserId()))
                     .ifPresent(walletTransactions::add);
         }

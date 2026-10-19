@@ -147,10 +147,114 @@ class OrderServiceRentalPaymentTest {
             return saved;
         });
         when(orderRepository.findById(21L)).thenAnswer(invocation -> Optional.ofNullable(savedRef[0]));
+        when(lockerCellClient.getCell(901L)).thenReturn(ApiResponse.ok(
+                new CellDto(901L, 1, "S", "STANDARD", 0, 0, "AVAILABLE", null)));
 
         var response = orderService.createRental(new RentalOrderRequest(5L, 901L, "STANDARD", 4, null, null, null), 44L);
 
         assertNull(response.pickupDeadline());
+    }
+
+    /// App khai ô thường nhưng ô khách chọn là ô XL ⇒ tính giá ô XL (10.000 đ/giờ mặc định).
+    @Test
+    void createRentalPricesByTheRealCellTypeNotTheOneTheAppSends() {
+        final LockerOrder[] savedRef = new LockerOrder[1];
+        when(userClient.getUser(44L)).thenReturn(ApiResponse.ok(new UserSummary(44L, "a@b.c", "0909", "User", "ACTIVE")));
+        when(lockerCellClient.getCell(905L)).thenReturn(ApiResponse.ok(
+                new CellDto(905L, 5, "XL", "XL", 0, 0, "AVAILABLE", null)));
+        when(lockerClient.reserveBox(905L, null))
+                .thenReturn(ApiResponse.ok(new LockerBoxSummary(5L, 905L, "CAB-05", 5, "RESERVED")));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> {
+            LockerOrder saved = invocation.getArgument(0);
+            if (saved.getId() == null) {
+                saved.setId(31L);
+                saved.setOrderCode("ORD-31");
+            }
+            savedRef[0] = saved;
+            return saved;
+        });
+        when(orderRepository.findById(31L)).thenAnswer(invocation -> Optional.ofNullable(savedRef[0]));
+
+        var response = orderService.createRental(new RentalOrderRequest(5L, 905L, "STANDARD", 4, null, null, null), 44L);
+
+        assertEquals(0, BigDecimal.valueOf(40000).compareTo(response.totalPrice()));
+        assertEquals("XL", savedRef[0].getRentalCellType());
+    }
+
+    /// Quá hạn thuê 90 phút ⇒ tính 2 giờ theo giá thuê ô (5.000 đ/giờ), không phải 500 đ/giờ của đơn gửi hàng.
+    @Test
+    void overdueRentalIsChargedAtLeastTheExtensionRate() {
+        LockerOrder order = overdueRental(32L, 90);
+        when(orderRepository.findById(32L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderService.assessOvertime(32L, 44L);
+
+        assertEquals(0, BigDecimal.valueOf(10000).compareTo(order.getExtraFee()));
+        assertEquals(0, BigDecimal.valueOf(30000).compareTo(order.getTotalPrice()));
+        assertEquals("UNPAID", order.getPaymentStatus());
+    }
+
+    /// Gia hạn lúc đã quá giờ: thu các giờ đã quá trước, giờ gia hạn tính tiếp từ sau các giờ đó.
+    @Test
+    void extendingAnOverdueRentalChargesTheOverdueHoursFirst() {
+        LockerOrder order = overdueRental(33L, 90);
+        LocalDateTime oldDeadline = order.getPickupDeadline();
+        when(orderRepository.findById(33L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderService.extendRental(33L, 44L, 1);
+
+        // 20.000 đã trả + 2 giờ quá (10.000) + 1 giờ gia hạn (5.000).
+        assertEquals(0, BigDecimal.valueOf(35000).compareTo(order.getTotalPrice()));
+        assertEquals(oldDeadline.plusHours(3), order.getPickupDeadline());
+        assertEquals(0, BigDecimal.ZERO.compareTo(order.getExtraFee()));
+        assertEquals("UNPAID", order.getPaymentStatus());
+    }
+
+    /// Trần % phí quá hạn đơn gửi hàng tính trên giá đơn, không gồm phí quá hạn đã cộng: tính lại
+    /// nhiều lần không làm trần tự tăng.
+    @Test
+    void sendOvertimeCapDoesNotGrowWithEachAssessment() {
+        LockerOrder order = new LockerOrder();
+        order.setId(34L);
+        order.setUserId(44L);
+        order.setType("SEND");
+        order.setStatus("STORING");
+        order.setPickupDeadline(LocalDateTime.now().minusHours(200));
+        order.setTotalPrice(BigDecimal.valueOf(15000));
+        order.setOriginalPrice(BigDecimal.valueOf(15000));
+        order.setPaymentStatus("PAID");
+        when(orderRepository.findById(34L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderService.assessOvertime(34L, 44L);
+        orderService.assessOvertime(34L, 44L);
+        orderService.assessOvertime(34L, 44L);
+
+        // 50% của 15.000.
+        assertEquals(0, BigDecimal.valueOf(7500).compareTo(order.getExtraFee()));
+        assertEquals(0, BigDecimal.valueOf(22500).compareTo(order.getTotalPrice()));
+    }
+
+    private static LockerOrder overdueRental(Long id, int minutesOverdue) {
+        LockerOrder order = new LockerOrder();
+        order.setId(id);
+        order.setUserId(44L);
+        order.setOrderCode("ORD-" + id);
+        order.setType("RENTAL");
+        order.setServiceCategory("RENTAL");
+        order.setStatus("STORING");
+        order.setSendBoxId(901L);
+        order.setRentalCellType("STANDARD");
+        order.setRentalDurationHours(4);
+        order.setPickupDeadline(LocalDateTime.now().minusMinutes(minutesOverdue));
+        order.setTotalPrice(BigDecimal.valueOf(20000));
+        order.setOriginalPrice(BigDecimal.valueOf(20000));
+        order.setPaidAmount(BigDecimal.valueOf(20000));
+        order.setPaymentStatus("PAID");
+        order.setPaidAt(LocalDateTime.now().minusHours(6));
+        return order;
     }
 
     @Test

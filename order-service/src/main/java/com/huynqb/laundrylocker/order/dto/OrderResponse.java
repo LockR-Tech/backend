@@ -89,5 +89,9 @@ public record OrderResponse(
         LocalDateTime failedAt,
         /// Điểm thưởng đã dùng cho đơn và số tiền được giảm nhờ điểm (sau mã giảm giá).
         Integer pointsUsed,
-        BigDecimal pointsDiscount) {
+        BigDecimal pointsDiscount,
+        /// Đơn giá mỗi giờ quá hạn đang áp cho đơn này: đơn thuê = giá thuê loại ô × tỉ lệ admin đặt;
+        /// đơn khác = phí quá hạn mỗi giờ. `overtimeCapped` = có áp trần phí quá hạn (chỉ đơn không phải thuê).
+        BigDecimal overtimeRatePerHour,
+        boolean overtimeCapped) {
 }
