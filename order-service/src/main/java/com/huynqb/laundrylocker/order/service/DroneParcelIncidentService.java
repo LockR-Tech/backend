@@ -60,6 +60,7 @@ public class DroneParcelIncidentService {
     private final DroneReturnCommandGateway returnCommandGateway;
     private final IncidentCompensationGateway compensationGateway;
     private final IncidentRedeliveryGateway redeliveryGateway;
+    private final DronePickupService dronePickupService;
     private final CloudinaryMediaStorage mediaStorage;
     private final ObjectMapper objectMapper;
 
@@ -389,18 +390,25 @@ public class DroneParcelIncidentService {
         DroneParcelIncident incident = locked(incidentId);
         requireState(incident.getRecoveryStatus(), Set.of("OPEN", "AWAITING_ASSIGNMENT", "ASSIGNED"),
                 "RECOVERY_NOT_ASSIGNABLE");
-        boolean validTechnician;
+        boolean isLockerTech = false;
+        boolean isDroneTech = false;
         try {
-            validTechnician = userClient.getUsersByRole("LOCKER_TECHNICIAN").data().stream()
-                    .anyMatch(user -> request.technicianId().equals(user.id())
-                            && "ACTIVE".equalsIgnoreCase(user.status()));
+            var user = userClient.getUser(request.technicianId()).data();
+            if (user != null && "ACTIVE".equalsIgnoreCase(user.status()) && user.roles() != null) {
+                isLockerTech = user.roles().contains("LOCKER_TECHNICIAN");
+                isDroneTech = user.roles().contains("DRONE_TECHNICIAN");
+            }
         } catch (RuntimeException error) {
             throw new BusinessException("TECHNICIAN_DIRECTORY_UNAVAILABLE",
-                    "Could not validate the selected locker technician", HttpStatus.SERVICE_UNAVAILABLE);
+                    "Không thể kiểm tra thông tin KTV được chọn", HttpStatus.SERVICE_UNAVAILABLE);
         }
-        if (!validTechnician) {
+        if (!isLockerTech && !isDroneTech) {
             throw new BusinessException("RECOVERY_TECHNICIAN_INVALID",
-                    "Selected user is not an active locker technician");
+                    "Người dùng được chọn không phải là KTV tủ hoặc KTV drone đang hoạt động");
+        }
+        if (isDroneTech && dronePickupService.busy(request.technicianId())) {
+            throw new BusinessException("DRONE_TECHNICIAN_BUSY",
+                    "KTV drone này đang có đơn hàng hoặc chuyến bay đang vận hành, không thể nhận nhiệm vụ tìm hàng");
         }
         Long previousAssignee = incident.getRecoveryAssignedToUserId();
         incident.setRecoveryAssignedToUserId(request.technicianId());
@@ -413,6 +421,22 @@ public class DroneParcelIncidentService {
         notifyQuietly(request.technicianId(), "Nhiệm vụ thu hồi kiện drone",
                 "Bạn được phân công thu hồi kiện cho sự cố " + incident.getIncidentCode() + ".",
                 "DRONE_PARCEL_RECOVERY_ASSIGNED", incident.getId());
+        return toResponse(incident);
+    }
+
+    @Transactional
+    public DroneParcelIncidentResponse completeRedelivery(Long incidentId, Long adminUserId, String roles) {
+        requireAdmin(roles);
+        DroneParcelIncident incident = locked(incidentId);
+        requireState(incident.getRedeliveryStatus(), Set.of("PREPARING", "IN_PROGRESS"), "REDELIVERY_NOT_IN_PROGRESS");
+        incident.setRedeliveryStatus("COMPLETED");
+        if (!Set.of("ACCEPTED", "AWAITING_APPROVAL", "PAYMENT_PENDING", "PROCESSING").contains(incident.getCompensationStatus())) {
+            incident.setStatus("RESOLVED");
+            incident.setResolvedAt(LocalDateTime.now());
+        }
+        incidentRepository.save(incident);
+        timeline(incident, "REDELIVERY_COMPLETED", "IN_PROGRESS", "COMPLETED", adminUserId,
+                "Đã hoàn tất giao lại hàng thành công cho khách hàng", null);
         return toResponse(incident);
     }
 
@@ -638,6 +662,27 @@ public class DroneParcelIncidentService {
                         value.getPolicyVersion(), value.getOverrideReason(), value.getProposedByUserId(),
                         value.getStatus(), value.getCustomerResponseNote(), value.getRespondedAt(), value.getCreatedAt()))
                 .toList();
+        String recoveryTechName = null;
+        String recoveryTechPhone = null;
+        String recoveryTechRole = null;
+        if (incident.getRecoveryAssignedToUserId() != null) {
+            try {
+                com.huynqb.laundrylocker.common.dto.UserSummary tech = userClient.getUser(incident.getRecoveryAssignedToUserId()).data();
+                if (tech != null) {
+                    recoveryTechName = tech.fullName();
+                    recoveryTechPhone = tech.phoneNumber();
+                    if (tech.roles() != null && tech.roles().contains("DRONE_TECHNICIAN")) {
+                        recoveryTechRole = "DRONE_TECHNICIAN";
+                    } else {
+                        recoveryTechRole = "LOCKER_TECHNICIAN";
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        BigDecimal declaredValue = order != null && order.getParcelDeclaredValue() != null
+                ? order.getParcelDeclaredValue()
+                : (order != null ? order.getTotalPrice() : null);
         return new DroneParcelIncidentResponse(
                 incident.getId(), incident.getIncidentCode(), incident.getOrderId(),
                 order == null ? null : order.getOrderCode(), incident.getMissionId(), incident.getDroneUnitId(),
@@ -658,7 +703,12 @@ public class DroneParcelIncidentService {
                         : null,
                 order != null && Boolean.TRUE.equals(order.getIncidentDisputeAllowed()),
                 order == null ? null : order.getStatus(),
-                order == null ? null : order.getDeliveryStage());
+                order == null ? null : order.getDeliveryStage(),
+                order == null ? null : order.getIncidentCompensationRate(),
+                declaredValue,
+                recoveryTechName,
+                recoveryTechPhone,
+                recoveryTechRole);
     }
 
     private void requestCompensation(DroneParcelIncident incident, LockerOrder order,
@@ -902,7 +952,13 @@ public class DroneParcelIncidentService {
     }
 
     private BigDecimal suggestedCompensation(LockerOrder order) {
-        BigDecimal base = order.getParcelDeclaredValue() == null ? BigDecimal.ZERO : order.getParcelDeclaredValue();
+        BigDecimal base = order.getParcelDeclaredValue();
+        if ((base == null || base.signum() <= 0) && order.getTotalPrice() != null) {
+            base = order.getTotalPrice();
+        }
+        if (base == null) {
+            base = BigDecimal.ZERO;
+        }
         BigDecimal rate = order.getIncidentCompensationRate() == null
                 ? BigDecimal.valueOf(60) : order.getIncidentCompensationRate();
         BigDecimal result = base.multiply(rate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);

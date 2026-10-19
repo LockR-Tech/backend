@@ -50,6 +50,7 @@ class DroneParcelIncidentServiceTest {
     @Mock DroneReturnCommandGateway returnCommandGateway;
     @Mock IncidentCompensationGateway compensationGateway;
     @Mock IncidentRedeliveryGateway redeliveryGateway;
+    @Mock DronePickupService dronePickupService;
     @Mock CloudinaryMediaStorage mediaStorage;
 
     private DroneParcelIncidentService service;
@@ -60,7 +61,7 @@ class DroneParcelIncidentServiceTest {
                 incidentRepository, evidenceRepository, timelineRepository, proposalRepository,
                 orderRepository, missionRepository, orderHistoryRepository, telemetryRegistry,
                 lockerDroneClient, userClient, notificationClient, returnCommandGateway,
-                compensationGateway, redeliveryGateway, mediaStorage, new ObjectMapper());
+                compensationGateway, redeliveryGateway, dronePickupService, mediaStorage, new ObjectMapper());
         lenient().when(evidenceRepository.findByIncidentIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
         lenient().when(timelineRepository.findByIncidentIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
         lenient().when(proposalRepository.findByIncidentIdOrderByProposalVersionAsc(any())).thenReturn(List.of());

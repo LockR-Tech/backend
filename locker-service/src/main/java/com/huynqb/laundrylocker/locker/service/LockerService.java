@@ -2403,6 +2403,7 @@ public class LockerService {
         report.setOrderId(request.orderId());
         report.setOrderCode(request.orderCode());
         report.setExternalIncidentId(request.incidentId());
+        report.setIncidentCode(request.incidentCode());
         report.setTicketType("DRONE_INSPECTION");
         report.setTitle("Kiểm tra an toàn sau sự cố " + request.incidentCode());
         report.setDescription(buildIncidentInspectionDescription(request));
@@ -2451,11 +2452,33 @@ public class LockerService {
             return new RecoveryAssignment(null, null);
         }
 
-        // 1. Ưu tiên KTV tủ đang trong ca trực (on-duty) có tọa độ GPS thực tế gần điểm rơi
-        var liveCandidate = presenceRepository.findByOnDutyTrueAndTechnicianType(LOCKER_TECHNICIAN).stream()
+        // Lấy danh sách ID KTV drone đang bận đơn/chuyến bay vận hành từ order-service
+        Set<Long> busyDroneTechIds = Set.of();
+        try {
+            var busyRes = orderClient.getBusyDroneTechnicianIds();
+            if (busyRes != null && busyRes.data() != null) {
+                busyDroneTechIds = busyRes.data();
+            }
+        } catch (Exception ex) {
+            log.warn("Could not query busy drone technician IDs from order-service: {}", ex.getMessage());
+        }
+
+        final Set<Long> finalBusyDroneTechIds = busyDroneTechIds;
+
+        // 1. Quét KTV đang trong ca trực (on-duty) có toạ độ GPS gần vị trí rơi nhất:
+        //    Bao gồm cả LOCKER_TECHNICIAN và DRONE_TECHNICIAN (với KTV drone thì không được có đơn đang vận hành)
+        var liveCandidate = presenceRepository.findByOnDutyTrue().stream()
                 .filter(p -> p.getLatitude() != null && p.getLongitude() != null)
                 .filter(p -> p.getLastLocatedAt() != null && p.getLastLocatedAt().isAfter(LocalDateTime.now().minusMinutes(60)))
-                .filter(p -> activeTechnician(p.getUserId(), LOCKER_TECHNICIAN) != null)
+                .filter(p -> {
+                    String type = p.getTechnicianType() != null ? p.getTechnicianType().toUpperCase() : "";
+                    if (DRONE_TECHNICIAN.equals(type)) {
+                        return activeTechnician(p.getUserId(), DRONE_TECHNICIAN) != null
+                                && !finalBusyDroneTechIds.contains(p.getUserId());
+                    } else {
+                        return activeTechnician(p.getUserId(), LOCKER_TECHNICIAN) != null;
+                    }
+                })
                 .sorted(Comparator
                         .comparingDouble((TechnicianPresence p) -> distanceMeters(latitude, longitude, p.getLatitude(), p.getLongitude()))
                         .thenComparingLong(p -> activeWorkload(p.getUserId())))
@@ -3044,6 +3067,7 @@ public class LockerService {
                         ? null
                         : droneUnitRepository.findById(report.getDroneUnitId()).map(DroneUnit::getCode).orElse(null),
                 report.getExternalIncidentId(),
+                report.getIncidentCode(),
                 report.getTicketType(),
                 assignee == null ? null : assignee.fullName(),
                 report.getSlaExtensionCount() != null ? report.getSlaExtensionCount() : 0,

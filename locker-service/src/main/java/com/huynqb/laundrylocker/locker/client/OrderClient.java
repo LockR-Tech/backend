@@ -36,4 +36,7 @@ public interface OrderClient {
     ApiResponse<Void> addIncidentNote(
             @PathVariable("id") Long id,
             @RequestParam("note") String note);
+
+    @GetMapping("/drone-technicians/busy-ids")
+    ApiResponse<java.util.Set<Long>> getBusyDroneTechnicianIds();
 }

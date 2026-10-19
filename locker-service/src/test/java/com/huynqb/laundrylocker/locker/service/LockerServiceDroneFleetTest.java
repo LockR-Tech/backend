@@ -403,6 +403,7 @@ class LockerServiceDroneFleetTest {
         verify(reportRepository).save(reports.capture());
         LockerReport inspection = reports.getValue();
         assertEquals("DRONE_INSPECTION", inspection.getTicketType());
+        assertEquals("DPI-89", inspection.getIncidentCode());
         assertEquals(42L, inspection.getAssignedToUserId());
         assertEquals(ReportCategory.DRONE, inspection.getCategory());
         assertEquals(84L, result.recoveryTechnicianId());

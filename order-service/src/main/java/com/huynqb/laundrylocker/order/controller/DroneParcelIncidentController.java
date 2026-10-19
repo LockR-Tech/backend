@@ -132,6 +132,15 @@ public class DroneParcelIncidentController {
                 "Compensation approval processed", service.approveCompensation(id, userId, roles));
     }
 
+    @PostMapping("/api/admin/drone-incidents/{id}/redelivery/complete")
+    public ApiResponse<DroneParcelIncidentResponse> completeRedelivery(
+            @PathVariable Long id,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok("REDELIVERY_COMPLETED",
+                "Redelivery marked as completed", service.completeRedelivery(id, userId, roles));
+    }
+
     @GetMapping("/api/locker-technician/drone-recoveries")
     public ApiResponse<List<DroneParcelIncidentResponse>> recoveryQueue(
             @RequestHeader("X-User-Id") Long userId,
