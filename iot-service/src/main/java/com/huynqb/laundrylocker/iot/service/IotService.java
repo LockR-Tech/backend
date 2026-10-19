@@ -267,7 +267,11 @@ public class IotService {
     public VerifyPinResponse verifyAccess(Long boxId, String code) {
         LocalDateTime lockedUntil = accessAttemptRepository.findById(boxId).map(AccessAttempt::getLockedUntil).orElse(null);
         if (lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now())) {
-            return new VerifyPinResponse(false, null, boxId, null, "Box temporarily locked after repeated failed attempts. Try again later.", null);
+            long remainingMinutes = Math.max(1, java.time.Duration.between(LocalDateTime.now(), lockedUntil).toMinutes() + 1);
+            String msg = "Nhập sai quá " + rules.lockoutMaxAttempts() + " lần! Ô tủ bị tạm khóa "
+                    + rules.lockoutMinutes() + " phút (còn khoảng " + remainingMinutes + " phút). "
+                    + "Vui lòng vào App Mobile để \"Cấp lại mã PIN\" hoặc thử lại sau.";
+            return new VerifyPinResponse(false, null, boxId, null, msg, null, null, "E_IOT_PIN_LOCKED");
         }
         try {
             OrderLookupResponse order = orderClient.getByAccess(code).data();
@@ -277,7 +281,12 @@ public class IotService {
             boolean validBox =
                     boxId.equals(order.sendBoxId()) || boxId.equals(order.receiveBoxId());
             if (!validBox) {
-                recordFailedAttempt(boxId);
+                boolean locked = recordFailedAttempt(boxId);
+                if (locked) {
+                    String msg = "Nhập sai quá " + rules.lockoutMaxAttempts() + " lần! Ô tủ bị tạm khóa "
+                            + rules.lockoutMinutes() + " phút. Vui lòng vào App Mobile để \"Cấp lại mã PIN\" hoặc thử lại sau.";
+                    return new VerifyPinResponse(false, null, boxId, null, msg, null, null, "E_IOT_PIN_LOCKED");
+                }
                 return new VerifyPinResponse(false, order.id(), boxId, order.status(), "Access code does not match this box", order.userId());
             }
             // Mã đúng nhưng đơn tạm chưa được mở (chưa thanh toán, hết hạn thuê…): từ chối
@@ -291,7 +300,12 @@ public class IotService {
             return new VerifyPinResponse(
                     true, order.id(), boxId, order.status(), "Access verified", order.userId(), order.type(), null);
         } catch (Exception ex) {
-            recordFailedAttempt(boxId);
+            boolean locked = recordFailedAttempt(boxId);
+            if (locked) {
+                String msg = "Nhập sai quá " + rules.lockoutMaxAttempts() + " lần! Ô tủ bị tạm khóa "
+                        + rules.lockoutMinutes() + " phút. Vui lòng vào App Mobile để \"Cấp lại mã PIN\" hoặc thử lại sau.";
+                return new VerifyPinResponse(false, null, boxId, null, msg, null, null, "E_IOT_PIN_LOCKED");
+            }
             return new VerifyPinResponse(false, null, boxId, null, "Invalid access code", null);
         }
     }
@@ -455,7 +469,8 @@ public class IotService {
     static String blockMessage(String reasonCode) {
         return switch (reasonCode) {
             case "ORDER_UNPAID" -> "Đơn chưa thanh toán. Vui lòng thanh toán trên ứng dụng trước khi mở ô.";
-            case "RENTAL_EXPIRED", "OVERTIME_FEE_UNPAID" -> "Đã hết thời gian thuê. Vui lòng thanh toán phí quá giờ trên ứng dụng để mở ô.";
+            case "RENTAL_EXPIRED" -> "Đã hết thời gian thuê. Vui lòng thanh toán phí quá giờ trên ứng dụng để mở ô.";
+            case "OVERTIME_FEE_UNPAID" -> "Đơn đã quá hạn lấy hàng. Vui lòng thanh toán phụ phí quá hạn trên ứng dụng để mở ô.";
             case "RENTAL_UNPAID" -> "Còn phí gia hạn chưa thanh toán. Vui lòng thanh toán trên ứng dụng để mở ô.";
             default -> "Mã này tạm thời chưa mở được ô.";
         };
@@ -491,15 +506,18 @@ public class IotService {
         }
     }
 
-    private void recordFailedAttempt(Long boxId) {
+    private boolean recordFailedAttempt(Long boxId) {
         AccessAttempt attempt = accessAttemptRepository.findById(boxId).orElseGet(AccessAttempt::new);
         attempt.setBoxId(boxId);
         attempt.setFailedCount(attempt.getFailedCount() + 1);
+        boolean newlyLocked = false;
         if (attempt.getFailedCount() >= rules.lockoutMaxAttempts()) {
             attempt.setLockedUntil(LocalDateTime.now().plusMinutes(rules.lockoutMinutes()));
+            newlyLocked = true;
         }
         attempt.setUpdatedAt(LocalDateTime.now());
         accessAttemptRepository.save(attempt);
+        return newlyLocked;
     }
 
     private void resetAttempts(Long boxId) {
