@@ -58,5 +58,10 @@ public record DroneParcelIncidentResponse(
         /// Trạng thái và chặng giao hiện tại của đơn — đơn bị báo rơi kiện có deliveryStage
         /// DROP_REPORTED và không còn nằm trong hàng chờ điều phối.
         String orderStatus,
-        String deliveryStage) {
+        String deliveryStage,
+        BigDecimal compensationRate,
+        BigDecimal declaredValue,
+        String recoveryTechnicianName,
+        String recoveryTechnicianPhone,
+        String recoveryTechnicianRole) {
 }

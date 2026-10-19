@@ -659,6 +659,88 @@ public class PaymentService {
         return new com.huynqb.laundrylocker.payment.dto.internal.OrderRefundResult(orderId, total, count);
     }
 
+    @Transactional
+    public com.huynqb.laundrylocker.payment.dto.internal.CompensationRefundResult createCompensationRefund(
+            Long orderId, BigDecimal amount, BigDecimal percentage, String incidentCode, String reason, Long actorUserId) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("REFUND_AMOUNT_INVALID", "Số tiền bồi thường phải lớn hơn 0");
+        }
+
+        List<PaymentRecord> payments = repository.findByOrderId(orderId);
+        PaymentRecord payment = payments.stream()
+                .filter(p -> "COMPLETED".equals(p.getStatus()) && p.getAmount() != null && p.getAmount().signum() > 0)
+                .findFirst()
+                .orElse(null);
+
+        Long paymentId = payment != null ? payment.getId() : 0L;
+        Long customerUserId = payment != null ? payment.getUserId() : actorUserId;
+
+        // Xây dựng lý do bồi thường: [Bồi thường sự cố {incidentCode}] Hoàn {percentage}%, số tiền: {amount} đ. Lý do: {reason}
+        StringBuilder compReason = new StringBuilder();
+        compReason.append("[Bồi thường sự cố");
+        if (StringUtils.hasText(incidentCode)) {
+            compReason.append(" ").append(incidentCode.trim());
+        }
+        compReason.append("] ");
+        if (percentage != null && percentage.compareTo(BigDecimal.ZERO) > 0) {
+            compReason.append("Hoàn ").append(percentage.stripTrailingZeros().toPlainString()).append("%, ");
+        }
+        compReason.append("số tiền: ").append(String.format(Locale.ROOT, "%,d", amount.longValue())).append(" đ.");
+        if (StringUtils.hasText(reason)) {
+            compReason.append(" Lý do: ").append(reason.trim());
+        }
+
+        String transactionId = "RF-CMP-" + (incidentCode != null ? incidentCode : orderId) + "-" + System.currentTimeMillis();
+
+        RefundRecord refund = new RefundRecord();
+        refund.setPaymentId(paymentId);
+        refund.setOrderId(orderId);
+        refund.setUserId(customerUserId);
+        refund.setAmount(amount);
+        refund.setStatus("PENDING");
+        refund.setReason(compReason.toString());
+        refund.setProcessedByUserId(actorUserId);
+        refund.setTransactionId(transactionId);
+
+        boolean hasBankAccount = false;
+        if (customerUserId != null) {
+            var bankAcc = userBankAccountRepository.findByUserId(customerUserId);
+            if (bankAcc.isPresent()) {
+                var acc = bankAcc.get();
+                refund.setBankName(acc.getBankName());
+                refund.setBankCode(acc.getBankCode());
+                refund.setAccountNumber(acc.getAccountNumber());
+                refund.setAccountHolderName(acc.getAccountHolderName());
+                hasBankAccount = true;
+            } else {
+                // Khách hàng chưa có tài khoản ngân hàng -> gửi thông báo nhắc nhở nhập tài khoản ngân hàng
+                try {
+                    notificationClient.requestNotification(new com.huynqb.laundrylocker.common.dto.NotificationRequest(
+                            customerUserId,
+                            "Cập nhật tài khoản ngân hàng nhận bồi thường",
+                            "Đơn hàng #" + orderId + " đã được tạo phiếu hoàn tiền bồi thường. Vui lòng cập nhật tài khoản ngân hàng để nhận tiền hoàn.",
+                            "BANK_ACCOUNT_REQUIRED",
+                            orderId,
+                            "REFUND"
+                    ));
+                } catch (Exception ex) {
+                    log.warn("Could not notify customer about missing bank account: {}", ex.getMessage());
+                }
+            }
+        }
+
+        RefundRecord saved = refundRepository.save(refund);
+
+        try {
+            orderClient.updatePaymentStatus(orderId, "REFUND_PENDING", "Đã tạo phiếu hoàn tiền bồi thường sự cố", actorUserId);
+        } catch (Exception ex) {
+            log.warn("Could not update order payment status to REFUND_PENDING: {}", ex.getMessage());
+        }
+
+        return new com.huynqb.laundrylocker.payment.dto.internal.CompensationRefundResult(
+                saved.getId(), orderId, amount, transactionId, saved.getStatus(), hasBankAccount);
+    }
+
     @Transactional(readOnly = true)
     public PaymentResponse get(Long id) {
         return toResponse(find(id));

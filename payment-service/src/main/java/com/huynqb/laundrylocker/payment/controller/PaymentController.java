@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -216,6 +217,19 @@ public class PaymentController {
         return ApiResponse.ok(
                 "ORDER_REFUNDED", "Order payments refunded to wallet",
                 paymentService.refundOrder(orderId, reason, actorUserId));
+    }
+
+    @PostMapping("/internal/payments/orders/{orderId}/compensation-refund")
+    public ApiResponse<com.huynqb.laundrylocker.payment.dto.internal.CompensationRefundResult> createCompensationRefundInternal(
+            @PathVariable Long orderId,
+            @RequestParam BigDecimal amount,
+            @RequestParam(required = false) BigDecimal percentage,
+            @RequestParam String incidentCode,
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) Long actorUserId) {
+        return ApiResponse.ok(
+                "COMPENSATION_REFUND_CREATED", "Compensation refund created",
+                paymentService.createCompensationRefund(orderId, amount, percentage, incidentCode, reason, actorUserId));
     }
 
     @GetMapping("/internal/payments/{id}")

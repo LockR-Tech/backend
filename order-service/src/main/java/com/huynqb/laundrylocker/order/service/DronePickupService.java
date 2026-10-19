@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.dto.DeliveryStatusNotificationRequest;
 import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
+import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.DronePickup;
 import com.huynqb.laundrylocker.order.model.DronePickupOffer;
 import com.huynqb.laundrylocker.order.model.DroneTechnicianPresence;
@@ -164,6 +165,26 @@ public class DronePickupService {
             }
         }
         return false;
+    }
+
+    public Set<Long> getBusyDroneTechnicianIds() {
+        Set<Long> busyIds = new HashSet<>();
+        for (DronePickup holding : pickupRepository.findByStatusInOrderByCreatedAtAsc(HOLDING)) {
+            if (holding.getTechnicianId() != null && busy(holding.getTechnicianId())) {
+                busyIds.add(holding.getTechnicianId());
+            }
+        }
+        for (DroneMission mission : missionRepository.findByStatusIn(ACTIVE_MISSION)) {
+            if (mission.getAssignedByUserId() != null && busy(mission.getAssignedByUserId())) {
+                busyIds.add(mission.getAssignedByUserId());
+            }
+        }
+        for (DronePickup carrying : pickupRepository.findByStatusInOrderByCreatedAtAsc(List.of(DronePickup.PICKED_UP))) {
+            if (carrying.getTechnicianId() != null && busy(carrying.getTechnicianId())) {
+                busyIds.add(carrying.getTechnicianId());
+            }
+        }
+        return busyIds;
     }
 
     private static boolean activeOrder(LockerOrder order) {

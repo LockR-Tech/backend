@@ -48,6 +48,9 @@ public class LockerReport {
     @Column(name = "external_incident_id")
     private Long externalIncidentId;
 
+    @Column(name = "incident_code", length = 64)
+    private String incidentCode;
+
     @Column(name = "ticket_type", length = 40)
     private String ticketType;
 

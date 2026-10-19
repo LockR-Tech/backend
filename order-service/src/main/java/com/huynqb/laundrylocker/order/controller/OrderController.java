@@ -122,6 +122,11 @@ public class OrderController {
         return ApiResponse.ok(orderService.getActiveOrderByBox(boxId));
     }
 
+    @GetMapping("/internal/orders/drone-technicians/busy-ids")
+    public ApiResponse<java.util.Set<Long>> getBusyDroneTechnicianIds() {
+        return ApiResponse.ok(dronePickupService.getBusyDroneTechnicianIds());
+    }
+
     @PostMapping("/internal/orders/{id}/relocate-box")
     public ApiResponse<OrderResponse> relocateBox(
             @PathVariable Long id,

@@ -45,6 +45,7 @@ public record LockerReportResponse(
         Long droneUnitId,
         String droneCode,
         Long externalIncidentId,
+        String incidentCode,
         String ticketType,
         // Họ tên KTV đang được giao phiếu (null khi chưa giao / không tra được)
         String assignedToTechnicianName,
