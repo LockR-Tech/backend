@@ -13,7 +13,7 @@ import java.util.List;
 public interface UserClient {
 
     @GetMapping("/{id}")
-    ApiResponse<UserSummary> getUser(@PathVariable Long id);
+    ApiResponse<UserSummary> getUser(@PathVariable("id") Long id);
 
     /// Người dùng ACTIVE có vai trò `role` — để báo phiếu cho mọi KTV tủ khi tủ chưa có người phụ trách.
     @GetMapping
