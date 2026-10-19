@@ -65,7 +65,7 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                         5, 1, 100, "phiếu"),
                 bool(REQUIRE_RESOLUTION_PHOTO, MAINTENANCE, "Bắt buộc ảnh nghiệm thu",
                         "KTV phải có ít nhất một ảnh nghiệm thu mới hoàn tất được phiếu (admin không bị chặn).",
-                        false),
+                        false).asPublic(),
                 integer(SCHEDULE_REMINDER_LEAD_HOURS, MAINTENANCE, "Nhắc lịch kiểm tra trước hạn",
                         "Mỗi sáng (07:00) nhắc KTV các lịch định kỳ sẽ tới hạn trong số giờ này hoặc đã quá hạn; "
                                 + "mỗi kỳ chỉ nhắc một lần. 0 = chỉ nhắc khi đã tới hạn.",
@@ -90,6 +90,6 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                         "Chỉ để hiển thị trên app (dài × rộng × cao).", "30 × 80 × 40 cm", List.of()).asPublic(),
 
                 integer(DRONE_LOW_BATTERY_PERCENT, DRONE, "Pin tối thiểu để drone cất cánh",
-                        "Drone có pin ≤ ngưỡng này không được chuyển sang IN_FLIGHT.", 20, 0, 100, "%"));
+                        "Drone có pin ≤ ngưỡng này không được chuyển sang IN_FLIGHT.", 20, 0, 100, "%").asPublic());
     }
 }
