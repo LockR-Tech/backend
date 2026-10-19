@@ -45,6 +45,17 @@ public class PaymentController {
         return ApiResponse.ok("PAYMENT_CHECKOUT", "Checkout processed", paymentService.checkout(userId, request));
     }
 
+    /// Nút "Giả lập thanh toán" khi test (admin bật trong Cài đặt → Thanh toán). Body: `paymentId` hoặc
+    /// `referenceId` (mã nạp ví), `amount` tuỳ chọn (bỏ trống = đủ số tiền).
+    @PostMapping("/api/payments/simulate")
+    public ApiResponse<PaymentResponse> simulate(
+            @RequestBody SimulatePaymentRequest request,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok("PAYMENT_SIMULATED", "Đã giả lập thanh toán",
+                paymentService.simulateTransfer(userId, roles, request.paymentId(), request.referenceId(), request.amount()));
+    }
+
     /// Tạo giao dịch với userId/số tiền tuỳ ý trong body — chỉ ADMIN (đường cũ ngoài /api/admin). Khách thanh
     /// toán đơn qua /api/payments/checkout (số tiền lấy từ đơn).
     @PostMapping("/api/payments")

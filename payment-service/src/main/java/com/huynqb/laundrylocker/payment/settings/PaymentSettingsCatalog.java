@@ -34,9 +34,14 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
     public static final String REFUND_ALLOWED_REASONS = "app.payment.refund-allowed-reasons";
     public static final String REFUND_REQUIRE_TRANSFER_REF = "app.payment.refund-require-transfer-ref";
 
+    // Giả lập thanh toán để test (không có tiền thật)
+    public static final String SIMULATION_ENABLED = "app.payment.simulation-enabled";
+    public static final String SIMULATION_ALLOWED_USER_IDS = "app.payment.simulation-allowed-user-ids";
+
     private static final String TOPUP = "Nạp ví";
     private static final String METHODS = "Phương thức thanh toán";
     private static final String REFUND = "Hoàn tiền & khiếu nại";
+    private static final String SIMULATION = "Giả lập thanh toán (test)";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -74,6 +79,15 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
                         List.of()).asPublic(),
                 bool(REFUND_REQUIRE_TRANSFER_REF, REFUND, "Bắt buộc nhập mã GD ngân hàng khi duyệt",
                         "Bật: Quản trị viên bắt buộc phải điền mã giao dịch / UNC ngân hàng trước khi xác nhận đã chuyển tiền.",
-                        false));
+                        false),
+
+                bool(SIMULATION_ENABLED, SIMULATION, "Hiện nút giả lập thanh toán",
+                        "Bật: màn thanh toán VietQR trên app và kiosk có nút \"Giả lập thanh toán\" — bấm là coi như "
+                                + "đã nhận chuyển khoản (đủ hoặc một phần), không có tiền thật. CHỈ BẬT KHI TEST: giao dịch "
+                                + "giả lập vẫn tính như thật (đơn PAID, tích điểm, doanh thu, yêu cầu hoàn tiền).",
+                        false).asPublic(),
+                string(SIMULATION_ALLOWED_USER_IDS, SIMULATION, "Tài khoản được giả lập thanh toán",
+                        "Danh sách user id cách nhau bởi dấu phẩy. Để trống = mọi tài khoản (nút hiện với mọi khách).",
+                        "", List.of()));
     }
 }
