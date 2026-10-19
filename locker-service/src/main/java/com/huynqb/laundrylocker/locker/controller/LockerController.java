@@ -510,13 +510,19 @@ public class LockerController {
             @RequestParam(required = false, defaultValue = "false") boolean all,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         if (mine && userId != null) {
-            return ApiResponse.ok(droneReportsOnly(lockerService.assignedReports(userId)));
+            return ApiResponse.ok(lockerService.assignedDroneReports(userId));
         }
         if (routed && userId != null) {
-            return ApiResponse.ok(routedDroneReports(lockerService.openReports(), userId));
+            return ApiResponse.ok(lockerService.routedDroneReports(userId));
         }
         if (all) {
-            return ApiResponse.ok(droneReportsOnly(lockerService.allReports()));
+            if (userId != null) {
+                return ApiResponse.ok(lockerService.visibleDroneReportsForTechnician(userId));
+            }
+            return ApiResponse.ok(lockerService.allDroneReports());
+        }
+        if (userId != null) {
+            return ApiResponse.ok(lockerService.routedDroneReports(userId));
         }
         return ApiResponse.ok(routedDroneReports(lockerService.openReports(), userId));
     }

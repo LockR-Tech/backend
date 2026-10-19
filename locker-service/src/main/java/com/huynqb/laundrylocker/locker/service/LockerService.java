@@ -1118,6 +1118,28 @@ public class LockerService {
         return toReports(reports);
     }
 
+    /**
+     * Danh sách sự cố hiển thị cho KTV Drone theo đúng phân công và phụ trách:
+     * 1. Sự cố đã có người nhận: CHỈ hiển thị cho người đó.
+     * 2. Sự cố mới / chưa ai nhận:
+     *    - Drone có KTV phụ trách: CHỈ hiển thị cho KTV phụ trách drone đó xem và nhận việc.
+     *    - Drone chưa có KTV phụ trách: hiển thị cho tất cả KTV drone trong danh sách chờ nhận.
+     */
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> visibleDroneReportsForTechnician(Long userId) {
+        return allDroneReports().stream()
+                .filter(report -> {
+                    if (report.assignedToUserId() != null) {
+                        return Objects.equals(report.assignedToUserId(), userId);
+                    }
+                    if (report.routedToUserId() != null) {
+                        return Objects.equals(report.routedToUserId(), userId);
+                    }
+                    return true;
+                })
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public LockerReportResponse getDroneReport(Long reportId) {
         return toReport(requireDroneReport(reportId));
@@ -2408,6 +2430,7 @@ public class LockerService {
         report.setTitle("Kiểm tra an toàn sau sự cố " + request.incidentCode());
         report.setDescription(buildIncidentInspectionDescription(request));
         Long inspectionTechnician = activeTechnician(drone.getAssignedTechnicianId(), DRONE_TECHNICIAN);
+        report.setRoutedToUserId(drone.getAssignedTechnicianId());
         if (inspectionTechnician != null) {
             report.setAssignedToUserId(inspectionTechnician);
             report.setAssignedAt(LocalDateTime.now());
@@ -3058,7 +3081,11 @@ public class LockerService {
                 attachments,
                 report.getCategory(),
                 Boolean.TRUE.equals(report.getBlocksLocker()),
-                report.getRoutedToUserId(),
+                report.getRoutedToUserId() != null
+                        ? report.getRoutedToUserId()
+                        : (report.getDroneUnitId() == null
+                                ? null
+                                : droneUnitRepository.findById(report.getDroneUnitId()).map(DroneUnit::getAssignedTechnicianId).orElse(null)),
                 report.getScheduleId(),
                 report.getOrderId(),
                 report.getOrderCode(),
