@@ -237,6 +237,68 @@ class PaymentServiceMoneyRulesTest {
         assertEquals(0, BigDecimal.valueOf(15000).compareTo((BigDecimal) payload.get("paidAmount")));
     }
 
+    // ------------------------------------------------------------------ giả lập thanh toán
+
+    @Test
+    void simulationIsRejectedWhileAdminHasItTurnedOff() {
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.simulateTransfer(44L, "CUSTOMER", 1L, null, null));
+
+        assertEquals("PAYMENT_SIMULATION_DISABLED", error.getCode());
+    }
+
+    /// Bật giả lập: giao dịch VietQR đang chờ được ghi như webhook thật (đủ số hoặc một phần).
+    @Test
+    void simulatedTransferCompletesThePendingPaymentLikeARealOne() {
+        PaymentService simulating = withSimulation("44");
+        PaymentRecord pending = new PaymentRecord();
+        pending.setOrderId(55L);
+        pending.setUserId(44L);
+        pending.setMethod("SEPAY");
+        pending.setStatus("PENDING");
+        pending.setReferenceId("PAY-55-9");
+        pending.setDescription("Thanh toán đơn #55");
+        pending.setAmount(BigDecimal.valueOf(15000));
+        repository.save(pending);
+        when(repository.findById(pending.getId())).thenReturn(Optional.of(pending));
+
+        simulating.simulateTransfer(44L, "CUSTOMER", pending.getId(), null, BigDecimal.valueOf(1000));
+
+        assertEquals("COMPLETED", pending.getStatus());
+        assertEquals(0, BigDecimal.valueOf(1000).compareTo(pending.getAmount()));
+        assertTrue(pending.getDescription().startsWith("[Giả lập]"), pending.getDescription());
+        assertTrue(pending.getReferenceTransactionId().startsWith("SIMULATED-"));
+        assertEquals(0, BigDecimal.valueOf(1000).compareTo((BigDecimal) publishedPayload().get("amount")));
+    }
+
+    @Test
+    void simulationOnlyForAllowedAccountsAndTheirOwnPayments() {
+        PaymentService simulating = withSimulation("44");
+        PaymentRecord pending = new PaymentRecord();
+        pending.setUserId(45L);
+        pending.setMethod("SEPAY");
+        pending.setStatus("PENDING");
+        pending.setAmount(BigDecimal.valueOf(15000));
+        repository.save(pending);
+        when(repository.findById(pending.getId())).thenReturn(Optional.of(pending));
+
+        assertEquals("PAYMENT_SIMULATION_DISABLED", assertThrows(BusinessException.class,
+                () -> simulating.simulateTransfer(45L, "CUSTOMER", pending.getId(), null, null)).getCode());
+        assertEquals("ORDER_FORBIDDEN", assertThrows(BusinessException.class,
+                () -> simulating.simulateTransfer(44L, "CUSTOMER", pending.getId(), null, null)).getCode());
+        assertEquals("PENDING", pending.getStatus());
+    }
+
+    private PaymentService withSimulation(String allowedUserIds) {
+        return new PaymentService(
+                repository, refundRepository, userBankAccountRepository, rabbitTemplate, walletService,
+                orderClient, notificationClient, new SepayService(),
+                TestPaymentRules.of(Map.of(
+                        PaymentSettingsCatalog.ENABLED_METHODS, "CASH,WALLET,SEPAY",
+                        PaymentSettingsCatalog.SIMULATION_ENABLED, true,
+                        PaymentSettingsCatalog.SIMULATION_ALLOWED_USER_IDS, allowedUserIds)));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static Map<String, Object> transfer(String content, String amount, String referenceCode) {

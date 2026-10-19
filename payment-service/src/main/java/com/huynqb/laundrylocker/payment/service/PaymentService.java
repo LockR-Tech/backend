@@ -329,6 +329,12 @@ public class PaymentService {
                     refId, payment.getId(), payment.getStatus());
             return toResponse(repository.save(payment));
         }
+        return completeTransfer(payment, received, refId);
+    }
+
+    /// Ghi nhận khoản chuyển khoản đã nhận `received` đồng cho giao dịch SePay đang chờ — dùng chung cho
+    /// webhook thật và nút giả lập.
+    private PaymentResponse completeTransfer(PaymentRecord payment, BigDecimal received, String refId) {
         // Ghi đúng số tiền thực nhận. Chuyển thiếu vẫn là tiền đã thu (hoàn được khi huỷ đơn), nhưng
         // order-service cộng dồn theo số này nên đơn chỉ thành PAID khi tổng đã thu đủ.
         BigDecimal required = payment.getAmount() == null ? BigDecimal.ZERO : payment.getAmount();
@@ -353,6 +359,42 @@ public class PaymentService {
         }
         publish(DomainEventNames.PAYMENT_COMPLETED, saved);
         return toResponse(saved);
+    }
+
+    /// Nút "Giả lập thanh toán" (test): coi như SePay vừa báo đã nhận `amount` đồng (bỏ trống = đủ số của
+    /// giao dịch) cho giao dịch chuyển khoản đang chờ — thanh toán đơn hoặc nạp ví. Chỉ khi admin bật
+    /// `app.payment.simulation-enabled` và tài khoản nằm trong danh sách cho phép; chỉ người trả (hoặc ADMIN).
+    @Transactional
+    public PaymentResponse simulateTransfer(Long userId, String roles, Long paymentId, String referenceId, BigDecimal amount) {
+        if (!rules.simulationAllowedFor(userId)) {
+            throw new BusinessException("PAYMENT_SIMULATION_DISABLED",
+                    "Giả lập thanh toán đang tắt hoặc tài khoản này không được dùng", HttpStatus.FORBIDDEN);
+        }
+        PaymentRecord payment = paymentId != null
+                ? find(paymentId)
+                : repository.findByReferenceId(StringUtils.hasText(referenceId) ? referenceId.trim() : "")
+                        .orElseThrow(() -> new NotFoundException("Payment with ref: " + referenceId, -1L));
+        if (!UserRoles.isAdmin(roles) && !userId.equals(payment.getUserId())) {
+            throw orderForbidden();
+        }
+        String method = payment.getMethod() == null ? "" : payment.getMethod().toUpperCase(Locale.ROOT);
+        if (!method.startsWith("SEPAY") || !"PENDING".equalsIgnoreCase(payment.getStatus())) {
+            throw new BusinessException("PAYMENT_SIMULATION_INVALID",
+                    "Chỉ giả lập được giao dịch chuyển khoản đang chờ thanh toán", HttpStatus.CONFLICT);
+        }
+        BigDecimal received = amount != null && amount.signum() > 0 ? amount : payment.getAmount();
+        if (received == null || received.signum() <= 0) {
+            throw new BusinessException("PAYMENT_SIMULATION_INVALID", "Số tiền giả lập phải lớn hơn 0");
+        }
+        payment.setReferenceTransactionId("SIMULATED-" + System.currentTimeMillis());
+        payment.setDescription(simulatedNote(payment.getDescription()));
+        log.info("Payment {} simulated as received {} by user {}", payment.getId(), received, userId);
+        return completeTransfer(payment, received, payment.getReferenceId());
+    }
+
+    static String simulatedNote(String description) {
+        String full = "[Giả lập] " + (StringUtils.hasText(description) ? description : "Thanh toán");
+        return full.length() <= 255 ? full : full.substring(0, 255);
     }
 
     /// `PAY-{orderId}` hoặc `PAY-{orderId}-…` ⇒ orderId; mã khác (nạp ví, ORD-…) ⇒ null.
