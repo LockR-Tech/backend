@@ -3,6 +3,9 @@ package com.huynqb.laundrylocker.order.service;
 import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
+import com.huynqb.laundrylocker.common.media.MediaPurpose;
+import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.dto.DeliveryStatusNotificationRequest;
 import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
@@ -70,6 +73,7 @@ public class DronePickupService {
     private final DroneDeliveryFailureService failureService;
     private final com.huynqb.laundrylocker.order.client.UserClient userClient;
     private final OrderRules rules;
+    private final CloudinaryMediaStorage mediaStorage;
 
     // ------------------------------------------------------------------ presence
 
@@ -397,6 +401,12 @@ public class DronePickupService {
     /// KTV tới nhà người gửi và đã cầm kiện: đúng mã lấy hàng người gửi đọc, đúng kiện đã khai báo.
     @Transactional
     public void confirmPickedUp(Long orderId, Long technicianId, String pickupCode, boolean parcelMatched, String note) {
+        confirmPickedUp(orderId, technicianId, pickupCode, parcelMatched, note, null);
+    }
+
+    @Transactional
+    public void confirmPickedUp(
+            Long orderId, Long technicianId, String pickupCode, boolean parcelMatched, String note, MediaUpload pickupPhoto) {
         LockerOrder order = lockOrder(orderId);
         DronePickup pickup = lockPickup(orderId);
         requireAccepted(pickup, technicianId);
@@ -411,10 +421,18 @@ public class DronePickupService {
                     "DRONE_PICKUP_PARCEL_NOT_VERIFIED",
                     "Confirm the parcel matches the declaration, or report the pickup as failed");
         }
+        var verifiedPhoto = pickupPhoto == null
+                ? null
+                : mediaStorage.verify(pickupPhoto, MediaPurpose.DRONE_PICKUP, technicianId);
         LocalDateTime now = LocalDateTime.now();
         pickup.setStatus(DronePickup.PICKED_UP);
         pickup.setPickedUpAt(now);
         pickup.setPickupNote(StringUtils.hasText(note) ? note.trim() : null);
+        if (verifiedPhoto != null) {
+            pickup.setPickupPhotoPublicId(verifiedPhoto.publicId());
+            pickup.setPickupPhotoUrl(verifiedPhoto.secureUrl());
+            pickup.setPickupPhotoCapturedAt(now);
+        }
         pickupRepository.save(pickup);
         // Kiện rời tay người gửi: từ đây đơn đóng thì kiện phải được mang trả.
         order.setParcelDroppedAt(now);

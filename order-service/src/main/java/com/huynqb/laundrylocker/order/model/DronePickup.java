@@ -74,6 +74,15 @@ public class DronePickup {
     @Column(name = "pickup_note", length = 500)
     private String pickupNote;
 
+    @Column(name = "pickup_photo_public_id", length = 255)
+    private String pickupPhotoPublicId;
+
+    @Column(name = "pickup_photo_url", length = 1000)
+    private String pickupPhotoUrl;
+
+    @Column(name = "pickup_photo_captured_at")
+    private LocalDateTime pickupPhotoCapturedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
