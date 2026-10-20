@@ -247,6 +247,40 @@ class LockerServiceForceOpenAndIncidentTest {
         verify(orderClient).directHandover(55L, "123456");
     }
 
+    @Test
+    void lockOnlyWithoutLockingPreservesOccupiedWhenBoxHoldsOrder() {
+        box.setStatus("OCCUPIED");
+        when(orderClient.getActiveOrderByBox(BOX_ID))
+                .thenReturn(ApiResponse.ok(new ActiveBoxOrderDto(55L, "ORD-55", 7L, "Khách A", "0900", "SEND", "STORING", null, BOX_ID)));
+
+        service.resolveBoxIncident(100L, new BoxIncidentResolutionRequest(
+                BOX_ID, "LOCK_ONLY", null, null, null, null, null, false), TECH, "LOCKER_TECHNICIAN");
+
+        assertEquals("OCCUPIED", box.getStatus());
+        verify(boxRepository).save(box);
+    }
+
+    @Test
+    void updateBoxStatusThrowsWhenBoxHoldsOrder() {
+        box.setStatus("OCCUPIED");
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateBoxStatus(BOX_ID, "AVAILABLE"));
+
+        assertEquals("BOX_IN_USE", ex.getCode());
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+    }
+
+    @Test
+    void updateBoxStatusThrowsWhenTargetStatusIsOrderManaged() {
+        box.setStatus("AVAILABLE");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateBoxStatus(BOX_ID, "OCCUPIED"));
+
+        assertEquals("CANNOT_MANUALLY_ASSIGN_ORDER_STATUS", ex.getCode());
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+    }
+
     // ─── Cờ online của tủ ───
 
     @Test

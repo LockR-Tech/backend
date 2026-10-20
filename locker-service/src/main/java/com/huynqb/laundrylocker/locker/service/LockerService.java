@@ -343,8 +343,35 @@ public class LockerService {
     @Transactional
     public LockerBoxSummary updateBoxStatus(Long boxId, String status) {
         LockerBox box = findBox(boxId);
-        box.setStatus(status);
-        return toSummary(boxRepository.save(box));
+        String targetStatus = status != null ? status.trim().toUpperCase(Locale.ROOT) : "";
+        if (targetStatus.isEmpty()) {
+            throw new BusinessException("INVALID_STATUS", "Trạng thái ô không được để trống");
+        }
+        if (targetStatus.equalsIgnoreCase(box.getStatus())) {
+            return toSummary(box);
+        }
+        if (ORDER_HELD_BOX_STATUSES.contains(targetStatus)) {
+            throw new BusinessException(
+                    "CANNOT_MANUALLY_ASSIGN_ORDER_STATUS",
+                    "Không thể gán trạng thái " + targetStatus + " thủ công. Trạng thái này do luồng đơn hàng quản lý.",
+                    HttpStatus.BAD_REQUEST);
+        }
+        if (holdsOrder(box) || getActiveOrderByBox(boxId) != null) {
+            throw new BusinessException(
+                    "BOX_IN_USE",
+                    "Ô #" + box.getBoxNumber() + " đang chứa hàng hoặc giữ chỗ cho đơn hàng — không thể đổi trạng thái thủ công",
+                    HttpStatus.CONFLICT);
+        }
+        box.setStatus(targetStatus);
+        LockerBox saved = boxRepository.save(box);
+        syncBoxStateQuietly(saved, targetStatus);
+        publishLockerLayoutUpdated(
+                saved.getLockerId(),
+                saved.getId(),
+                saved.getBoxNumber(),
+                targetStatus,
+                "Cập nhật trạng thái ô #" + saved.getBoxNumber() + " sang " + targetStatus);
+        return toSummary(saved);
     }
 
     @Transactional
@@ -358,15 +385,22 @@ public class LockerService {
         if ((request.rowIndex() != null && request.rowIndex() < 0) || (request.colIndex() != null && request.colIndex() < 0)) {
             throw new BusinessException("INVALID_BOX_POSITION", "Hàng/cột của ô không được âm");
         }
-        if (StringUtils.hasText(request.status())
-                && "AVAILABLE".equalsIgnoreCase(request.status().trim())
-                && holdsOrder(box)) {
-            // Ô đang giữ hàng/chỗ cho một đơn: đưa về AVAILABLE thì ô bị đặt chồng, đơn mất ô.
-            // Ô được nhả qua luồng đơn (release) hoặc qua phiếu sự cố.
-            throw new BusinessException(
-                    "BOX_IN_USE",
-                    "Ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ cho một đơn — không thể chuyển về Trống",
-                    HttpStatus.CONFLICT);
+        if (StringUtils.hasText(request.status())) {
+            String targetStatus = request.status().trim().toUpperCase(Locale.ROOT);
+            if (!targetStatus.equalsIgnoreCase(box.getStatus())) {
+                if (ORDER_HELD_BOX_STATUSES.contains(targetStatus)) {
+                    throw new BusinessException(
+                            "CANNOT_MANUALLY_ASSIGN_ORDER_STATUS",
+                            "Không thể gán trạng thái " + targetStatus + " thủ công. Trạng thái này do luồng đơn hàng quản lý.",
+                            HttpStatus.BAD_REQUEST);
+                }
+                if (holdsOrder(box) || getActiveOrderByBox(boxId) != null) {
+                    throw new BusinessException(
+                            "BOX_IN_USE",
+                            "Ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ cho một đơn — không thể đổi trạng thái",
+                            HttpStatus.CONFLICT);
+                }
+            }
         }
         if (request.boxNumber() != null) {
             box.setBoxNumber(request.boxNumber());
@@ -1035,6 +1069,85 @@ public class LockerService {
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId)));
     }
 
+    @Transactional
+    public void deleteReport(Long reportId) {
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        doDeleteReport(report);
+    }
+
+    private void doDeleteReport(LockerReport report) {
+        Long reportId = report.getId();
+        if (OPEN_REPORT_STATUSES.contains(report.getStatus())) {
+            restoreAssetsAfterClose(report);
+        }
+
+        // 1. Unlink inspection logs
+        List<MaintenanceInspectionLog> inspectionLogs = inspectionLogRepository.findByCreatedReportId(reportId);
+        for (MaintenanceInspectionLog log : inspectionLogs) {
+            log.setCreatedReportId(null);
+            inspectionLogRepository.save(log);
+        }
+
+        // 2. Clear schedule pendingReportId if pointing to this report
+        for (MaintenanceSchedule schedule : scheduleRepository.findByPendingReportId(reportId)) {
+            schedule.setPendingReportId(null);
+            scheduleRepository.save(schedule);
+        }
+
+        // 3. Delete attachments & cloudinary images
+        attachmentService.deleteByReportId(reportId);
+
+        // 4. Delete repair logs
+        List<RepairLog> logs = repairLogRepository.findByReportIdOrderByCreatedAtAsc(reportId);
+        if (!logs.isEmpty()) {
+            repairLogRepository.deleteAll(logs);
+        }
+
+        // 5. Delete ratings
+        ratingRepository.findByReportId(reportId).ifPresent(ratingRepository::delete);
+
+        // 6. Delete report entity
+        reportRepository.delete(report);
+    }
+
+    @Transactional
+    public int deleteReportsBatch(BatchDeleteReportsRequest request) {
+        List<LockerReport> targetReports;
+        boolean isAll = request != null && Boolean.TRUE.equals(request.deleteAll());
+        String category = request != null ? request.category() : null;
+
+        if (isAll) {
+            targetReports = reportRepository.findAll();
+        } else if (request != null && request.reportIds() != null && !request.reportIds().isEmpty()) {
+            targetReports = reportRepository.findAllById(request.reportIds());
+        } else {
+            return 0;
+        }
+
+        if (StringUtils.hasText(category)) {
+            if ("DRONE".equalsIgnoreCase(category)) {
+                targetReports = targetReports.stream()
+                        .filter(r -> "DRONE".equalsIgnoreCase(r.getCategory()) || r.getDroneUnitId() != null)
+                        .toList();
+            } else if ("LOCKER".equalsIgnoreCase(category) || "KIOSK".equalsIgnoreCase(category)) {
+                targetReports = targetReports.stream()
+                        .filter(r -> !"DRONE".equalsIgnoreCase(r.getCategory()) && r.getDroneUnitId() == null)
+                        .toList();
+            }
+        }
+
+        if (targetReports.isEmpty()) {
+            return 0;
+        }
+
+        for (LockerReport report : targetReports) {
+            doDeleteReport(report);
+        }
+
+        return targetReports.size();
+    }
+
     @Transactional(readOnly = true)
     public List<LockerStatsResponse> stats(Long storeId) {
         return lockerRepository.findAll().stream()
@@ -1568,7 +1681,13 @@ public class LockerService {
     }
 
     private void restoreBox(LockerBox box) {
-        String target = StringUtils.hasText(box.getPreFaultStatus()) ? box.getPreFaultStatus() : "AVAILABLE";
+        String target;
+        if (StringUtils.hasText(box.getPreFaultStatus())) {
+            target = box.getPreFaultStatus();
+        } else {
+            ActiveBoxOrderDto activeOrder = getActiveOrderByBox(box.getId());
+            target = (activeOrder != null) ? "OCCUPIED" : "AVAILABLE";
+        }
         box.setStatus(target);
         box.setPreFaultStatus(null);
         box.setFaultReason(null);
@@ -3864,14 +3983,27 @@ public class LockerService {
                     publishBoxFault(box, box.getFaultReason());
                     publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "FAULT", "Đã khóa bảo trì ô #" + box.getBoxNumber());
                 } else {
-                    box.setStatus("AVAILABLE");
-                    box.setFaultReason(null);
-                    box.setPreFaultStatus(null);
-                    box.setReservedUntil(null);
-                    boxRepository.save(box);
-                    syncBoxStateQuietly(box, "AVAILABLE");
-                    note = "[KIỂM TRA HIỆN TRƯỜNG] KTV kiểm tra hiện trường: Không phát hiện lỗi hoặc khách báo nhầm, không khóa ô #" + box.getBoxNumber();
-                    publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Ô #" + box.getBoxNumber() + " hoạt động bình thường");
+                    boolean boxHasGoods = activeOrder != null || holdsOrder(box);
+                    if (boxHasGoods) {
+                        String currentStatus = StringUtils.hasText(box.getStatus()) && !"FAULT".equalsIgnoreCase(box.getStatus())
+                                ? box.getStatus()
+                                : (StringUtils.hasText(box.getPreFaultStatus()) ? box.getPreFaultStatus() : "OCCUPIED");
+                        box.setStatus(currentStatus);
+                        box.setFaultReason(null);
+                        boxRepository.save(box);
+                        syncBoxStateQuietly(box, currentStatus);
+                        note = "[KIỂM TRA HIỆN TRƯỜNG] KTV kiểm tra hiện trường: Không khóa ô #" + box.getBoxNumber() + ", giữ nguyên trạng thái ô và hàng của khách (" + currentStatus + ")";
+                        publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), currentStatus, "Ô #" + box.getBoxNumber() + " có hàng, giữ trạng thái hoạt động");
+                    } else {
+                        box.setStatus("AVAILABLE");
+                        box.setFaultReason(null);
+                        box.setPreFaultStatus(null);
+                        box.setReservedUntil(null);
+                        boxRepository.save(box);
+                        syncBoxStateQuietly(box, "AVAILABLE");
+                        note = "[KIỂM TRA HIỆN TRƯỜNG] KTV kiểm tra hiện trường: Không phát hiện lỗi hoặc khách báo nhầm, không khóa ô #" + box.getBoxNumber();
+                        publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Ô #" + box.getBoxNumber() + " hoạt động bình thường");
+                    }
                 }
                 logEntry.setNote(note);
                 Long logId = repairLogRepository.save(logEntry).getId();
