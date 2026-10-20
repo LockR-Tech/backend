@@ -367,7 +367,9 @@ public class DroneDeliveryQueryService {
                 pickup != null && revealPickupCode ? pickup.getPickupCode() : null,
                 pickup == null ? null : pickup.getFailureReason(),
                 pickup == null ? null : pickup.getFailureNote(),
-                pickup == null ? null : pickup.getPickupNote());
+                pickup == null ? null : pickup.getPickupNote(),
+                pickup == null ? null : pickup.getPickupPhotoUrl(),
+                pickup == null ? null : pickup.getPickupPhotoCapturedAt());
     }
 
     private DroneIncidentLinkView blockView(LockerOrder order) {

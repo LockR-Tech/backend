@@ -10,6 +10,7 @@ import java.util.Locale;
 public enum MediaPurpose {
     AVATAR("avatars", false),
     REPORT_EVIDENCE("reports", false),
+    DRONE_PICKUP("drone-pickups", false),
     STORE_IMAGE("stores", true),
     PROMOTION_IMAGE("promotions", true);
 

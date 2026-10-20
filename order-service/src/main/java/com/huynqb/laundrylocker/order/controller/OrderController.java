@@ -470,7 +470,8 @@ public class OrderController {
             @PathVariable Long orderId,
             @Valid @RequestBody DronePickupConfirmRequest request,
             @RequestHeader("X-User-Id") Long userId) {
-        dronePickupService.confirmPickedUp(orderId, userId, request.pickupCode(), request.parcelMatched(), request.note());
+        dronePickupService.confirmPickedUp(
+                orderId, userId, request.pickupCode(), request.parcelMatched(), request.note(), request.pickupPhoto());
         return ApiResponse.ok(
                 "DRONE_PARCEL_PICKED_UP", "Parcel picked up", droneDeliveryQueryService.getForTechnician(orderId, userId));
     }

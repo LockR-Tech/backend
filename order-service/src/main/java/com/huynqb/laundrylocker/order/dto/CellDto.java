@@ -8,5 +8,18 @@ public record CellDto(
         Integer rowIndex,
         Integer colIndex,
         String status,
-        String faultReason) {
+        String faultReason,
+        Long lockerId) {
+
+    public CellDto(
+            Long id,
+            Integer boxNumber,
+            String size,
+            String cellType,
+            Integer rowIndex,
+            Integer colIndex,
+            String status,
+            String faultReason) {
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, null);
+    }
 }

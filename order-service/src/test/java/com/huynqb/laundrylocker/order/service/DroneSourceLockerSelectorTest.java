@@ -1,10 +1,8 @@
 package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
-import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
-import com.huynqb.laundrylocker.order.dto.CellDto;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
@@ -15,10 +13,9 @@ import static org.mockito.Mockito.*;
 
 class DroneSourceLockerSelectorTest {
     private final LockerDroneClient drones = mock(LockerDroneClient.class);
-    private final LockerCellClient cells = mock(LockerCellClient.class);
     private final OrderRules rules = mock(OrderRules.class);
     private final DroneSourceLockerSelector selector = new DroneSourceLockerSelector(
-            mock(LockerLookupClient.class), drones, cells, rules);
+            mock(LockerLookupClient.class), drones, rules);
 
     @Test
     void onlyIdleActiveDronesWithKnownSufficientBatteryCanServeANewPickup() {
@@ -35,13 +32,17 @@ class DroneSourceLockerSelectorTest {
     }
 
     @Test
-    void sourceMustHaveAFreeDroneCellAsWellAsAReadyDroneAndLandingPad() {
+    void sourceNeedsAReadyDroneAndLandingPadButNoFreeDroneCell() {
+        // Ô DRONE chỉ để nhận hàng: tủ bay hết ô trống vẫn phóng được vì kiện nạp thẳng lên drone.
         when(drones.getLockerLayout(1L)).thenReturn(ApiResponse.ok(new LockerLayoutDto(1L, "A", "A", "ACTIVE", true, "OK")));
         when(drones.listDroneUnits(1L)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
-        when(cells.findAvailable(1L, null, "DRONE")).thenReturn(ApiResponse.ok(null));
-        assertFalse(selector.serviceable(1L));
-        when(cells.findAvailable(1L, null, "DRONE")).thenReturn(ApiResponse.ok(new CellDto(1L, 1, "M", "DRONE", 0, 0, "AVAILABLE", null)));
         assertTrue(selector.serviceable(1L));
+
+        when(drones.listDroneUnits(1L)).thenReturn(ApiResponse.ok(List.of(drone("FAULT", 90, true))));
+        assertFalse(selector.serviceable(1L));
+        when(drones.listDroneUnits(1L)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
+        when(drones.getLockerLayout(1L)).thenReturn(ApiResponse.ok(new LockerLayoutDto(1L, "A", "A", "ACTIVE", true, "FAULT")));
+        assertFalse(selector.serviceable(1L));
     }
 
     private DroneUnitDto drone(String status, Integer battery, boolean active) {

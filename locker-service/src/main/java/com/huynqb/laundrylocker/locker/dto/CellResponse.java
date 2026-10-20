@@ -37,7 +37,22 @@ public record CellResponse(
         String status,
         String faultReason,
         Boolean doorOpen,
-        String hwState) {
+        String hwState,
+        Long lockerId) {
+
+    public CellResponse(
+            Long id,
+            Integer boxNumber,
+            String size,
+            String cellType,
+            Integer rowIndex,
+            Integer colIndex,
+            String status,
+            String faultReason,
+            Boolean doorOpen,
+            String hwState) {
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, doorOpen, hwState, null);
+    }
 
     public CellResponse(
             Long id,
@@ -48,6 +63,6 @@ public record CellResponse(
             Integer colIndex,
             String status,
             String faultReason) {
-        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, null, null);
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, null, null, null);
     }
 }
