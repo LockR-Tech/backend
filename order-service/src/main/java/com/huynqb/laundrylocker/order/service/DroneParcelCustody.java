@@ -22,6 +22,12 @@ public final class DroneParcelCustody {
 
     /// Đơn đã đóng mà không giao được và kiện chưa được trả lại cho người gửi.
     public static boolean returnPending(LockerOrder order, DroneMission mission) {
+        // Kiện bị báo rơi thuộc luồng xử lý sự cố rơi kiện (Drone Incidents), không áp dụng luồng trả kiện tại ô/đội bay
+        if ("DROP_REPORTED".equals(order.getDeliveryStage())
+                || (mission != null && "DROP_REPORTED".equals(mission.getStatus()))
+                || (order.getStaffNote() != null && order.getStaffNote().contains("sự cố rơi kiện"))) {
+            return false;
+        }
         return "CANCELED".equals(order.getStatus())
                 && order.getParcelReturnedAt() == null
                 && inSystem(order, mission);

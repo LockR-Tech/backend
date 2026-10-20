@@ -1,4 +1,4 @@
-package com.huynqb.laundrylocker.order.service;
+﻿package com.huynqb.laundrylocker.order.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
@@ -45,6 +45,7 @@ class DroneParcelIncidentServiceTest {
     @Mock OrderStatusHistoryRepository orderHistoryRepository;
     @Mock DroneTelemetryRegistry telemetryRegistry;
     @Mock LockerDroneClient lockerDroneClient;
+    @Mock com.huynqb.laundrylocker.order.client.LockerLookupClient lockerLookupClient;
     @Mock UserClient userClient;
     @Mock NotificationClient notificationClient;
     @Mock DroneReturnCommandGateway returnCommandGateway;
@@ -61,7 +62,7 @@ class DroneParcelIncidentServiceTest {
         service = new DroneParcelIncidentService(
                 incidentRepository, evidenceRepository, timelineRepository, proposalRepository,
                 orderRepository, missionRepository, orderHistoryRepository, telemetryRegistry,
-                lockerDroneClient, userClient, notificationClient, returnCommandGateway,
+                lockerDroneClient, lockerLookupClient, userClient, notificationClient, returnCommandGateway,
                 compensationGateway, redeliveryGateway, dronePickupService, mediaStorage, new ObjectMapper(), rules);
         lenient().when(rules.incidentPolicy()).thenReturn(new com.huynqb.laundrylocker.order.settings.OrderRules.IncidentPolicy(
                 "v1", true, BigDecimal.valueOf(60), BigDecimal.ZERO, true, true, 4, true, true));

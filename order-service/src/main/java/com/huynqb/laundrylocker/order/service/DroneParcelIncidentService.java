@@ -10,9 +10,11 @@ import com.huynqb.laundrylocker.common.media.MediaPurpose;
 import com.huynqb.laundrylocker.common.media.VerifiedMedia;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
+import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.*;
+import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.model.*;
 import com.huynqb.laundrylocker.order.repository.*;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
@@ -33,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -56,6 +59,7 @@ public class DroneParcelIncidentService {
     private final OrderStatusHistoryRepository orderHistoryRepository;
     private final DroneTelemetryRegistry telemetryRegistry;
     private final LockerDroneClient lockerDroneClient;
+    private final LockerLookupClient lockerLookupClient;
     private final UserClient userClient;
     private final NotificationClient notificationClient;
     private final DroneReturnCommandGateway returnCommandGateway;
@@ -113,7 +117,7 @@ public class DroneParcelIncidentService {
 
         DroneTelemetryFrame telemetry = telemetryRegistry.latest(mission.getDroneCode()).orElse(null);
         boolean telemetryLive = telemetryRegistry.isLive(mission.getDroneCode());
-        Location location = incidentLocation(request, telemetry, telemetryLive, order);
+        Location location = incidentLocation(request, telemetry, telemetryLive, order, mission);
         VerifiedMedia snapshot = request.cameraSnapshot() == null
                 ? null
                 : mediaStorage.verify(request.cameraSnapshot(), MediaPurpose.REPORT_EVIDENCE, actorUserId);
@@ -228,12 +232,15 @@ public class DroneParcelIncidentService {
         result.put("batteryPercent", frame == null || frame.batteryPercent() == null ? -1 : frame.batteryPercent());
         result.put("flightMode", frame == null || frame.flight() == null || frame.flight().mode() == null
                 ? "UNKNOWN" : frame.flight().mode());
+        double[] routePos = calculateRouteCoordinates(order, mission);
+        double fallbackLat = routePos != null ? routePos[0] : FPT_HCM_LATITUDE;
+        double fallbackLng = routePos != null ? routePos[1] : FPT_HCM_LONGITUDE;
         result.put("latitude", frame != null && frame.hasPosition()
-                ? frame.lat() : simulatedLocation ? FPT_HCM_LATITUDE : 0D);
+                ? frame.lat() : simulatedLocation ? fallbackLat : 0D);
         result.put("longitude", frame != null && frame.hasPosition()
-                ? frame.lng() : simulatedLocation ? FPT_HCM_LONGITUDE : 0D);
+                ? frame.lng() : simulatedLocation ? fallbackLng : 0D);
         result.put("locationSource", frame != null && frame.hasPosition()
-                ? "TELEMETRY" : simulatedLocation ? "SIMULATION_FPT_HCM" : "UNAVAILABLE");
+                ? "TELEMETRY" : simulatedLocation ? "FLIGHT_PATH" : "UNAVAILABLE");
         result.put("observedAt", frame == null || frame.observedAt() == null ? "" : frame.observedAt());
         result.put("gpsFix", frame != null && frame.hasPosition());
         result.put("gpsFixType", frame == null || frame.gps() == null ? null : frame.gps().fixType());
@@ -855,16 +862,73 @@ public class DroneParcelIncidentService {
             ReportDroppedParcelRequest request,
             DroneTelemetryFrame telemetry,
             boolean telemetryLive,
-            LockerOrder order) {
+            LockerOrder order,
+            DroneMission mission) {
         if (telemetryLive && telemetry != null && telemetry.hasPosition()) {
             return new Location(telemetry.lat(), telemetry.lng(), null, "TELEMETRY");
         }
-        validateCoordinate(request.latitude(), request.longitude());
-        if (request.latitude() == null && "DEMO".equalsIgnoreCase(order.getFulfillmentMode())) {
-            return new Location(FPT_HCM_LATITUDE, FPT_HCM_LONGITUDE, null, "SIMULATION_FPT_HCM");
+        if (request.latitude() != null && request.longitude() != null) {
+            validateCoordinate(request.latitude(), request.longitude());
+            return new Location(request.latitude(), request.longitude(), request.gpsAccuracyM(), "MANUAL_DEVICE");
         }
-        return new Location(request.latitude(), request.longitude(), request.gpsAccuracyM(),
-                request.latitude() == null ? "UNAVAILABLE" : "MANUAL_DEVICE");
+        double[] route = calculateRouteCoordinates(order, mission);
+        if (route != null) {
+            return new Location(route[0], route[1], request.gpsAccuracyM(), "FLIGHT_PATH");
+        }
+        return new Location(FPT_HCM_LATITUDE, FPT_HCM_LONGITUDE, null, "FALLBACK_DEFAULT");
+    }
+
+    private double[] calculateRouteCoordinates(LockerOrder order, DroneMission mission) {
+        try {
+            Long sourceId = mission != null && mission.getSourceLockerId() != null
+                    ? mission.getSourceLockerId() : order.getSourceLockerId();
+            Long destId = order.getDestinationLockerId() != null
+                    ? order.getDestinationLockerId() : order.getLockerId();
+            if (sourceId == null || destId == null) {
+                return null;
+            }
+            if (lockerLookupClient == null) {
+                return null;
+            }
+            var response = lockerLookupClient.getLockers(List.of(sourceId, destId));
+            List<LockerInfo> lockers = response == null ? null : response.data();
+            if (lockers == null || lockers.isEmpty()) {
+                return null;
+            }
+            LockerInfo sourceLocker = null;
+            LockerInfo destLocker = null;
+            for (LockerInfo locker : lockers) {
+                if (Objects.equals(locker.id(), sourceId)) {
+                    sourceLocker = locker;
+                }
+                if (Objects.equals(locker.id(), destId)) {
+                    destLocker = locker;
+                }
+            }
+            if (sourceLocker == null || destLocker == null) {
+                return null;
+            }
+            Double srcLat = sourceLocker.latitude();
+            Double srcLng = sourceLocker.longitude();
+            Double dstLat = destLocker.latitude();
+            Double dstLng = destLocker.longitude();
+            if (srcLat == null || srcLng == null || dstLat == null || dstLng == null) {
+                return null;
+            }
+            String stage = mission != null ? mission.getStatus() : order.getDeliveryStage();
+            double progress = 0.5;
+            if ("LAUNCHING".equalsIgnoreCase(stage)) progress = 0.05;
+            else if ("DEPARTED".equalsIgnoreCase(stage)) progress = 0.2;
+            else if ("EN_ROUTE".equalsIgnoreCase(stage)) progress = 0.525;
+            else if ("APPROACHING".equalsIgnoreCase(stage)) progress = 0.85;
+            else if ("ARRIVED".equalsIgnoreCase(stage)) progress = 0.95;
+
+            double lat = srcLat + (dstLat - srcLat) * progress;
+            double lng = srcLng + (dstLng - srcLng) * progress;
+            return new double[] { lat, lng };
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private static boolean canRequestReturn(DroneTelemetryFrame telemetry, boolean telemetryLive) {
