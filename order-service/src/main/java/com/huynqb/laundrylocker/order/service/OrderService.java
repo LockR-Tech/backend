@@ -209,7 +209,40 @@ public class OrderService {
         }
         LockerOrder order = find(created.id());
         order.setReceiverEmail(request.receiverEmail().trim());
-        return toResponse(orderRepository.save(order));
+        Long receiverUserId = receiverAccount(order.getReceiverEmail(), order.getReceiverPhone());
+        if (receiverUserId != null) {
+            order.setReceiverId(receiverUserId);
+            order.setReceiverUserId(receiverUserId);
+        }
+        LockerOrder saved = orderRepository.save(order);
+        if (receiverUserId != null && !receiverUserId.equals(saved.getUserId())) {
+            notifyQuietly(receiverUserId, "Bạn sắp nhận được một đơn hàng",
+                    "Đơn " + saved.getOrderCode() + " đã được tạo. Bạn có thể theo dõi tại mục Hàng chờ nhận.",
+                    "ORDER_CREATED", saved.getId());
+        }
+        return toResponse(saved);
+    }
+
+    private Long receiverAccount(String email, String phone) {
+        if (StringUtils.hasText(email)) {
+            try {
+                var response = userClient.getUserByEmail(email.trim());
+                if (response != null && response.data() != null) {
+                    return response.data().id();
+                }
+            } catch (Exception ex) {
+                log.debug("Receiver email did not match an active Lock.R account");
+            }
+        }
+        if (StringUtils.hasText(phone)) {
+            try {
+                var response = userClient.getUserByPhone(phone);
+                return response == null || response.data() == null ? null : response.data().id();
+            } catch (Exception ex) {
+                log.debug("Receiver phone did not match a Lock.R account");
+            }
+        }
+        return null;
     }
 
     @Transactional
@@ -416,9 +449,24 @@ public class OrderService {
 
         boolean inAppSent = false;
         try {
-            var receiver = userClient.getUserByPhone(order.getReceiverPhone()).data();
+            var receiver = order.getReceiverUserId() == null
+                    ? null
+                    : userClient.getUser(order.getReceiverUserId()).data();
+            if (receiver == null && StringUtils.hasText(order.getReceiverEmail())) {
+                try {
+                    var byEmail = userClient.getUserByEmail(order.getReceiverEmail().trim());
+                    receiver = byEmail == null ? null : byEmail.data();
+                } catch (Exception ignored) {
+                    // Continue with the legacy phone lookup for recipients without a matching email account.
+                }
+            }
+            if (receiver == null && StringUtils.hasText(order.getReceiverPhone())) {
+                var byPhone = userClient.getUserByPhone(order.getReceiverPhone());
+                receiver = byPhone == null ? null : byPhone.data();
+            }
             if (receiver != null && receiver.id() != null) {
                 order.setReceiverId(receiver.id());
+                order.setReceiverUserId(receiver.id());
                 notificationClient.requestNotification(new NotificationRequest(
                         receiver.id(), RECEIVER_READY_TITLE, receiverReadyMessage(order, place, deadline),
                         "ORDER_PARCEL_READY", order.getId(), "ORDER"));

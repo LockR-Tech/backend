@@ -126,7 +126,7 @@ public class DroneOrderBookingService {
             order.setReceiverName(receiver.name());
             order.setReceiverPhone(receiver.phone());
             order.setReceiverEmail(receiver.email());
-            Long receiverUserId = receiverAccount(receiver.phone());
+            Long receiverUserId = receiverAccount(receiver.email(), receiver.phone());
             order.setReceiverId(receiverUserId);
             order.setReceiverUserId(receiverUserId);
             order.setPickupAddress(pickupAddress);
@@ -192,6 +192,11 @@ public class DroneOrderBookingService {
                                     ? " đã được tạo và được giảm giá toàn bộ. Hệ thống đang tìm kỹ thuật viên tới lấy hàng."
                                     : " đã được tạo. Thanh toán để kỹ thuật viên tới lấy hàng."),
                     saved.getId());
+            if (receiverUserId != null && !receiverUserId.equals(userId)) {
+                notifyQuietly(receiverUserId, "Bạn sắp nhận được một đơn drone",
+                        "Đơn " + saved.getOrderCode() + " đã được tạo và đang chờ người gửi thanh toán.",
+                        saved.getId());
+            }
             return queryService.get(saved.getId(), userId);
         } catch (RuntimeException failure) {
             releaseBoxQuietly(reservedBoxId);
@@ -311,13 +316,23 @@ public class DroneOrderBookingService {
 
     // ------------------------------------------------------------------ collaborators
 
-    /// Người nhận có tài khoản Lock.R (trùng số điện thoại) thì thấy được hành trình trong app.
-    private Long receiverAccount(String phone) {
+    /// Ưu tiên liên kết người nhận bằng email Lock.R, rồi dùng số điện thoại làm phương án dự phòng.
+    private Long receiverAccount(String email, String phone) {
+        if (StringUtils.hasText(email)) {
+            try {
+                var response = userClient.getUserByEmail(email.trim());
+                if (response != null && response.data() != null) {
+                    return response.data().id();
+                }
+            } catch (Exception ex) {
+                log.debug("Drone receiver email did not match an active Lock.R account");
+            }
+        }
         try {
             var response = userClient.getUserByPhone(phone);
             return response == null || response.data() == null ? null : response.data().id();
         } catch (Exception ex) {
-            log.info("Drone receiver {} has no Lock.R account or lookup failed: {}", phone, ex.getMessage());
+            log.debug("Drone receiver phone did not match a Lock.R account");
             return null;
         }
     }
