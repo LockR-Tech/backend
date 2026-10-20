@@ -2996,7 +2996,8 @@ public class LockerService {
                 box.getStatus(),
                 box.getFaultReason(),
                 doorOpen,
-                hwState);
+                hwState,
+                box.getLockerId());
     }
 
     private void publishBoxFault(LockerBox box, String reason) {

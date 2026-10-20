@@ -344,6 +344,11 @@ public class DroneOrderBookingService {
             if (!"DRONE".equalsIgnoreCase(cell.cellType())) {
                 throw new BusinessException("DRONE_CELL_REQUIRED", "Selected box must be a DRONE cell");
             }
+            if (!java.util.Objects.equals(cell.lockerId(), request.destinationLockerId())) {
+                throw new BusinessException(
+                        "DRONE_DESTINATION_CELL_LOCKER_MISMATCH",
+                        "Selected drone cell does not belong to the destination locker");
+            }
             if (!"AVAILABLE".equalsIgnoreCase(cell.status())) {
                 throw new BusinessException("BOX_NOT_AVAILABLE", "Selected drone cell is not available");
             }

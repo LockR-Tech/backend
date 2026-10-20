@@ -117,6 +117,24 @@ class DroneHomePickupFlowPostgresTest extends DroneFlowPostgresTestBase {
         assertEquals(1, orderRepository.count());
     }
 
+    @Test
+    void bookingRejectsAReceiveBoxThatBelongsToAnotherLocker() {
+        CreateDroneDeliveryOrderRequest base = request();
+        CreateDroneDeliveryOrderRequest mismatched = new CreateDroneDeliveryOrderRequest(
+                LOCKER_C, DEST_BOX,
+                base.pickupAddress(), base.pickupLatitude(), base.pickupLongitude(), base.pickupNote(),
+                base.senderName(), base.senderPhone(), base.senderEmail(),
+                base.receiverName(), base.receiverPhone(), base.receiverEmail(),
+                base.parcelWeightGrams(), base.parcelCategory(), base.description(),
+                base.parcelLengthCm(), base.parcelWidthCm(), base.parcelHeightCm(), base.declaredValue(),
+                base.fragile(), base.prohibitedItemsDeclared(), base.fulfillmentMode(),
+                base.promotionCode(), base.pointsToUse());
+
+        assertRejected("DRONE_DESTINATION_CELL_LOCKER_MISMATCH", mismatched);
+        assertEquals("AVAILABLE", boxStatus.get(DEST_BOX));
+        assertEquals(0, orderRepository.count());
+    }
+
     // ------------------------------------------------------------------ điều phối KTV
 
     @Test
