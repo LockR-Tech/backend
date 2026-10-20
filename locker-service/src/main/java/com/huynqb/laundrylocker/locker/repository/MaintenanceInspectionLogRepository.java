@@ -17,5 +17,7 @@ public interface MaintenanceInspectionLogRepository extends JpaRepository<Mainte
 
     List<MaintenanceInspectionLog> findByTechnicianIdOrderByCreatedAtDesc(Long technicianId);
 
+    List<MaintenanceInspectionLog> findByCreatedReportId(Long createdReportId);
+
     List<MaintenanceInspectionLog> findAllByOrderByCreatedAtDesc();
 }
