@@ -18,6 +18,9 @@ public interface UserClient {
     @GetMapping("/by-phone")
     ApiResponse<UserSummary> getUserByPhone(@RequestParam("phone") String phone);
 
+    @GetMapping("/by-email")
+    ApiResponse<UserSummary> getUserByEmail(@RequestParam("email") String email);
+
     @GetMapping
     ApiResponse<List<UserSummary>> getUsersByRole(@RequestParam("role") String role);
 }

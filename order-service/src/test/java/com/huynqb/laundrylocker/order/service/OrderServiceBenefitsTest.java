@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
@@ -122,6 +123,26 @@ class OrderServiceBenefitsTest {
         assertEquals("UNPAID", response.paymentStatus());
         verify(loyaltyClient).redeem(new LoyaltyRedemption.Request(44L, 21L, new BigDecimal("10000"), 30));
         verify(dronePickupService, never()).startForPaidOrder(anyLong());
+    }
+
+    @Test
+    void sendOrderLinksExistingReceiverAccountByEmail() {
+        when(userClient.getUserByEmail("Receiver@gmail.com"))
+                .thenReturn(ApiResponse.ok(new UserSummary(
+                        88L, "receiver@gmail.com", "0901234567", "Nguoi Nhan", "ACTIVE")));
+        SendOrderRequest request = new SendOrderRequest(
+                5L, 301L, null, "0901234567", "Nguoi Nhan", " Receiver@gmail.com ", null,
+                null, null, null);
+
+        orderService.createSend(request, 44L);
+
+        assertEquals("Receiver@gmail.com", stored.get().getReceiverEmail());
+        assertEquals(88L, stored.get().getReceiverUserId());
+        assertEquals(88L, stored.get().getReceiverId());
+        verify(userClient).getUserByEmail("Receiver@gmail.com");
+        verify(notificationClient).requestNotification(org.mockito.ArgumentMatchers.argThat(
+                notification -> notification.userId().equals(88L)
+                        && notification.type().equals("ORDER_CREATED")));
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
@@ -35,6 +36,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -100,6 +102,24 @@ class DroneOrderBookingBenefitsTest {
 
         verify(notificationClient).requestNotification(org.mockito.ArgumentMatchers.argThat(
                 n -> n.message().contains("giảm giá toàn bộ")));
+    }
+
+    @Test
+    void linksReceiverAccountByRegisteredEmail() {
+        when(userClient.getUserByEmail("nhan@gmail.com"))
+                .thenReturn(ApiResponse.ok(new UserSummary(
+                        88L, "nhan@gmail.com", "0902000222", "Tran Thi Nhan", "ACTIVE")));
+
+        service.create(request(null, null), 44L, "idem-receiver-email");
+
+        ArgumentCaptor<LockerOrder> order = ArgumentCaptor.forClass(LockerOrder.class);
+        verify(orderRepository, times(2)).saveAndFlush(order.capture());
+        assertEquals(88L, order.getAllValues().getLast().getReceiverUserId());
+        assertEquals(88L, order.getAllValues().getLast().getReceiverId());
+        verify(userClient, never()).getUserByPhone("0902000222");
+        verify(notificationClient).requestNotification(org.mockito.ArgumentMatchers.argThat(
+                notification -> notification.userId().equals(88L)
+                        && notification.type().equals("ORDER_CREATED")));
     }
 
     @Test
