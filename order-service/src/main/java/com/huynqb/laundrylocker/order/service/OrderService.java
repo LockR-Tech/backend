@@ -218,11 +218,17 @@ public class OrderService {
         if ("DRONE".equals(cellType)) {
             throw new BusinessException("DRONE_CELL_RESTRICTED", "Drone cells cannot be rented");
         }
+        assertRentalHours(request.hours(), rules.rentalMinHours(), rules.rentalMaxHours());
         Long boxId = request.boxId();
         if (boxId == null) {
             boxId = findAvailableCell(request.lockerId(), null, cellType);
+        } else {
+            // Khách chọn ô cụ thể: giá theo loại ô thật, không theo loại app khai.
+            cellType = actualCellType(boxId);
+            if ("DRONE".equals(cellType)) {
+                throw new BusinessException("DRONE_CELL_RESTRICTED", "Drone cells cannot be rented");
+            }
         }
-        assertRentalHours(request.hours(), rules.rentalMinHours(), rules.rentalMaxHours());
         BigDecimal price = rules.rentalRate(cellType).multiply(BigDecimal.valueOf(request.hours()));
         OrderResponse created =
                 create(
@@ -235,7 +241,43 @@ public class OrderService {
         LockerOrder order = find(created.id());
         order.setPickupDeadline(null);
         order.setRentalDurationHours(request.hours());
+        order.setRentalCellType(cellType);
         return toResponse(orderRepository.save(order));
+    }
+
+    /// Gia hạn lúc đang ở quá giờ: chốt phí các giờ đã quá (tính như thuê thêm, phần chưa thu) vào giá đơn
+    /// rồi mới cộng giờ gia hạn tính từ hết các giờ đó. Không thì gia hạn tính lại từ "bây giờ" và xoá
+    /// mất phần quá giờ. Phí quá giờ đã chốt thành giờ thuê nên `extraFee` về 0 cho lần quá giờ sau.
+    /// Trả về mốc mới để cộng giờ gia hạn.
+    private LocalDateTime settleRentalOvertime(LockerOrder order, LocalDateTime deadline, LocalDateTime now, Long userId) {
+        long minutes = ChronoUnit.MINUTES.between(deadline, now);
+        long overHours = (minutes + 59) / 60;
+        BigDecimal charged = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+        BigDecimal diff = rentalOvertimeFee(order, minutes).subtract(charged).max(BigDecimal.ZERO);
+        if (diff.signum() > 0) {
+            order.setTotalPrice(order.getTotalPrice().add(diff));
+            if (order.getOriginalPrice() != null) {
+                order.setOriginalPrice(order.getOriginalPrice().add(diff));
+            }
+            addHistory(order.getId(), order.getStatus(), order.getStatus(), userId,
+                    "Chốt phí ở quá giờ " + overHours + " giờ (" + diff.toBigInteger() + " đ) trước khi gia hạn");
+        }
+        order.setExtraFee(BigDecimal.ZERO);
+        return deadline.plusHours(overHours);
+    }
+
+    /// Loại ô thật theo locker-service. Không tra được thì không tạo đơn (không đoán giá).
+    private String actualCellType(Long boxId) {
+        CellDto cell;
+        try {
+            cell = lockerCellClient.getCell(boxId).data();
+        } catch (Exception ex) {
+            throw new BusinessException("BOX_NOT_AVAILABLE", "Không đọc được thông tin ô " + boxId);
+        }
+        if (cell == null) {
+            throw new BusinessException("BOX_NOT_AVAILABLE", "Không tìm thấy ô " + boxId);
+        }
+        return StringUtils.hasText(cell.cellType()) ? cell.cellType().trim().toUpperCase() : "STANDARD";
     }
 
     @Transactional(readOnly = true)
@@ -256,10 +298,11 @@ public class OrderService {
         assertRentalHours(hours, 1, rules.extendMaxHours());
         order.setRentalDurationHours(resolveRentalDurationHours(order) + hours);
         if (!"INITIALIZED".equalsIgnoreCase(order.getStatus())) {
-            LocalDateTime base =
-                    order.getPickupDeadline() == null || order.getPickupDeadline().isBefore(LocalDateTime.now())
-                            ? LocalDateTime.now()
-                            : order.getPickupDeadline();
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime base = order.getPickupDeadline() == null ? now : order.getPickupDeadline();
+            if (base.isBefore(now)) {
+                base = settleRentalOvertime(order, base, now, userId);
+            }
             order.setPickupDeadline(base.plusHours(hours));
         }
         BigDecimal extra = rules.rentalRate(cellTypeOfRental(order)).multiply(BigDecimal.valueOf(hours));
@@ -308,6 +351,9 @@ public class OrderService {
     }
 
     private String cellTypeOfRental(LockerOrder order) {
+        if (StringUtils.hasText(order.getRentalCellType())) {
+            return order.getRentalCellType();
+        }
         if (order.getSendBoxId() == null) {
             return "STANDARD";
         }
@@ -1409,6 +1455,8 @@ public class OrderService {
         LocalDateTime cutoffPaid = now.minusHours(autoCancelHours);
         LocalDateTime cutoffUnpaid = now.minusMinutes(autoCancelUnpaidMinutes);
         int canceled = 0;
+        // Đơn đã trả tiền bị tự huỷ: nơi gọi tạo yêu cầu hoàn tiền SAU khi giao dịch này commit.
+        List<Long> paidCanceled = new ArrayList<>();
         for (LockerOrder order : orderRepository.findByStatusOrderByCreatedAtDesc("INITIALIZED")) {
             if (order.getCreatedAt() == null) {
                 continue;
@@ -1429,12 +1477,15 @@ public class OrderService {
                     null,
                     null,
                     reason);
+            if (paid) {
+                paidCanceled.add(order.getId());
+            }
             canceled++;
         }
         if (canceled > 0) {
             log.info("Auto-canceled unconfirmed orders and released their cells: {}", canceled);
         }
-        return Map.of("canceledOrders", canceled);
+        return Map.of("canceledOrders", canceled, "paidCanceledOrderIds", paidCanceled);
     }
 
     @Transactional
@@ -1809,6 +1860,10 @@ public class OrderService {
         if (order.getPickupDeadline() == null || !LocalDateTime.now().isAfter(order.getPickupDeadline())) {
             return BigDecimal.ZERO;
         }
+        // Đơn đã kết thúc: phí quá hạn đã chốt, không tính tiếp theo đồng hồ.
+        if ("COMPLETED".equals(order.getStatus()) || "CANCELED".equals(order.getStatus())) {
+            return order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+        }
         // Nếu đơn đã thanh toán xong và đang trong thời gian ân hạn (grace period) để lấy đồ:
         // đóng băng phí quá giờ tại mức hiện tại, không lũy kế thêm tiền trong lúc khách mở ô.
         int graceMinutes = rules.overtimeGracePeriodMinutes();
@@ -1817,16 +1872,42 @@ public class OrderService {
                 return order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
             }
         }
-        long hours = ChronoUnit.HOURS.between(order.getPickupDeadline(), LocalDateTime.now());
-        BigDecimal raw = BigDecimal.valueOf(Math.max(0, hours) * rules.overtimeFeePerHour());
+        long minutes = Math.max(0, ChronoUnit.MINUTES.between(order.getPickupDeadline(), LocalDateTime.now()));
+        if (isRentalOrder(order)) {
+            return rentalOvertimeFee(order, minutes);
+        }
+        long hours = minutes / 60;
+        BigDecimal raw = BigDecimal.valueOf(hours * rules.overtimeFeePerHour());
         // Trần % tính trên giá CHƯA giảm: mã giảm giá/điểm thưởng không làm giảm (hay xoá hẳn, với đơn 0đ)
-        // phí quá hạn.
-        BigDecimal priceBase = order.getOriginalPrice() != null && order.getOriginalPrice().signum() > 0
+        // phí quá hạn. Phí quá hạn đã cộng vào giá trước đó không tính vào gốc, không thì trần tự tăng sau
+        // mỗi lần tính.
+        BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+        BigDecimal priceBase = (order.getOriginalPrice() != null && order.getOriginalPrice().signum() > 0
                 ? order.getOriginalPrice()
-                : order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice();
+                : order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice())
+                .subtract(currentExtra)
+                .max(BigDecimal.ZERO);
         BigDecimal percentageCap =
                 priceBase.multiply(BigDecimal.valueOf(rules.maxOvertimePercent())).divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
         return raw.min(rules.maxOvertimeFee()).min(percentageCap);
+    }
+
+    /// Ở quá hạn thuê tính như thuê thêm: mỗi giờ đã bắt đầu tính trọn giờ, theo giá thuê của loại ô ×
+    /// tỉ lệ admin đặt (≥ 100%) — không bao giờ rẻ hơn gia hạn. Không áp trần phí quá hạn của đơn gửi hàng.
+    private BigDecimal rentalOvertimeFee(LockerOrder order, long minutesOver) {
+        long hours = (minutesOver + 59) / 60;
+        if (hours <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal hourly = rules.rentalRate(cellTypeOfRental(order))
+                .multiply(BigDecimal.valueOf(rules.rentalOvertimeRatePercent()))
+                .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP)
+                .max(BigDecimal.valueOf(rules.overtimeFeePerHour()));
+        return hourly.multiply(BigDecimal.valueOf(hours));
+    }
+
+    private static boolean isRentalOrder(LockerOrder order) {
+        return "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory());
     }
 
     private void validateStatus(LockerOrder order, Set<String> statuses) {
@@ -2019,7 +2100,18 @@ public class OrderService {
                 DroneFailureReasons.label(order.getFailureReason()),
                 order.getFailureReason() == null ? null : order.getFailedAt(),
                 order.getPointsUsed() == null ? 0 : order.getPointsUsed(),
-                order.getPointsDiscount() == null ? BigDecimal.ZERO : order.getPointsDiscount());
+                order.getPointsDiscount() == null ? BigDecimal.ZERO : order.getPointsDiscount(),
+                overtimeRatePerHour(order),
+                !isRentalOrder(order));
+    }
+
+    /// Đơn giá mỗi giờ quá hạn hiển thị cho khách. Đơn thuê chỉ tra loại ô khi đơn có hạn (đã bắt đầu thuê).
+    private BigDecimal overtimeRatePerHour(LockerOrder order) {
+        if (!isRentalOrder(order) || order.getPickupDeadline() == null
+                || "COMPLETED".equals(order.getStatus()) || "CANCELED".equals(order.getStatus())) {
+            return BigDecimal.valueOf(rules.overtimeFeePerHour());
+        }
+        return rentalOvertimeFee(order, 60);
     }
 
     private static BigDecimal paidAmountOf(LockerOrder order) {

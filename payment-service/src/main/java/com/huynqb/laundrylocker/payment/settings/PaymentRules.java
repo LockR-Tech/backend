@@ -97,4 +97,17 @@ public class PaymentRules {
     public boolean isRequireBankTransferRef() {
         return settings.getBoolean(REFUND_REQUIRE_TRANSFER_REF);
     }
+
+    /// Admin bật nút giả lập thanh toán và `userId` nằm trong danh sách được phép (trống = mọi người).
+    public boolean simulationAllowedFor(Long userId) {
+        if (userId == null || !settings.getBoolean(SIMULATION_ENABLED)) {
+            return false;
+        }
+        String allowed = settings.getString(SIMULATION_ALLOWED_USER_IDS);
+        if (allowed == null || allowed.isBlank()) {
+            return true;
+        }
+        String expected = String.valueOf(userId);
+        return java.util.Arrays.stream(allowed.split(",")).map(String::trim).anyMatch(expected::equals);
+    }
 }

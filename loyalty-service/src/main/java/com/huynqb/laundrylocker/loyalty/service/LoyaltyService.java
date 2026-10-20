@@ -39,12 +39,14 @@ public class LoyaltyService {
     public static final String ORDER_REDEEM_TYPE = "ORDER_REDEEM";
     /// Hoàn đúng số điểm đã trừ khi đơn bị huỷ/hoàn tiền (điểm dương); DB chỉ cho một dòng mỗi orderId.
     public static final String ORDER_REDEEM_REFUND_TYPE = "ORDER_REDEEM_REFUND";
+    /// Thu hồi điểm đã tích của đơn được hoàn tiền (điểm âm, theo tỉ lệ tiền đã hoàn; có thể nhiều dòng mỗi đơn).
+    public static final String ORDER_EARN_REVERSAL_TYPE = "ORDER_EARN_REVERSAL";
     public static final String ADJUSTMENT_TYPE = "ADJUSTMENT";
     /// Đổi điểm lấy phần thưởng (luồng cũ).
     public static final String REDEEM_TYPE = "REDEEM";
     /// Các loại chỉ hệ thống được ghi — admin điều chỉnh tay không được dùng.
     private static final Set<String> RESERVED_TYPES =
-            Set.of(ORDER_EARN_TYPE, ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE);
+            Set.of(ORDER_EARN_TYPE, ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE, ORDER_EARN_REVERSAL_TYPE);
     /// Dùng/hoàn điểm không làm đổi tổng điểm đã tích (hạng); mọi loại khác (tích, điều chỉnh tay) thì có.
     private static final Set<String> SPENDING_TYPES =
             Set.of(ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE, REDEEM_TYPE);
@@ -83,6 +85,38 @@ public class LoyaltyService {
             return Optional.empty();
         }
         return Optional.of(applyPoints(userId, orderId, points, ORDER_EARN_TYPE));
+    }
+
+    /// Đơn được hoàn tiền ⇒ thu hồi phần điểm đã tích tương ứng: điểm đã tích × (tiền đã hoàn / tiền đã thu),
+    /// làm tròn. `refundedAmount` là tổng luỹ kế nên gọi lại (sự kiện giao lại, hoàn thêm lần nữa) chỉ thu
+    /// phần chênh. Không trừ quá số dư hiện có (khách đã tiêu điểm thì chỉ thu được phần còn lại).
+    /// Trả về số điểm vừa thu hồi.
+    @Transactional
+    public int reverseOrderEarn(Long orderId, BigDecimal refundedAmount, BigDecimal paidAmount) {
+        if (orderId == null || refundedAmount == null || refundedAmount.signum() <= 0
+                || paidAmount == null || paidAmount.signum() <= 0) {
+            return 0;
+        }
+        PointTransaction earn = transactionRepository.findFirstByOrderIdAndType(orderId, ORDER_EARN_TYPE).orElse(null);
+        if (earn == null || earn.getPoints() == null || earn.getPoints() <= 0) {
+            return 0;
+        }
+        LoyaltyAccount account = accountRepository.findByUserIdForUpdate(earn.getUserId()).orElse(null);
+        if (account == null) {
+            return 0;
+        }
+        int target = BigDecimal.valueOf(earn.getPoints())
+                .multiply(refundedAmount.min(paidAmount))
+                .divide(paidAmount, 0, RoundingMode.HALF_UP)
+                .intValue();
+        // Đọc dưới khoá tài khoản: lần thu hồi song song cùng đơn đã commit thì thấy ở đây.
+        int reversed = (int) -transactionRepository.sumPointsByOrderIdAndType(orderId, ORDER_EARN_REVERSAL_TYPE);
+        int deduct = Math.min(target - reversed, Math.max(0, account.getPoints()));
+        if (deduct <= 0) {
+            return 0;
+        }
+        applyPoints(account, orderId, -deduct, ORDER_EARN_REVERSAL_TYPE, null);
+        return deduct;
     }
 
     private LoyaltyAccountResponse applyPoints(Long userId, Long orderId, int points, String type) {

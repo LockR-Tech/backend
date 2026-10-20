@@ -25,9 +25,9 @@ public class IotSettingsCatalog implements SettingsCatalog {
     public List<SettingDefinition> definitions() {
         return List.of(
                 integer(LOCKOUT_MAX_ATTEMPTS, UNLOCK, "Số lần nhập sai mã trước khi khoá ô",
-                        "Nhập sai PIN/QR liên tiếp đến số lần này thì ô bị tạm khoá chống dò mã.", 5, 1, 50, "lần"),
+                        "Nhập sai PIN/QR liên tiếp đến số lần này thì ô bị tạm khoá chống dò mã.", 5, 1, 50, "lần").asPublic(),
                 integer(LOCKOUT_MINUTES, UNLOCK, "Thời gian tạm khoá ô",
-                        "Ô bị khoá trong khoảng này sau khi nhập sai quá số lần cho phép.", 15, 1, 1440, "phút"),
+                        "Ô bị khoá trong khoảng này sau khi nhập sai quá số lần cho phép.", 15, 1, 1440, "phút").asPublic(),
                 integer(UNLOCK_WAIT_SECONDS, UNLOCK, "Thời gian chờ tủ phản hồi lệnh mở",
                         "Hết thời gian này mà tủ chưa báo kết quả thì lệnh mở bị coi là quá hạn (TIMEOUT). "
                                 + "Đặt trên 20 giây cần tăng timeout gọi từ locker-service (APP_RESILIENCE4J_TL_TIMEOUT).",

@@ -10,6 +10,9 @@ public final class DomainEventNames {
     public static final String ORDER_COMPLETED = "order.completed";
     public static final String PAYMENT_COMPLETED = "payment.completed";
     public static final String PAYMENT_FAILED = "payment.failed";
+    /// Admin vừa xác nhận đã chuyển khoản hoàn tiền cho một đơn. Payload: orderId, refundedAmount (tổng đã
+    /// hoàn luỹ kế, không gồm bồi thường sự cố), paidAmount (tổng đã thu) — loyalty-service thu hồi điểm đã tích.
+    public static final String PAYMENT_REFUNDED = "payment.refunded";
     public static final String NOTIFICATION_REQUESTED = "notification.requested";
     public static final String LOCKER_BOX_OPENED = "locker.box.opened";
     public static final String LOCKER_BOX_FAULT = "locker.box.fault";

@@ -155,12 +155,23 @@ public class PaymentService {
 
         switch (method) {
             case "WALLET" -> {
-                walletService.debit(
+                // Mỗi lần trả bằng ví (tiền thuê, gia hạn, phí quá hạn…) là một khoản trừ riêng. Mã chống
+                // trùng theo số thứ tự lần trả: bấm lặp cùng lúc ra cùng mã nên chỉ trừ một lần.
+                long walletPayments = repository.findByOrderId(request.orderId()).stream()
+                        .filter(p -> "WALLET".equalsIgnoreCase(p.getMethod()) && "COMPLETED".equals(p.getStatus()))
+                        .count();
+                var debited = walletService.debit(
                         userId,
                         amount,
                         WalletService.SOURCE_ORDER_PAYMENT,
-                        WalletTransactionRefs.ORDER_PAYMENT_REF_PREFIX + request.orderId(),
+                        WalletTransactionRefs.orderPaymentRef(request.orderId(), walletPayments + 1),
                         "Thanh toán đơn #" + request.orderId());
+                if (debited == null) {
+                    throw new BusinessException(
+                            "PAYMENT_IN_PROGRESS",
+                            "Khoản thanh toán này vừa được xử lý, vui lòng tải lại đơn",
+                            HttpStatus.CONFLICT);
+                }
                 payment.setStatus("COMPLETED");
             }
             case "CASH" -> {
@@ -234,48 +245,63 @@ public class PaymentService {
         if (!sepayService.verifyWebhook(body, authHeader)) {
             throw new BusinessException("SEPAY_INVALID_SIGNATURE", "Chữ ký hoặc API Key SePay không hợp lệ");
         }
+        // Biến động tiền RA khỏi tài khoản nhận (vd admin chuyển hoàn cho khách, nội dung vẫn mang
+        // mã PAY-… của đơn) không phải tiền khách trả.
+        if (sepayService.isOutgoingTransfer(body)) {
+            log.info("SePay webhook ignored: outgoing transfer {}", body.get("referenceCode"));
+            return null;
+        }
         String refId = sepayService.extractReferenceId(body);
         if (!StringUtils.hasText(refId)) {
             throw new BusinessException("SEPAY_MISSING_REF", "Không tìm thấy mã tham chiếu trong Webhook");
         }
+        // SePay gửi lại cùng một giao dịch ngân hàng ⇒ đã ghi nhận rồi.
+        String bankTxn = sepayService.bankTransactionId(body);
+        if (bankTxn != null) {
+            PaymentRecord seen = repository.findFirstByReferenceTransactionId(bankTxn).orElse(null);
+            if (seen != null) {
+                return toResponse(seen);
+            }
+        }
         PaymentRecord payment = repository.findByReferenceId(refId)
                 .orElse(null);
-        if (payment == null && refId.startsWith("PAY-")) {
-            String[] parts = refId.split("-");
-            if (parts.length >= 2) {
+        Long refOrderId = orderIdOf(refId);
+        // Mã này đã thu xong mà lại có tiền về (khách chuyển bù phần thiếu, hoặc chuyển hai lần cùng
+        // nội dung): đó là một khoản mới của đơn, không phải webhook lặp.
+        boolean anotherTransfer = payment != null && "COMPLETED".equals(payment.getStatus())
+                && refOrderId != null && bankTxn != null;
+        if (anotherTransfer) {
+            payment = null;
+        }
+        if (payment == null && refOrderId != null) {
+            Long orderId = refOrderId;
+            payment = repository.findByOrderId(orderId).stream()
+                    .filter(p -> "PENDING".equalsIgnoreCase(p.getStatus()))
+                    .reduce((first, second) -> second)
+                    .orElse(null);
+            // Nếu chưa có payment record trong DB (ví dụ: khách quét VietQR trực tiếp từ màn hình đơn),
+            // tự động tra cứu order và tạo PaymentRecord để hoàn tất thanh toán!
+            if (payment == null) {
                 try {
-                    Long orderId = Long.parseLong(parts[1]);
-                    payment = repository.findByOrderId(orderId).stream()
-                            .filter(p -> "PENDING".equalsIgnoreCase(p.getStatus()))
-                            .reduce((first, second) -> second)
-                            .orElse(null);
-                    // Nếu chưa có payment record trong DB (ví dụ: khách quét VietQR trực tiếp từ màn hình đơn),
-                    // tự động tra cứu order và tạo PaymentRecord để hoàn tất thanh toán!
-                    if (payment == null) {
-                        try {
-                            OrderSummary order = orderClient.getOrder(orderId).data();
-                            if (order != null) {
-                                BigDecimal transferAmt = sepayService.extractAmount(body);
-                                BigDecimal orderPrice = order.totalPrice() != null ? order.totalPrice() : BigDecimal.ZERO;
-                                BigDecimal amount = transferAmt.compareTo(BigDecimal.ZERO) > 0 ? transferAmt : orderPrice;
-
-                                PaymentRecord autoPayment = new PaymentRecord();
-                                autoPayment.setOrderId(orderId);
-                                autoPayment.setUserId(order.userId());
-                                autoPayment.setAmount(amount);
-                                autoPayment.setMethod("SEPAY");
-                                autoPayment.setReferenceId(refId);
-                                autoPayment.setContent("Thanh toan don " + orderId);
-                                autoPayment.setDescription("Thanh toán đơn #" + orderId + " qua SePay");
-                                autoPayment.setStatus("PENDING");
-                                payment = repository.save(autoPayment);
-                                log.info("Auto-created PaymentRecord for order {} from SePay webhook", orderId);
-                            }
-                        } catch (Exception ex) {
-                            log.error("Could not fetch order {} to auto-create payment: {}", orderId, ex.getMessage());
-                        }
+                    OrderSummary order = orderClient.getOrder(orderId).data();
+                    if (order != null) {
+                        PaymentRecord autoPayment = new PaymentRecord();
+                        autoPayment.setOrderId(orderId);
+                        autoPayment.setUserId(order.userId());
+                        // Số phải trả do server tính (phần đơn còn thiếu), không lấy theo số khách chuyển.
+                        autoPayment.setAmount(outstanding(orderId, order));
+                        autoPayment.setMethod("SEPAY");
+                        autoPayment.setReferenceId(anotherTransfer || repository.findByReferenceId(refId).isPresent()
+                                ? refId + "-" + bankTxn
+                                : refId);
+                        autoPayment.setContent("Thanh toan don " + orderId);
+                        autoPayment.setDescription("Thanh toán đơn #" + orderId + " qua SePay");
+                        autoPayment.setStatus("PENDING");
+                        payment = repository.save(autoPayment);
+                        log.info("Auto-created PaymentRecord for order {} from SePay webhook", orderId);
                     }
-                } catch (NumberFormatException ignored) {
+                } catch (Exception ex) {
+                    log.error("Could not fetch order {} to auto-create payment: {}", orderId, ex.getMessage());
                 }
             }
         }
@@ -289,40 +315,183 @@ public class PaymentService {
             throw new NotFoundException("Payment with ref: " + refId, -1L);
         }
 
-        Object refCode = body.get("referenceCode");
-        if (refCode != null && StringUtils.hasText(refCode.toString())) {
-            payment.setReferenceTransactionId(refCode.toString());
-        }
-
         if ("COMPLETED".equals(payment.getStatus())) {
             return toResponse(payment);
         }
-
-        BigDecimal transferAmount = sepayService.extractAmount(body);
-        if (transferAmount.compareTo(BigDecimal.ZERO) > 0 && transferAmount.compareTo(payment.getAmount()) < 0) {
-            log.warn("SePay payment amount mismatch for ref {}: received {} < required {}",
-                    refId, transferAmount, payment.getAmount());
-            payment.setStatus("FAILED");
-        } else {
-            payment.setStatus("COMPLETED");
+        if (bankTxn != null) {
+            payment.setReferenceTransactionId(bankTxn);
         }
+
+        BigDecimal received = sepayService.extractAmount(body);
+        if (received.signum() <= 0) {
+            // Không biết đã nhận bao nhiêu thì không ghi nhận gì; giao dịch giữ PENDING để đối soát tay.
+            log.warn("SePay webhook for ref {} has no transfer amount; payment {} left {}",
+                    refId, payment.getId(), payment.getStatus());
+            return toResponse(repository.save(payment));
+        }
+        return completeTransfer(payment, received, refId);
+    }
+
+    /// Ghi nhận khoản chuyển khoản đã nhận `received` đồng cho giao dịch SePay đang chờ — dùng chung cho
+    /// webhook thật và nút giả lập.
+    private PaymentResponse completeTransfer(PaymentRecord payment, BigDecimal received, String refId) {
+        // Ghi đúng số tiền thực nhận. Chuyển thiếu vẫn là tiền đã thu (hoàn được khi huỷ đơn), nhưng
+        // order-service cộng dồn theo số này nên đơn chỉ thành PAID khi tổng đã thu đủ.
+        BigDecimal required = payment.getAmount() == null ? BigDecimal.ZERO : payment.getAmount();
+        if (received.compareTo(required) != 0) {
+            log.warn("SePay payment amount mismatch for ref {}: received {}, required {}", refId, received, required);
+            if (received.compareTo(required) < 0) {
+                payment.setDescription(underpaidNote(payment.getDescription(), received, required));
+            }
+        }
+        payment.setAmount(received);
+        payment.setStatus("COMPLETED");
 
         PaymentRecord saved = repository.save(payment);
-        if ("COMPLETED".equals(saved.getStatus())) {
-            if ("SEPAY_TOPUP".equals(saved.getMethod())
-                    || (saved.getOrderId() != null && saved.getOrderId() <= 0)) {
-                walletService.credit(
-                        saved.getUserId(),
-                        saved.getAmount(),
-                        WalletService.SOURCE_TOPUP,
-                        saved.getReferenceId(),
-                        "Nạp ví qua SePay");
-            }
-            publish(DomainEventNames.PAYMENT_COMPLETED, saved);
-        } else {
-            publish(DomainEventNames.PAYMENT_FAILED, saved);
+        if ("SEPAY_TOPUP".equals(saved.getMethod())
+                || (saved.getOrderId() != null && saved.getOrderId() <= 0)) {
+            walletService.credit(
+                    saved.getUserId(),
+                    saved.getAmount(),
+                    WalletService.SOURCE_TOPUP,
+                    saved.getReferenceId(),
+                    "Nạp ví qua SePay");
         }
+        publish(DomainEventNames.PAYMENT_COMPLETED, saved);
         return toResponse(saved);
+    }
+
+    /// Nút "Giả lập thanh toán" (test): coi như SePay vừa báo đã nhận `amount` đồng (bỏ trống = đủ số của
+    /// giao dịch) cho giao dịch chuyển khoản đang chờ — thanh toán đơn hoặc nạp ví. Chỉ khi admin bật
+    /// `app.payment.simulation-enabled` và tài khoản nằm trong danh sách cho phép; chỉ người trả (hoặc ADMIN).
+    @Transactional
+    public PaymentResponse simulateTransfer(Long userId, String roles, Long paymentId, String referenceId, BigDecimal amount) {
+        if (!rules.simulationAllowedFor(userId)) {
+            throw new BusinessException("PAYMENT_SIMULATION_DISABLED",
+                    "Giả lập thanh toán đang tắt hoặc tài khoản này không được dùng", HttpStatus.FORBIDDEN);
+        }
+        PaymentRecord payment = paymentId != null
+                ? find(paymentId)
+                : repository.findByReferenceId(StringUtils.hasText(referenceId) ? referenceId.trim() : "")
+                        .orElseThrow(() -> new NotFoundException("Payment with ref: " + referenceId, -1L));
+        if (!UserRoles.isAdmin(roles) && !userId.equals(payment.getUserId())) {
+            throw orderForbidden();
+        }
+        String method = payment.getMethod() == null ? "" : payment.getMethod().toUpperCase(Locale.ROOT);
+        if (!method.startsWith("SEPAY") || !"PENDING".equalsIgnoreCase(payment.getStatus())) {
+            throw new BusinessException("PAYMENT_SIMULATION_INVALID",
+                    "Chỉ giả lập được giao dịch chuyển khoản đang chờ thanh toán", HttpStatus.CONFLICT);
+        }
+        BigDecimal received = amount != null && amount.signum() > 0 ? amount : payment.getAmount();
+        if (received == null || received.signum() <= 0) {
+            throw new BusinessException("PAYMENT_SIMULATION_INVALID", "Số tiền giả lập phải lớn hơn 0");
+        }
+        payment.setReferenceTransactionId("SIMULATED-" + System.currentTimeMillis());
+        payment.setDescription(simulatedNote(payment.getDescription()));
+        log.info("Payment {} simulated as received {} by user {}", payment.getId(), received, userId);
+        return completeTransfer(payment, received, payment.getReferenceId());
+    }
+
+    static String simulatedNote(String description) {
+        String full = "[Giả lập] " + (StringUtils.hasText(description) ? description : "Thanh toán");
+        return full.length() <= 255 ? full : full.substring(0, 255);
+    }
+
+    /// `PAY-{orderId}` hoặc `PAY-{orderId}-…` ⇒ orderId; mã khác (nạp ví, ORD-…) ⇒ null.
+    static Long orderIdOf(String refId) {
+        if (refId == null || !refId.startsWith("PAY-")) {
+            return null;
+        }
+        String[] parts = refId.split("-");
+        try {
+            long orderId = parts.length >= 2 ? Long.parseLong(parts[1]) : 0L;
+            return orderId > 0 ? orderId : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    /// Phần đơn còn phải trả: tổng đơn trừ các khoản đã thu. Đơn đã đủ tiền ⇒ 0.
+    private BigDecimal outstanding(Long orderId, OrderSummary order) {
+        BigDecimal total = order.totalPrice() == null ? BigDecimal.ZERO : order.totalPrice();
+        return total.subtract(completedAmount(orderId)).max(BigDecimal.ZERO);
+    }
+
+    private BigDecimal completedAmount(Long orderId) {
+        return repository.findByOrderId(orderId).stream()
+                .filter(p -> "COMPLETED".equals(p.getStatus()))
+                .map(PaymentRecord::getAmount)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /// Tiền đơn đã thu trừ phần đã hoàn hoặc đang chờ hoàn.
+    BigDecimal refundableAmount(Long orderId) {
+        BigDecimal claimed = refundRepository.findByOrderId(orderId).stream()
+                .filter(r -> "PENDING".equals(r.getStatus()) || "COMPLETED".equals(r.getStatus()))
+                .map(RefundRecord::getAmount)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return completedAmount(orderId).subtract(claimed).max(BigDecimal.ZERO);
+    }
+
+    /// Trạng thái thanh toán của đơn sau khi admin duyệt/từ chối một yêu cầu hoàn:
+    /// còn yêu cầu chờ ⇒ REFUND_PENDING; đã hoàn đủ số đã thu ⇒ REFUNDED (order-service trả lại mã
+    /// giảm giá và điểm đã dùng); hoàn một phần hoặc bị từ chối ⇒ PAID.
+    static String orderRefundStatus(List<RefundRecord> refunds, BigDecimal paid) {
+        if (refunds.stream().anyMatch(r -> "PENDING".equals(r.getStatus()))) {
+            return "REFUND_PENDING";
+        }
+        BigDecimal refunded = completedRefunds(refunds, false);
+        return refunded.signum() > 0 && refunded.compareTo(paid) >= 0 ? "REFUNDED" : "PAID";
+    }
+
+    /// Tổng các khoản đã hoàn xong; `excludeCompensation` bỏ khoản bồi thường sự cố (RF-CMP-…).
+    private static BigDecimal completedRefunds(List<RefundRecord> refunds, boolean excludeCompensation) {
+        return refunds.stream()
+                .filter(r -> "COMPLETED".equals(r.getStatus()))
+                .filter(r -> !excludeCompensation
+                        || r.getTransactionId() == null || !r.getTransactionId().startsWith("RF-CMP-"))
+                .map(RefundRecord::getAmount)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private void syncOrderRefundStatus(Long orderId, String note, Long actorUserId) {
+        String status = orderRefundStatus(refundRepository.findByOrderId(orderId), completedAmount(orderId));
+        try {
+            orderClient.updatePaymentStatus(orderId, status, note, actorUserId);
+        } catch (Exception ex) {
+            log.warn("Could not update order {} payment status to {}: {}", orderId, status, ex.getMessage());
+        }
+    }
+
+    /// loyalty-service thu hồi điểm đã tích theo tỉ lệ tiền đã hoàn / tiền đã thu (luỹ kế, idempotent).
+    /// Khoản bồi thường sự cố không tính: đó không phải trả lại tiền khách đã trả.
+    private void publishRefunded(Long orderId) {
+        if (orderId == null || orderId <= 0) {
+            return;
+        }
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderId", orderId);
+        payload.put("refundedAmount", completedRefunds(refundRepository.findByOrderId(orderId), true));
+        payload.put("paidAmount", completedAmount(orderId));
+        try {
+            rabbitTemplate.convertAndSend(
+                    DomainEventNames.EXCHANGE,
+                    DomainEventNames.PAYMENT_REFUNDED,
+                    DomainEvent.of(DomainEventNames.PAYMENT_REFUNDED, "payment-service", payload));
+        } catch (AmqpException ex) {
+            log.warn("Could not publish {} for order {}: {}", DomainEventNames.PAYMENT_REFUNDED, orderId, ex.getMessage());
+        }
+    }
+
+    static String underpaidNote(String description, BigDecimal received, BigDecimal required) {
+        String note = "Chuyển thiếu: nhận " + received.toBigInteger() + " đ / cần "
+                + required.toBigInteger() + " đ";
+        String base = StringUtils.hasText(description) ? description + " — " : "";
+        String full = base + note;
+        return full.length() <= 255 ? full : full.substring(0, 255);
     }
 
     /// Trang quay về sau cổng SePay (`success_url`/`cancel_url`). Tham số trên URL này do trình duyệt mang
@@ -439,10 +608,16 @@ public class PaymentService {
                     "Đã quá thời hạn " + rules.refundMaxDays() + " ngày kể từ khi thanh toán đơn hàng để yêu cầu hoàn tiền");
         }
 
-        // Kiểm tra hạn mức hoàn tiền tối thiểu theo cấu hình admin
+        // Hoàn tối đa phần tiền đơn đã thu mà chưa hoàn / chưa chờ hoàn; không gửi số tiền ⇒ hoàn hết phần đó.
+        BigDecimal refundable = refundableAmount(request.orderId());
         BigDecimal refundAmount = (request.amount() != null && request.amount().compareTo(BigDecimal.ZERO) > 0)
                 ? request.amount()
-                : payment.getAmount();
+                : refundable;
+        if (refundAmount.compareTo(refundable) > 0) {
+            throw new BusinessException("REFUND_AMOUNT_EXCEEDS_PAID",
+                    "Số tiền hoàn tối đa của đơn này là " + refundable.toBigInteger() + " đ");
+        }
+        // Kiểm tra hạn mức hoàn tiền tối thiểu theo cấu hình admin
         if (refundAmount.compareTo(rules.refundMinAmount()) < 0) {
             throw new BusinessException("REFUND_AMOUNT_TOO_SMALL",
                     "Số tiền hoàn tối thiểu theo quy định là " + rules.refundMinAmount().toBigInteger() + " đ");
@@ -521,13 +696,10 @@ public class PaymentService {
         }
         RefundRecord saved = refundRepository.save(refund);
 
-        try {
-            String note = "Admin đã chuyển khoản hoàn tiền"
-                    + (StringUtils.hasText(saved.getBankTransferRef()) ? " — Mã GD: " + saved.getBankTransferRef() : "");
-            orderClient.updatePaymentStatus(refund.getOrderId(), "REFUNDED", note, adminUserId);
-        } catch (Exception ex) {
-            log.warn("Could not update order payment status to REFUNDED: {}", ex.getMessage());
-        }
+        String note = "Admin đã chuyển khoản hoàn " + saved.getAmount().toBigInteger() + " đ"
+                + (StringUtils.hasText(saved.getBankTransferRef()) ? " — Mã GD: " + saved.getBankTransferRef() : "");
+        syncOrderRefundStatus(refund.getOrderId(), note, adminUserId);
+        publishRefunded(refund.getOrderId());
 
         PaymentRecord payment = repository.findById(refund.getPaymentId()).orElse(null);
         Long targetUserId = payment != null ? payment.getUserId() : null;
@@ -567,11 +739,7 @@ public class PaymentService {
         refund.setProcessedAt(LocalDateTime.now());
         RefundRecord saved = refundRepository.save(refund);
 
-        try {
-            orderClient.updatePaymentStatus(refund.getOrderId(), "PAID", "Từ chối hoàn tiền: " + reason, adminUserId);
-        } catch (Exception ex) {
-            log.warn("Could not restore order payment status: {}", ex.getMessage());
-        }
+        syncOrderRefundStatus(refund.getOrderId(), "Từ chối hoàn tiền: " + reason, adminUserId);
 
         PaymentRecord payment = repository.findById(refund.getPaymentId()).orElse(null);
         Long targetUserId = payment != null ? payment.getUserId() : null;

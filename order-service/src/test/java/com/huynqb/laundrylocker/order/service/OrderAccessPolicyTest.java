@@ -58,9 +58,23 @@ class OrderAccessPolicyTest {
     }
 
     @Test
-    void sendPickupIsNeverBlockedByDeadline() {
+    void sendPickupWithoutOvertimeFeeCanOpen() {
         assertNull(OrderAccessPolicy.blockReason(
-                order("SEND", "STORING", "PAID", 15000, NOW.minusHours(5)), defaults, NOW));
+                order("SEND", "STORING", "PAID", 15000, NOW.minusHours(5)), defaults, NOW, BigDecimal.ZERO));
+    }
+
+    @Test
+    void sendPickupWithUnpaidOvertimeFeeIsBlocked() {
+        assertEquals(OrderAccessPolicy.OVERTIME_FEE_UNPAID, OrderAccessPolicy.blockReason(
+                order("SEND", "STORING", "PAID", 15000, NOW.minusHours(5)), defaults, NOW, BigDecimal.valueOf(10000)));
+    }
+
+    @Test
+    void sendPickupWithPaidOvertimeFeeCanOpen() {
+        LockerOrder paidOvertime = order("SEND", "STORING", "PAID", 25000, NOW.minusHours(5));
+        paidOvertime.setExtraFee(BigDecimal.valueOf(10000));
+        assertNull(OrderAccessPolicy.blockReason(
+                paidOvertime, defaults, NOW, BigDecimal.valueOf(10000)));
     }
 
     private static LockerOrder order(

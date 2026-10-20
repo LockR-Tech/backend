@@ -14,6 +14,7 @@ public final class OrderAccessPolicy {
     public static final String ORDER_UNPAID = "ORDER_UNPAID";
     public static final String RENTAL_EXPIRED = "RENTAL_EXPIRED";
     public static final String RENTAL_UNPAID = "RENTAL_UNPAID";
+    public static final String OVERTIME_FEE_UNPAID = "OVERTIME_FEE_UNPAID";
 
     private OrderAccessPolicy() {
     }
@@ -47,6 +48,20 @@ public final class OrderAccessPolicy {
             }
             if (rules.blockUnpaidRentalAccess() && owesPayment(order)) {
                 return RENTAL_UNPAID;
+            }
+        }
+        if (!rental && ("STORING".equalsIgnoreCase(status) || "RETURNED".equalsIgnoreCase(status))) {
+            if (order.getPickupDeadline() != null && now.isAfter(order.getPickupDeadline())) {
+                boolean feeCoveredAndPaid = "PAID".equalsIgnoreCase(order.getPaymentStatus())
+                        && order.getExtraFee() != null
+                        && overtimeFee != null
+                        && order.getExtraFee().compareTo(overtimeFee) >= 0;
+                if (!feeCoveredAndPaid && (overtimeFee != null && overtimeFee.compareTo(BigDecimal.ZERO) > 0 || owesPayment(order))) {
+                    return OVERTIME_FEE_UNPAID;
+                }
+            }
+            if (owesPayment(order)) {
+                return ORDER_UNPAID;
             }
         }
         return null;
