@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerClient;
@@ -53,6 +54,8 @@ class DroneMissionProgressServiceTest {
     private LockerClient lockerClient;
     @Mock
     private UserClient userClient;
+    @Mock
+    private DroneDeliveryMailer mailer;
 
     private DroneMissionProgressService service;
 
@@ -60,7 +63,7 @@ class DroneMissionProgressServiceTest {
     void setUp() {
         service = new DroneMissionProgressService(
                 missionRepository, orderRepository, historyRepository, notificationClient,
-                lockerDroneClient, lockerClient, userClient, TestOrderRules.defaults());
+                lockerDroneClient, lockerClient, userClient, TestOrderRules.defaults(), mailer);
     }
 
     @Test
@@ -74,6 +77,7 @@ class DroneMissionProgressServiceTest {
                 new UserSummary(55L, "nhan.hang@gmail.com", "0900000055", "Nguoi Nhan", "ACTIVE")));
         when(notificationClient.notifyGuest(any())).thenReturn(ApiResponse.ok(
                 new GuestNotification.Result(false, true, false, true)));
+        when(mailer.destinationWithBox(order)).thenReturn("Lock.R Quận 1 (12 Lê Lợi) · Ô số 3");
 
         service.advanceByOperator(21L, 99L);
 
@@ -81,7 +85,11 @@ class DroneMissionProgressServiceTest {
         verify(notificationClient).notifyGuest(email.capture());
         assertEquals("nhan.hang@gmail.com", email.getValue().email());
         assertTrue(email.getValue().emailBody().contains(order.getPinCode()));
-        verify(notificationClient).requestNotification(any());
+        // Người nhận phải biết tới tủ nào, mở ô số mấy.
+        assertTrue(email.getValue().emailBody().contains("Lấy tại: Lock.R Quận 1 (12 Lê Lợi) · Ô số 3"));
+        ArgumentCaptor<NotificationRequest> inApp = ArgumentCaptor.forClass(NotificationRequest.class);
+        verify(notificationClient).requestNotification(inApp.capture());
+        assertTrue(inApp.getValue().message().contains("Ô số 3"));
 
         ArgumentCaptor<OrderStatusHistory> history = ArgumentCaptor.forClass(OrderStatusHistory.class);
         verify(historyRepository, times(2)).save(history.capture());

@@ -48,7 +48,7 @@ class DroneDeliverySimulatorTest {
     private DroneDeliverySimulator simulator(com.huynqb.laundrylocker.order.settings.OrderRules rules) {
         DroneMissionProgressService progress = new DroneMissionProgressService(
                 missionRepository, orderRepository, historyRepository, notificationClient,
-                lockerDroneClient, lockerClient, userClient, rules);
+                lockerDroneClient, lockerClient, userClient, rules, null);
         return new DroneDeliverySimulator(missionRepository, orderRepository, progress, positionBroadcaster, rules);
     }
 

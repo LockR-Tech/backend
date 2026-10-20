@@ -339,6 +339,10 @@ class DroneHomePickupFlowPostgresTest extends DroneFlowPostgresTestBase {
         assertTrue(toReceiver.emailBody().contains("Nguyễn Văn Gửi"));
         assertTrue(toReceiver.emailBody().contains("0901000111"));
         assertTrue(toReceiver.emailBody().contains("gui@gmail.com"));
+        // Cả hai đầu biết kiện tới tủ nào, ô số mấy.
+        assertTrue(toSender.emailBody().contains("Ô nhận: Ô số 1"));
+        assertTrue(toReceiver.emailBody().contains("Locker " + LOCKER_B));
+        assertTrue(toReceiver.emailBody().contains("Ô nhận: Ô số 1"));
         // notification-service từ chối yêu cầu thiếu smsMessage, kể cả khi chỉ gửi email.
         assertFalse(toSender.smsMessage().isBlank());
         assertNull(toSender.phone());
@@ -357,7 +361,10 @@ class DroneHomePickupFlowPostgresTest extends DroneFlowPostgresTestBase {
         assertNotNull(mission(orderId).getLandedAt());
         assertEquals(TECH_NEAR, mission(orderId).getDepositedByUserId());
         // Mã mở ô tới email người nhận.
-        assertTrue(emailTo("nhan@gmail.com", "Mã mở tủ").emailBody().contains(delivered.getPinCode()));
+        String codeMail = emailTo("nhan@gmail.com", "Mã mở tủ").emailBody();
+        assertTrue(codeMail.contains(delivered.getPinCode()));
+        assertTrue(codeMail.contains("Lấy tại: Locker " + LOCKER_B), codeMail);
+        assertTrue(codeMail.contains("Ô số 1"), codeMail);
     }
 
     @Test
