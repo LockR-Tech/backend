@@ -63,5 +63,11 @@ public record DroneParcelIncidentResponse(
         BigDecimal declaredValue,
         String recoveryTechnicianName,
         String recoveryTechnicianPhone,
-        String recoveryTechnicianRole) {
+        String recoveryTechnicianRole,
+        BigDecimal compensationCap,
+        Boolean freeRedeliveryAllowed,
+        Boolean refundShippingFeeAllowed,
+        Integer recoverySlaHours,
+        Boolean approvalRequired,
+        Boolean incidentPolicyEnabled) {
 }

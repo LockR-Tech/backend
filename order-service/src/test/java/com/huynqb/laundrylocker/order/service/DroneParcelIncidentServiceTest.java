@@ -52,6 +52,7 @@ class DroneParcelIncidentServiceTest {
     @Mock IncidentRedeliveryGateway redeliveryGateway;
     @Mock DronePickupService dronePickupService;
     @Mock CloudinaryMediaStorage mediaStorage;
+    @Mock com.huynqb.laundrylocker.order.settings.OrderRules rules;
 
     private DroneParcelIncidentService service;
 
@@ -61,7 +62,9 @@ class DroneParcelIncidentServiceTest {
                 incidentRepository, evidenceRepository, timelineRepository, proposalRepository,
                 orderRepository, missionRepository, orderHistoryRepository, telemetryRegistry,
                 lockerDroneClient, userClient, notificationClient, returnCommandGateway,
-                compensationGateway, redeliveryGateway, dronePickupService, mediaStorage, new ObjectMapper());
+                compensationGateway, redeliveryGateway, dronePickupService, mediaStorage, new ObjectMapper(), rules);
+        lenient().when(rules.incidentPolicy()).thenReturn(new com.huynqb.laundrylocker.order.settings.OrderRules.IncidentPolicy(
+                "v1", true, BigDecimal.valueOf(60), BigDecimal.ZERO, true, true, 4, true, true));
         lenient().when(evidenceRepository.findByIncidentIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
         lenient().when(timelineRepository.findByIncidentIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
         lenient().when(proposalRepository.findByIncidentIdOrderByProposalVersionAsc(any())).thenReturn(List.of());

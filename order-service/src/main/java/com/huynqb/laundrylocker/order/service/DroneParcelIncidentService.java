@@ -15,6 +15,7 @@ import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.model.*;
 import com.huynqb.laundrylocker.order.repository.*;
+import com.huynqb.laundrylocker.order.settings.OrderRules;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -63,6 +64,7 @@ public class DroneParcelIncidentService {
     private final DronePickupService dronePickupService;
     private final CloudinaryMediaStorage mediaStorage;
     private final ObjectMapper objectMapper;
+    private final OrderRules rules;
 
     @Value("${app.drone.camera.stream-url-template:}")
     private String cameraStreamUrlTemplate;
@@ -256,14 +258,14 @@ public class DroneParcelIncidentService {
         List<String> parsedRoles = UserRoles.parse(roles);
         List<DroneParcelIncident> incidents;
         if (UserRoles.isAdmin(roles)) {
-            incidents = incidentRepository.findAllByOrderByCreatedAtDesc();
+            incidents = incidentRepository.findAllByOrderByUpdatedAtDesc();
         } else if (recoveryQueue || parsedRoles.contains("LOCKER_TECHNICIAN")) {
-            incidents = incidentRepository.findByRecoveryAssignedToUserIdOrderByCreatedAtDesc(actorUserId);
+            incidents = incidentRepository.findByRecoveryAssignedToUserIdOrderByUpdatedAtDesc(actorUserId);
         } else if (parsedRoles.contains("DRONE_TECHNICIAN")) {
-            incidents = incidentRepository.findByReportedByUserIdOrRecoveryAssignedToUserIdOrderByCreatedAtDesc(
+            incidents = incidentRepository.findByReportedByUserIdOrRecoveryAssignedToUserIdOrderByUpdatedAtDesc(
                     actorUserId, actorUserId);
         } else {
-            incidents = incidentRepository.findAllByOrderByCreatedAtDesc().stream()
+            incidents = incidentRepository.findAllByOrderByUpdatedAtDesc().stream()
                     .filter(incident -> {
                         LockerOrder order = orderRepository.findById(incident.getOrderId()).orElse(null);
                         return order != null && (actorUserId.equals(order.getUserId())
@@ -496,7 +498,10 @@ public class DroneParcelIncidentService {
         }
         LockerOrder order = orderRepository.findById(incident.getOrderId())
                 .orElseThrow(() -> new NotFoundException("LockerOrder", incident.getOrderId()));
-        if (!Boolean.TRUE.equals(order.getIncidentCompensationEnabled())) {
+        boolean policyEnabled = order.getIncidentCompensationEnabled() != null
+                ? order.getIncidentCompensationEnabled()
+                : rules.incidentPolicy().enabled();
+        if (!policyEnabled) {
             throw new BusinessException("INCIDENT_POLICY_DISABLED", "Incident compensation policy is disabled");
         }
         BigDecimal suggested = suggestedCompensation(order);
@@ -506,7 +511,10 @@ public class DroneParcelIncidentService {
             throw new BusinessException("COMPENSATION_OVERRIDE_REASON_REQUIRED", "Override reason is required");
         }
         boolean redelivery = Boolean.TRUE.equals(request.redeliveryOffered());
-        if (redelivery && !Boolean.TRUE.equals(order.getIncidentFreeRedelivery())) {
+        boolean freeRedeliveryAllowed = order.getIncidentFreeRedelivery() != null
+                ? order.getIncidentFreeRedelivery()
+                : rules.incidentPolicy().freeRedelivery();
+        if (redelivery && !freeRedeliveryAllowed) {
             throw new BusinessException("FREE_REDELIVERY_DISABLED", "Free redelivery is disabled by the order policy");
         }
         if (redelivery && !"RETURNED_TO_HUB".equals(incident.getParcelStatus())) {
@@ -558,8 +566,11 @@ public class DroneParcelIncidentService {
                 .orElseThrow(() -> new BusinessException("RESOLUTION_PROPOSAL_NOT_FOUND", "No proposal is awaiting response"));
         requireState(proposal.getStatus(), Set.of("AWAITING_CUSTOMER_ACCEPTANCE"), "PROPOSAL_ALREADY_RESPONDED");
         String decision = request.decision().trim().toUpperCase(Locale.ROOT);
+        boolean disputeAllowed = order.getIncidentDisputeAllowed() != null
+                ? order.getIncidentDisputeAllowed()
+                : rules.incidentPolicy().disputeAllowed();
         if ("REQUEST_REVIEW".equals(decision)) {
-            if (!Boolean.TRUE.equals(order.getIncidentDisputeAllowed())) {
+            if (!disputeAllowed) {
                 throw new BusinessException("INCIDENT_DISPUTE_DISABLED", "Request review is disabled by policy");
             }
             proposal.setStatus("DISPUTED");
@@ -573,7 +584,10 @@ public class DroneParcelIncidentService {
                 requestRedelivery(incident, order, proposal, customerUserId);
             }
             if (proposal.getCompensationAmount() != null && proposal.getCompensationAmount().signum() > 0) {
-                if (Boolean.TRUE.equals(order.getIncidentApprovalRequired())) {
+                boolean approvalRequired = order.getIncidentApprovalRequired() != null
+                        ? order.getIncidentApprovalRequired()
+                        : rules.incidentPolicy().approvalRequired();
+                if (approvalRequired) {
                     incident.setCompensationStatus("AWAITING_APPROVAL");
                 } else {
                     requestCompensation(incident, order, proposal, customerUserId);
@@ -644,7 +658,7 @@ public class DroneParcelIncidentService {
         List<DroneIncidentEvidenceResponse> evidence = evidenceRepository
                 .findByIncidentIdOrderByCreatedAtAsc(incident.getId()).stream()
                 .map(value -> new DroneIncidentEvidenceResponse(
-                        value.getId(), value.getStage(), value.getSecureUrl(), value.getCaption(),
+                        value.getId(), value.getStage(), value.getSecureUrl(), value.getSecureUrl(), value.getCaption(),
                         value.getLatitude(), value.getLongitude(), value.getGpsAccuracyM(),
                         value.getCapturedAt(), value.getUploadedByUserId(), value.getCreatedAt()))
                 .toList();
@@ -680,6 +694,31 @@ public class DroneParcelIncidentService {
             } catch (Exception ignored) {
             }
         }
+        boolean policyEnabled = order != null && order.getIncidentCompensationEnabled() != null
+                ? order.getIncidentCompensationEnabled()
+                : rules.incidentPolicy().enabled();
+        BigDecimal rate = order != null && order.getIncidentCompensationRate() != null
+                ? order.getIncidentCompensationRate()
+                : rules.incidentPolicy().compensationRate();
+        BigDecimal cap = order != null && order.getIncidentCompensationCap() != null
+                ? order.getIncidentCompensationCap()
+                : rules.incidentPolicy().compensationCap();
+        boolean freeRedelivery = order != null && order.getIncidentFreeRedelivery() != null
+                ? order.getIncidentFreeRedelivery()
+                : rules.incidentPolicy().freeRedelivery();
+        boolean refundShippingFee = order != null && order.getIncidentRefundShippingFee() != null
+                ? order.getIncidentRefundShippingFee()
+                : rules.incidentPolicy().refundShippingFee();
+        int recoverySlaHours = order != null && order.getIncidentRecoverySlaHours() != null
+                ? order.getIncidentRecoverySlaHours()
+                : rules.incidentPolicy().recoverySlaHours();
+        boolean approvalRequired = order != null && order.getIncidentApprovalRequired() != null
+                ? order.getIncidentApprovalRequired()
+                : rules.incidentPolicy().approvalRequired();
+        boolean disputeAllowed = order != null && order.getIncidentDisputeAllowed() != null
+                ? order.getIncidentDisputeAllowed()
+                : rules.incidentPolicy().disputeAllowed();
+        BigDecimal suggested = policyEnabled ? suggestedCompensation(order, rate, cap) : null;
         BigDecimal declaredValue = order != null && order.getParcelDeclaredValue() != null
                 ? order.getParcelDeclaredValue()
                 : (order != null ? order.getTotalPrice() : null);
@@ -698,17 +737,21 @@ public class DroneParcelIncidentService {
                 incident.getRecoveredLatitude(), incident.getRecoveredLongitude(), incident.getRecoveredGpsAccuracyM(),
                 incident.getReturnedToHubAt(), incident.getRedeliveryOrderId(), incident.getCompensationReference(),
                 incident.getCreatedAt(), incident.getUpdatedAt(), evidence, timeline, proposals,
-                order != null && Boolean.TRUE.equals(order.getIncidentCompensationEnabled())
-                        ? suggestedCompensation(order)
-                        : null,
-                order != null && Boolean.TRUE.equals(order.getIncidentDisputeAllowed()),
+                suggested,
+                disputeAllowed,
                 order == null ? null : order.getStatus(),
                 order == null ? null : order.getDeliveryStage(),
-                order == null ? null : order.getIncidentCompensationRate(),
+                rate,
                 declaredValue,
                 recoveryTechName,
                 recoveryTechPhone,
-                recoveryTechRole);
+                recoveryTechRole,
+                cap,
+                freeRedelivery,
+                refundShippingFee,
+                recoverySlaHours,
+                approvalRequired,
+                policyEnabled);
     }
 
     private void requestCompensation(DroneParcelIncident incident, LockerOrder order,
@@ -951,19 +994,28 @@ public class DroneParcelIncidentService {
                 .contains(normalized) ? normalized : "UNAVAILABLE";
     }
 
-    private BigDecimal suggestedCompensation(LockerOrder order) {
-        BigDecimal base = order.getParcelDeclaredValue();
-        if ((base == null || base.signum() <= 0) && order.getTotalPrice() != null) {
+    private BigDecimal suggestedCompensation(LockerOrder order, BigDecimal rate, BigDecimal cap) {
+        BigDecimal base = order == null ? null : order.getParcelDeclaredValue();
+        if ((base == null || base.signum() <= 0) && order != null && order.getTotalPrice() != null) {
             base = order.getTotalPrice();
         }
         if (base == null) {
             base = BigDecimal.ZERO;
         }
-        BigDecimal rate = order.getIncidentCompensationRate() == null
-                ? BigDecimal.valueOf(60) : order.getIncidentCompensationRate();
-        BigDecimal result = base.multiply(rate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal cap = order.getIncidentCompensationCap();
-        return cap != null && cap.signum() > 0 ? result.min(cap) : result;
+        BigDecimal resolvedRate = rate != null ? rate
+                : (order != null && order.getIncidentCompensationRate() != null
+                ? order.getIncidentCompensationRate() : rules.incidentPolicy().compensationRate());
+        if (resolvedRate == null) {
+            resolvedRate = BigDecimal.valueOf(60);
+        }
+        BigDecimal result = base.multiply(resolvedRate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        BigDecimal resolvedCap = cap != null ? cap
+                : (order != null ? order.getIncidentCompensationCap() : rules.incidentPolicy().compensationCap());
+        return resolvedCap != null && resolvedCap.signum() > 0 ? result.min(resolvedCap) : result;
+    }
+
+    private BigDecimal suggestedCompensation(LockerOrder order) {
+        return suggestedCompensation(order, null, null);
     }
 
     private String json(Object value) {

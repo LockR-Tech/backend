@@ -15,16 +15,20 @@ public interface DroneParcelIncidentRepository extends JpaRepository<DroneParcel
     Optional<DroneParcelIncident> findByOrderId(Long orderId);
     Optional<DroneParcelIncident> findByIdempotencyKey(String idempotencyKey);
     List<DroneParcelIncident> findAllByOrderByCreatedAtDesc();
+    List<DroneParcelIncident> findAllByOrderByUpdatedAtDesc();
     List<DroneParcelIncident> findByReportedByUserIdOrRecoveryAssignedToUserIdOrderByCreatedAtDesc(
             Long reportedByUserId, Long recoveryAssignedToUserId);
+    List<DroneParcelIncident> findByReportedByUserIdOrRecoveryAssignedToUserIdOrderByUpdatedAtDesc(
+            Long reportedByUserId, Long recoveryAssignedToUserId);
     List<DroneParcelIncident> findByRecoveryAssignedToUserIdOrderByCreatedAtDesc(Long userId);
+    List<DroneParcelIncident> findByRecoveryAssignedToUserIdOrderByUpdatedAtDesc(Long userId);
 
     /// Sự cố liên quan tới một KTV drone: người báo, người được giao thu hồi, hoặc người đã tiếp
     /// nhận chuyến bay có sự cố.
     @Query("select i from DroneParcelIncident i where i.reportedByUserId = :userId"
             + " or i.recoveryAssignedToUserId = :userId"
             + " or i.missionId in (select m.id from DroneMission m where m.assignedByUserId = :userId)"
-            + " order by i.createdAt desc, i.id desc")
+            + " order by i.updatedAt desc, i.createdAt desc, i.id desc")
     List<DroneParcelIncident> findVisibleToDroneTechnician(@Param("userId") Long userId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
