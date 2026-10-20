@@ -440,11 +440,12 @@ public class DronePickupService {
         order.setStaffId(technicianId);
         orderRepository.save(order);
         addHistory(order, "PICKUP_ASSIGNED", "PICKED_UP", technicianId,
-                "Đã lấy hàng tại " + order.getPickupAddress() + " — mang về tủ gửi để phóng drone"
+                "Đã lấy hàng tại " + order.getPickupAddress() + " — mang tới drone để nạp trực tiếp, không bỏ vào ô tủ bay"
                         + (pickup.getPickupNote() == null ? "" : " · " + pickup.getPickupNote()));
         notifyStage(order, order.getUserId(), "picked_up");
         notifyQuietly(order.getUserId(), "Đã lấy hàng",
-                "Kỹ thuật viên đã lấy kiện của đơn " + order.getOrderCode() + " và đang mang về tủ để phóng drone.",
+                "Kỹ thuật viên đã lấy kiện của đơn " + order.getOrderCode()
+                        + " và đang mang tới drone để nạp trực tiếp; kiện không cần bỏ vào ô tủ bay.",
                 order, "DRONE_DELIVERY_STATUS_CHANGED");
     }
 

@@ -160,8 +160,10 @@ public abstract class DroneFlowPostgresTestBase extends OrderServicePostgresTest
             return ApiResponse.ok(next);
         });
         lenient().when(lockerDroneClient.openReports()).thenAnswer(call -> ApiResponse.ok(List.copyOf(openReports)));
+        // Ô DRONE chỉ để nhận: tủ bay A/C không còn ô drone trống nào mà vẫn phải phóng được; chỉ tủ
+        // nhận B có một ô drone (DEST_BOX).
         lenient().when(lockerCellClient.findAvailable(anyLong(), any(), any())).thenAnswer(call ->
-                !java.util.Objects.equals(call.getArgument(0), LOCKER_B) || "AVAILABLE".equals(boxStatus.get(DEST_BOX))
+                java.util.Objects.equals(call.getArgument(0), LOCKER_B) && "AVAILABLE".equals(boxStatus.get(DEST_BOX))
                         ? ApiResponse.ok(new CellDto(DEST_BOX, 1, "M", "DRONE", 0, 0, "AVAILABLE", null, LOCKER_B))
                         : ApiResponse.ok(null));
         lenient().when(lockerCellClient.getCell(anyLong())).thenAnswer(call ->

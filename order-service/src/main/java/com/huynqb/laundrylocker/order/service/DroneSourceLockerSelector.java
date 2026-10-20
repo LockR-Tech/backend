@@ -21,6 +21,7 @@ import java.util.Set;
  *
  * <p>Một tủ phục vụ được khi: đang hoạt động, có bãi đáp đang sẵn sàng, còn ít nhất một drone dùng
  * được (không lỗi, không bảo trì), nằm trong bán kính lấy hàng, và tới tủ nhận không quá tầm bay.
+ * Ô DRONE chỉ dùng để NHẬN hàng: KTV nạp kiện thẳng lên drone, nên tủ bay không cần ô trống nào.
  */
 @Service
 @RequiredArgsConstructor
@@ -31,7 +32,6 @@ public class DroneSourceLockerSelector {
 
     private final LockerLookupClient lockerLookupClient;
     private final LockerDroneClient lockerDroneClient;
-    private final com.huynqb.laundrylocker.order.client.LockerCellClient lockerCellClient;
     private final OrderRules rules;
 
     /// Tủ gửi được chọn kèm các khoảng cách (mét, đường chim bay).
@@ -114,9 +114,7 @@ public class DroneSourceLockerSelector {
                 || !"OK".equalsIgnoreCase(layout.landingPadStatus())) {
             return false;
         }
-        if (!hasUsableDrone(lockerId)) return false;
-        var cell = data(lockerCellClient.findAvailable(lockerId, null, "DRONE"));
-        return cell != null && "AVAILABLE".equalsIgnoreCase(cell.status());
+        return hasUsableDrone(lockerId);
     }
 
     public boolean hasUsableDrone(Long lockerId) {
