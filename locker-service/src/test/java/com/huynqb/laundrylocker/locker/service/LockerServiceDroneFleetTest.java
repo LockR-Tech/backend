@@ -14,6 +14,8 @@ import com.huynqb.laundrylocker.locker.dto.DroneUpdateRequest;
 import com.huynqb.laundrylocker.locker.dto.DroneUnitResponse;
 import com.huynqb.laundrylocker.locker.dto.IncidentTicketBundleResponse;
 import com.huynqb.laundrylocker.locker.dto.LockerReportResponse;
+import com.huynqb.laundrylocker.locker.dto.DroneDeviceResponse;
+import com.huynqb.laundrylocker.locker.model.DroneDevice;
 import com.huynqb.laundrylocker.locker.model.DroneMaintenanceLog;
 import com.huynqb.laundrylocker.locker.model.DroneStatus;
 import com.huynqb.laundrylocker.locker.model.DroneUnit;
@@ -571,6 +573,116 @@ class LockerServiceDroneFleetTest {
                 assertThrows(BusinessException.class, () -> service.addDroneLog(1L, "   ", 42L));
 
         assertEquals("DRONE_LOG_NOTE_REQUIRED", ex.getCode());
+    }
+
+    @Test
+    void assignDroneDeviceAppendsOperationLogAndIotLog() {
+        DroneDevice device = new DroneDevice();
+        device.setId(100L);
+        device.setMacAddress("B8:27:EB:12:34:56");
+        device.setIpAddress("192.168.1.50");
+
+        when(droneDeviceRepository.findById(100L)).thenReturn(Optional.of(device));
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+        when(droneDeviceRepository.findByDroneId(1L)).thenReturn(Optional.empty());
+        when(droneDeviceRepository.save(any(DroneDevice.class))).thenAnswer(i -> i.getArgument(0));
+
+        DroneDeviceResponse resp = service.assignDroneDevice(100L, 1L, 99L);
+
+        assertNotNull(resp);
+        assertEquals(1L, resp.droneId());
+        assertEquals("DRONE-01", resp.droneCode());
+
+        ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
+        verify(droneMaintenanceLogRepository).save(logCaptor.capture());
+        DroneMaintenanceLog savedLog = logCaptor.getValue();
+        assertEquals(1L, savedLog.getDroneUnitId());
+        assertEquals(99L, savedLog.getActorUserId());
+        assertTrue(savedLog.getNote().contains("Gán bộ điều khiển Raspberry Pi: MAC B8:27:EB:12:34:56 · IP 192.168.1.50"));
+    }
+
+    @Test
+    void assignDroneDeviceDetachesOldDeviceAndLogsBothOperations() {
+        DroneDevice oldDevice = new DroneDevice();
+        oldDevice.setId(50L);
+        oldDevice.setDroneId(1L);
+        oldDevice.setDroneCode("DRONE-01");
+        oldDevice.setMacAddress("AA:BB:CC:DD:EE:FF");
+
+        DroneDevice newDevice = new DroneDevice();
+        newDevice.setId(100L);
+        newDevice.setMacAddress("B8:27:EB:12:34:56");
+
+        when(droneDeviceRepository.findById(100L)).thenReturn(Optional.of(newDevice));
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+        when(droneDeviceRepository.findByDroneId(1L)).thenReturn(Optional.of(oldDevice));
+        when(droneDeviceRepository.save(any(DroneDevice.class))).thenAnswer(i -> i.getArgument(0));
+
+        service.assignDroneDevice(100L, 1L, 99L);
+
+        assertNull(oldDevice.getDroneId());
+        ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
+        verify(droneMaintenanceLogRepository, times(2)).save(logCaptor.capture());
+        List<DroneMaintenanceLog> logs = logCaptor.getAllValues();
+        assertTrue(logs.get(0).getNote().contains("Gỡ bộ điều khiển Raspberry Pi cũ: MAC AA:BB:CC:DD:EE:FF"));
+        assertTrue(logs.get(1).getNote().contains("Gán bộ điều khiển Raspberry Pi: MAC B8:27:EB:12:34:56"));
+    }
+
+    @Test
+    void unassignDroneDeviceAppendsOperationLog() {
+        DroneDevice device = new DroneDevice();
+        device.setId(100L);
+        device.setDroneId(1L);
+        device.setDroneCode("DRONE-01");
+        device.setMacAddress("B8:27:EB:12:34:56");
+        device.setIpAddress("192.168.1.50");
+
+        when(droneDeviceRepository.findById(100L)).thenReturn(Optional.of(device));
+        when(droneDeviceRepository.save(any(DroneDevice.class))).thenAnswer(i -> i.getArgument(0));
+
+        DroneDeviceResponse resp = service.unassignDroneDevice(100L, 99L);
+
+        assertNotNull(resp);
+        assertNull(device.getDroneId());
+        assertNull(device.getDroneCode());
+
+        ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
+        verify(droneMaintenanceLogRepository).save(logCaptor.capture());
+        DroneMaintenanceLog savedLog = logCaptor.getValue();
+        assertEquals(1L, savedLog.getDroneUnitId());
+        assertEquals(99L, savedLog.getActorUserId());
+        assertTrue(savedLog.getNote().contains("Gỡ bộ điều khiển Raspberry Pi: MAC B8:27:EB:12:34:56 · IP 192.168.1.50"));
+    }
+
+    @Test
+    void registerOrUpdateDroneDeviceAppendsOperationLog() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+        when(droneDeviceRepository.findByDroneId(1L)).thenReturn(Optional.empty());
+        when(droneDeviceRepository.findByMacAddress("B8:27:EB:12:34:56")).thenReturn(Optional.empty());
+        when(droneDeviceRepository.save(any(DroneDevice.class))).thenAnswer(i -> i.getArgument(0));
+
+        DroneDeviceResponse resp = service.registerOrUpdateDroneDevice(1L, "B8:27:EB:12:34:56", "192.168.1.50", null, 99L);
+
+        assertNotNull(resp);
+        ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
+        verify(droneMaintenanceLogRepository).save(logCaptor.capture());
+        DroneMaintenanceLog savedLog = logCaptor.getValue();
+        assertEquals(1L, savedLog.getDroneUnitId());
+        assertEquals(99L, savedLog.getActorUserId());
+        assertTrue(savedLog.getNote().contains("Gán bộ điều khiển Raspberry Pi: MAC B8:27:EB:12:34:56 · IP 192.168.1.50"));
+    }
+
+    @Test
+    void adminCanAddDroneLogWithoutTechnicianOwnership() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+
+        DroneMaintenanceLogResponse response = service.addDroneLogAsAdmin(1L, "Admin kiểm tra định kỳ", 7L);
+
+        assertEquals("Admin kiểm tra định kỳ", response.note());
+        assertEquals(7L, response.actorUserId());
+        ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
+        verify(droneMaintenanceLogRepository).save(logCaptor.capture());
+        assertEquals(7L, logCaptor.getValue().getActorUserId());
     }
 
     private DroneUnit droneUnit(Long id, Long assignedTechnicianId, String status, int batteryPercent) {
