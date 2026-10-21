@@ -490,32 +490,37 @@ public class DroneLockerCommunicationService {
 
             // Check mode
             if ("INDOOR_ARUCO_DEMO".equalsIgnoreCase(session.getMode())) {
-                // In Indoor Demo mode: start 7-second open phase automatically
-                log.info("[COMM] Starting 7-second hold open period for session {}...", session.getSessionId());
+                // In Indoor Demo mode: start dynamic hold-open period automatically
+                int holdSeconds = orderRules.droneDemoHoldOpenSeconds();
+                if (holdSeconds <= 0) {
+                    holdSeconds = 7;
+                }
+                log.info("[COMM] Starting {}-second hold open period for session {}...", holdSeconds, session.getSessionId());
 
                 saveLog(UUID.randomUUID().toString(), correlationId, session.getSessionId(),
                         orderId, session.getJourneyId(), droneId, lockerId, boxId,
                         session.getTargetMarkerId(), session.getTargetDictionary(),
                         "BACKEND", "SYSTEM", "internal/timer", "DROP_PHASE_STARTED",
                         "INTERNAL", null, "COMPLETED", "CONFIRMED", "SUCCESS",
-                        null, "Bắt đầu giữ mở nắp trượt trong 7 giây", 0, null);
+                        null, "Bắt đầu giữ mở nắp trượt trong " + holdSeconds + " giây", 0, null);
 
+                final int scheduledHoldSeconds = holdSeconds;
                 scheduler.schedule(() -> {
                     try {
-                        log.info("[COMM] 7-second hold complete. Requesting close lid for session {}...", session.getSessionId());
+                        log.info("[COMM] {}-second hold complete. Requesting close lid for session {}...", scheduledHoldSeconds, session.getSessionId());
 
                         saveLog(UUID.randomUUID().toString(), correlationId, session.getSessionId(),
                                 orderId, session.getJourneyId(), droneId, lockerId, boxId,
                                 session.getTargetMarkerId(), session.getTargetDictionary(),
                                 "BACKEND", "SYSTEM", "internal/timer", "DROP_PHASE_COMPLETED",
                                 "INTERNAL", null, "COMPLETED", "CONFIRMED", "SUCCESS",
-                                null, "Hoàn tất 7 giây giữ mở nắp", 0, null);
+                                null, "Hoàn tất " + scheduledHoldSeconds + " giây giữ mở nắp", 0, null);
 
-                        requestCloseLid(session, "Hết 7 giây giữ mở nắp trượt");
+                        requestCloseLid(session, "Hết " + scheduledHoldSeconds + " giây giữ mở nắp trượt");
                     } catch (Exception ex) {
                         log.error("[COMM] Error in scheduled close: {}", ex.getMessage(), ex);
                     }
-                }, 7, TimeUnit.SECONDS);
+                }, scheduledHoldSeconds, TimeUnit.SECONDS);
 
             } else {
                 // Real outdoor: wait for drone to send DROP_PHASE_COMPLETED

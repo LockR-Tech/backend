@@ -97,10 +97,12 @@ app:
       source-locker-id: ${APP_DRONE_DEMO_SOURCE_LOCKER_ID:1}
       stage-delay-ms: ${APP_DRONE_DEMO_STAGE_DELAY_MS:3000}
       scheduler-delay-ms: ${APP_DRONE_DEMO_SCHEDULER_DELAY_MS:1000}
+      indoor-aruco-enabled: ${APP_DRONE_DEMO_INDOOR_ARUCO_ENABLED:false}
+      hold-open-seconds: ${APP_DRONE_DEMO_HOLD_OPEN_SECONDS:7}
     # Telemetry drone thật qua MQTT (đơn STANDARD) — docs/01-overview/drone-telemetry-contract.md.
     # Tắt mặc định; bật thì phải có secret ký bản tin hoặc tài khoản broker riêng.
     telemetry:
-      enabled: ${APP_DRONE_TELEMETRY_ENABLED:false}
+      enabled: ${APP_DRONE_TELEMETRY_ENABLED:true}
       broker-url: ${DRONE_MQTT_BROKER_URL:${MQTT_BROKER_URL:tcp://broker.hivemq.com:1883}}
       client-id: ${DRONE_MQTT_CLIENT_ID:lockr-order-drone-telemetry}
       username: ${DRONE_MQTT_USERNAME:}

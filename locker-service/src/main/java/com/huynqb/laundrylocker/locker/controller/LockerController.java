@@ -721,17 +721,43 @@ public class LockerController {
         return ApiResponse.ok(lockerService.recordDroneTelemetry(request));
     }
 
-    @GetMapping("/api/admin/drones/{id}/device")
+    @GetMapping({"/api/admin/drones/{id}/device", "/api/admin/drones/{id}/hardware"})
     public ApiResponse<DroneDeviceResponse> adminDroneDevice(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.getDroneDevice(id));
     }
 
-    @GetMapping("/api/admin/drone-devices")
+    @PostMapping({"/api/admin/drones/{id}/device", "/api/admin/drones/{id}/hardware"})
+    public ApiResponse<DroneDeviceResponse> adminRegisterDroneDevice(
+            @PathVariable Long id,
+            @RequestBody DroneTelemetryRequest request) {
+        var drone = lockerService.findDroneUnit(id);
+        DroneTelemetryRequest enriched = new DroneTelemetryRequest(
+                drone.getCode(),
+                request.batteryPercent() != null ? request.batteryPercent() : 100,
+                request.voltageV(),
+                request.currentA(),
+                request.macAddress(),
+                request.ipAddress(),
+                request.firmwareVersion(),
+                request.mavlinkStatus(),
+                request.flightMode(),
+                request.armed(),
+                request.landedState(),
+                request.gpsFixType(),
+                request.gpsSatellites(),
+                request.cameraStatus(),
+                request.cameraStreamUrl()
+        );
+        lockerService.recordDroneTelemetry(enriched);
+        return ApiResponse.ok("DRONE_DEVICE_SAVED", "Drone device saved", lockerService.getDroneDevice(id));
+    }
+
+    @GetMapping({"/api/admin/drone-devices", "/api/admin/drones/devices"})
     public ApiResponse<List<DroneDeviceResponse>> adminListDroneDevices() {
         return ApiResponse.ok(lockerService.listDroneDevices());
     }
 
-    @PostMapping("/api/admin/drone-devices/{id}/assign")
+    @PostMapping({"/api/admin/drone-devices/{id}/assign", "/api/admin/drones/devices/{id}/assign"})
     public ApiResponse<DroneDeviceResponse> adminAssignDroneDevice(
             @PathVariable Long id,
             @Valid @RequestBody AssignDroneDeviceRequest request) {
@@ -740,7 +766,7 @@ public class LockerController {
                 lockerService.assignDroneDevice(id, request.droneId()));
     }
 
-    @PostMapping("/api/admin/drone-devices/{id}/unassign")
+    @PostMapping({"/api/admin/drone-devices/{id}/unassign", "/api/admin/drones/devices/{id}/unassign"})
     public ApiResponse<DroneDeviceResponse> adminUnassignDroneDevice(@PathVariable Long id) {
         return ApiResponse.ok(
                 "DRONE_DEVICE_UNASSIGNED", "Drone device unassigned",

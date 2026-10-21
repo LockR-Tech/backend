@@ -66,6 +66,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DEMO_ALLOWED_USER_IDS = "app.drone.demo.allowed-user-ids";
     public static final String DRONE_DEMO_STAGE_DELAY_MS = "app.drone.demo.stage-delay-ms";
     public static final String DRONE_DEMO_INDOOR_ARUCO_ENABLED = "app.drone.demo.indoor-aruco-enabled";
+    public static final String DRONE_DEMO_HOLD_OPEN_SECONDS = "app.drone.demo.hold-open-seconds";
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
     public static final String DRONE_DEFAULT_PARCEL_WEIGHT = "app.order.drone-default-parcel-weight-grams";
     public static final String DRONE_MAX_PAYLOAD_WEIGHT = "app.order.drone-max-payload-weight-grams";
@@ -91,6 +92,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     private static final String RENTAL = "Thuê tủ";
     private static final String PAYMENT = "Thanh toán";
     private static final String DRONE = "Giao hàng drone";
+    private static final String DRONE_DEMO = "Mô phỏng & Thử nghiệm Drone";
     private static final String RECEIVER = "Thông báo cho người nhận";
     private static final String INCIDENT = "Sự cố & bồi thường";
     private static final String VOUCHER = "Mã giảm giá";
@@ -214,14 +216,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 bool(INCIDENT_DISPUTE_ALLOWED, INCIDENT, "Cho phép khách yêu cầu xem xét lại",
                         "Giữ proposal cũ và tạo phiên bản mới thay vì ghi đè lịch sử.", true),
 
-                bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng",
-                        "Khi bật: camera ArUco thật kích hoạt tới nơi và mở nắp, chỉ khi đóng nắp xong mới chuyển Sẵn sàng lấy hàng. Tắt: tự chuyển theo thời gian.", false),
-                bool(DRONE_DEMO_ENABLED, DRONE, "Cho phép chế độ drone DEMO",
-                        "Bật bộ giả lập chặng bay cho đơn drone.", true),
-                string(DRONE_DEMO_ALLOWED_USER_IDS, DRONE, "User được dùng drone DEMO",
-                        "Danh sách user id cách nhau bởi dấu phẩy. Để trống = mọi người.", "", List.of()),
-                integer(DRONE_DEMO_STAGE_DELAY_MS, DRONE, "Thời gian mỗi chặng bay giả lập",
-                        "", 3000, 1000, 600_000, "ms"),
+                // === GIAO HÀNG DRONE (VẬN HÀNH) ===
                 integer(DRONE_MIN_PREFLIGHT_BATTERY, DRONE, "Pin tối thiểu để nhận đơn drone",
                         "Drone có pin ≤ ngưỡng này không được nhận đơn.", 20, 0, 100, "%"),
                 integer(DRONE_DEFAULT_PARCEL_WEIGHT, DRONE, "Khối lượng kiện mặc định trên app",
@@ -263,6 +258,18 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_MAX_PARCEL_HEIGHT, DRONE, "Chiều cao kiện tối đa", "", 20, 1, 500, "cm").asPublic(),
                 integer(DRONE_MAX_DECLARED_VALUE, DRONE, "Giá trị khai báo tối đa của kiện drone",
                         "Kiện có giá trị khai báo cao hơn không được nhận.", 2_000_000, 0, 1_000_000_000, "VND")
-                        .asPublic());
+                        .asPublic(),
+
+                // === MÔ PHỎNG & THỬ NGHIỆM DRONE (DEMO) ===
+                bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE_DEMO, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng (Indoor Demo)",
+                        "Khi bật (Chế độ B): camera ArUco thật nhận diện ô tủ đích, kích hoạt tới nơi và mở nắp trượt, giữ mở theo số giây cấu hình rồi tự động đóng nắp, chỉ khi đóng nắp xong mới chuyển Sẵn sàng lấy hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS.", false),
+                integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giữ mở nắp trượt (giây)",
+                        "Số giây nắp trượt giữ mở ở chế độ Indoor Demo trước khi tự động gửi lệnh đóng.", 7, 1, 300, "giây"),
+                bool(DRONE_DEMO_ENABLED, DRONE_DEMO, "Cho phép chế độ drone DEMO",
+                        "Bật bộ giả lập chặng bay cho đơn drone.", true),
+                integer(DRONE_DEMO_STAGE_DELAY_MS, DRONE_DEMO, "Thời gian mỗi chặng bay giả lập",
+                        "Khoảng thời gian (ms) giữa các bước bay trong chế độ giả lập.", 3000, 1000, 600_000, "ms"),
+                string(DRONE_DEMO_ALLOWED_USER_IDS, DRONE_DEMO, "User được dùng drone DEMO",
+                        "Danh sách user id cách nhau bởi dấu phẩy. Để trống = áp dụng cho mọi người.", "", List.of()));
     }
 }
