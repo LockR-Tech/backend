@@ -60,6 +60,7 @@ class LockerServiceTicketRoutingTest {
     @Mock private DroneUnitRepository droneUnitRepository;
     @Mock private DroneDeviceRepository droneDeviceRepository;
     @Mock private DroneMaintenanceLogRepository droneMaintenanceLogRepository;
+    @Mock private DroneIotLogRepository droneIotLogRepository;
     @Mock private IotClient iotClient;
     @Mock private UserClient userClient;
     @Mock private OrderClient orderClient;
@@ -77,6 +78,7 @@ class LockerServiceTicketRoutingTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneDeviceRepository, droneMaintenanceLogRepository,
+                droneIotLogRepository,
                 iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults(),
                 presenceRepository);
         locker = new LockerUnit();
@@ -252,6 +254,7 @@ class LockerServiceTicketRoutingTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneDeviceRepository, droneMaintenanceLogRepository,
+                droneIotLogRepository,
                 iotClient, userClient, orderClient, attachmentService, rabbitTemplate,
                 TestLockerRules.of(Map.of("app.maintenance.require-resolution-photo", true)),
                 presenceRepository);
