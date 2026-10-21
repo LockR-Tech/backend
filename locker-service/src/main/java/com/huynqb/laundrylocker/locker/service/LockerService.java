@@ -2985,6 +2985,16 @@ public class LockerService {
         if (request.currentA() != null) {
             device.setCurrentA(request.currentA());
         }
+        if ("DISCONNECTED".equalsIgnoreCase(request.mavlinkStatus()) || "HEARTBEAT_LOST".equalsIgnoreCase(request.mavlinkStatus())) {
+            device.setArmed(null);
+            device.setFlightMode(null);
+            device.setLandedState(null);
+            device.setGpsFixType(null);
+            device.setGpsSatellites(null);
+            device.setBatteryPercent(null);
+            device.setVoltageV(null);
+            device.setCurrentA(null);
+        }
         if (request.cameraStatus() != null) {
             device.setCameraStatus(request.cameraStatus());
         }
@@ -3039,6 +3049,39 @@ public class LockerService {
                 .orElseThrow(() -> new NotFoundException("DroneDevice", deviceId));
         device.setDroneId(null);
         device.setDroneCode(null);
+        return toDroneDeviceResponse(droneDeviceRepository.save(device));
+    }
+
+    @Transactional
+    public DroneDeviceResponse registerOrUpdateDroneDevice(Long droneId, String macAddress, String ipAddress, String cameraStreamUrl) {
+        DroneUnit drone = findDroneUnit(droneId);
+        String mac = macAddress != null && !macAddress.isBlank()
+                ? macAddress.trim().toUpperCase(Locale.ROOT)
+                : "DRONE:" + drone.getCode();
+
+        DroneDevice device = droneDeviceRepository.findByDroneId(drone.getId())
+                .or(() -> droneDeviceRepository.findByMacAddress(mac))
+                .orElseGet(() -> {
+                    DroneDevice created = new DroneDevice();
+                    created.setMacAddress(mac);
+                    created.setDroneId(drone.getId());
+                    created.setDroneCode(drone.getCode());
+                    return created;
+                });
+
+        device.setDroneId(drone.getId());
+        device.setDroneCode(drone.getCode());
+        device.setMacAddress(mac);
+        if (ipAddress != null && !ipAddress.isBlank()) {
+            device.setIpAddress(ipAddress.trim());
+        }
+        if (cameraStreamUrl != null && !cameraStreamUrl.isBlank()) {
+            device.setCameraStreamUrl(cameraStreamUrl.trim());
+        } else if (device.getIpAddress() != null && !device.getIpAddress().isBlank()) {
+            device.setCameraStreamUrl("http://" + device.getIpAddress() + ":8080/stream.mjpg");
+        }
+        // Thao tác gán cấu hình thiết bị của Admin: KHÔNG giả lập lastSeenAt, pin 100% hay tín hiệu Pixhawk.
+        // Chỉ lưu thông tin định danh phần cứng; trạng thái trực tuyến sẽ do telemetry thực tế quyết định.
         return toDroneDeviceResponse(droneDeviceRepository.save(device));
     }
 
