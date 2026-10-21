@@ -47,6 +47,19 @@ public class OrderService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Set<String> CANCELABLE = Set.of("INITIALIZED", "RESERVED", "WAITING", "AWAITING_DISPATCH");
+    private static final Set<String> PIN_RESETTABLE = Set.of("INITIALIZED", "STORING", "RETURNED");
+
+    /// Bước admin được đổi tay (trạng thái hiện tại → đích). Đơn đã COMPLETED/CANCELED là đóng hẳn.
+    /// Không có bước nào về INITIALIZED/STORING: bỏ hàng và cấp PIN người nhận chỉ đi qua confirm().
+    private static final Map<String, Set<String>> STAFF_TRANSITIONS = Map.of(
+            "INITIALIZED", Set.of("CANCELED"),
+            "RESERVED", Set.of("CANCELED"),
+            "WAITING", Set.of("CANCELED"),
+            "AWAITING_DISPATCH", Set.of("CANCELED"),
+            "STORING", Set.of("COMPLETED", "EXPIRED"),
+            "RETURNED", Set.of("COMPLETED", "EXPIRED"),
+            "READY", Set.of("COMPLETED"),
+            "EXPIRED", Set.of("COMPLETED"));
 
     private final LockerOrderRepository orderRepository;
     private final OrderDetailRepository detailRepository;
@@ -128,17 +141,28 @@ public class OrderService {
         return toResponse(saved);
     }
 
+    /// Đổi trạng thái thủ công (admin). Chỉ cho các bước chuyển trong [STAFF_TRANSITIONS] và đi
+    /// qua đúng đường nghiệp vụ của bước đó (huỷ / chốt đơn / dời kho), để không mở lại đơn đã
+    /// đóng hay bỏ qua bước cấp PIN, giữ ô, hoàn ưu đãi.
     @Transactional
     public OrderResponse updateStatus(Long id, UpdateOrderStatusRequest request) {
-        LockerOrder order = find(id);
-        String target = request.status() == null ? "" : request.status().toUpperCase();
-        if ("CANCELED".equals(target) || "COMPLETED".equals(target)) {
-            releaseBoxes(order);
+        LockerOrder order = orderRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Order", id));
+        String current = order.getStatus() == null ? "" : order.getStatus().toUpperCase();
+        String target = request.status() == null ? "" : request.status().trim().toUpperCase();
+        Set<String> allowed = STAFF_TRANSITIONS.getOrDefault(current, Set.of());
+        if (!allowed.contains(target)) {
+            throw new BusinessException(
+                    "ORDER_STATUS_TRANSITION_INVALID",
+                    allowed.isEmpty()
+                            ? "Đơn ở trạng thái " + current + " không thể đổi trạng thái thủ công"
+                            : "Từ " + current + " chỉ được chuyển sang " + String.join(", ", new TreeSet<>(allowed)));
         }
-        if ("RETURNED".equals(target)) {
-            occupyBoxQuietly(request.receiveBoxId());
-        }
-        return transition(order, request.status(), request.staffId(), request.receiveBoxId(), null);
+        return switch (target) {
+            case "CANCELED" -> cancelOrder(order, request.staffId(), null, "Order canceled by admin");
+            case "COMPLETED" -> checkout(order.getId(), request.staffId(), "Order closed by admin");
+            case "EXPIRED" -> moveToStorage(order, request.staffId(), "Admin chuyển đồ vào kho lưu trữ, ô đã giải phóng");
+            default -> throw new IllegalStateException("Unhandled transition " + current + " -> " + target);
+        };
     }
 
     @Transactional
@@ -707,6 +731,12 @@ public class OrderService {
         if (!CANCELABLE.contains(order.getStatus())) {
             throw new BusinessException("ORDER_STATUS_INVALID", "Order cannot be canceled at this status");
         }
+        return cancelOrder(order, userId, reason, "Order canceled");
+    }
+
+    /// Đường huỷ chung cho khách và admin: chặn đơn drone kiện đã rời tay khách, xoá PIN,
+    /// giữ ô gửi đang chứa kiện drone, hoàn ưu đãi (trong [transition]).
+    private OrderResponse cancelOrder(LockerOrder order, Long actorId, Integer reason, String note) {
         assertDroneCancelable(order);
         order.setCancelReason(reason);
         order.setPinCode(null);
@@ -718,13 +748,19 @@ public class OrderService {
         if (heldSourceBoxId != null) {
             order.setSourceBoxId(heldSourceBoxId);
         }
-        return transition(order, "CANCELED", userId, null, "Order canceled");
+        return transition(order, "CANCELED", actorId, null, note);
     }
 
     @Transactional
     public OrderResponse resetPin(Long id, Long userId) {
         LockerOrder order = find(id);
         assertOwner(order, userId);
+        // Chỉ đổi khi mã còn dùng được: đơn chưa đóng và đang có PIN. Đơn drone cấp PIN lúc kiện
+        // vào ô nhận, không đổi qua đây (khớp điều kiện nút "Đổi mã PIN" trên app).
+        validateStatus(order, PIN_RESETTABLE);
+        if ("DRONE_DELIVERY".equalsIgnoreCase(order.getType()) || !StringUtils.hasText(order.getPinCode())) {
+            throw new BusinessException("ORDER_PIN_RESET_INVALID", "Đơn này không có mã PIN để đổi");
+        }
         order.setPinCode(generatePinCode());
         order.setPinCodeIssuedAt(LocalDateTime.now());
         return toResponse(orderRepository.save(order));
@@ -1567,46 +1603,53 @@ public class OrderService {
                 // Đơn thuê tủ không tự động dời về kho theo cấu hình admin — tiếp tục giữ tại tủ
                 continue;
             }
-            BigDecimal overtime = calculatePickupOvertimeFee(order);
-            if (overtime.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
-                if (currentExtra.compareTo(overtime) < 0) {
-                    BigDecimal diff = overtime.subtract(currentExtra);
-                    order.setExtraFee(overtime);
-                    order.setTotalPrice(order.getTotalPrice().add(diff));
-                    if (order.getOriginalPrice() != null) {
-                        order.setOriginalPrice(order.getOriginalPrice().add(diff));
-                    }
-                    order.setPaymentStatus("UNPAID");
-                    order.setPaidAt(null);
-                }
-            }
-            releaseBoxes(order);
-            // Ô đã trả về pool nên tham chiếu box phải cắt — tránh double-release
-            // giải phóng nhầm ô đã được cấp cho đơn khác ở các lệnh sau này.
-            order.setSendBoxId(null);
-            order.setReceiveBoxId(null);
-            order.setPinCode(null);
-            transition(order, "EXPIRED", null, null,
+            moveToStorage(order, null,
                     "Quá hạn lấy hàng quá " + overdueReleaseHours
                             + " giờ: đồ chuyển vào kho lưu trữ, ô đã giải phóng");
-            notifyQuietly(order.getUserId(), "Đồ đã chuyển vào kho",
-                    "Đơn " + order.getOrderCode()
-                            + " quá hạn lấy hàng. Đồ đã được chuyển vào kho lưu trữ và ô tủ được giải phóng."
-                            + " Vui lòng liên hệ nhân viên để nhận lại đồ.",
-                    "ORDER_EXPIRED", order.getId());
-            if (order.getReceiverId() != null) {
-                notifyQuietly(order.getReceiverId(), "Đồ đã chuyển vào kho",
-                        "Kiện hàng " + order.getOrderCode()
-                                + " quá hạn lấy. Đồ đã chuyển vào kho lưu trữ; liên hệ nhân viên để nhận lại.",
-                        "ORDER_EXPIRED", order.getId());
-            }
             expired++;
         }
         if (expired > 0) {
             log.info("Overdue orders moved to storage (EXPIRED) and cells released: {}", expired);
         }
         return Map.of("expiredOrders", expired);
+    }
+
+    /// Dời đồ về kho (EXPIRED): chốt phí quá hạn, nhả ô, cắt tham chiếu ô và PIN, báo khách.
+    /// Dùng chung cho job quá hạn và admin đổi tay.
+    private OrderResponse moveToStorage(LockerOrder order, Long actorId, String note) {
+        BigDecimal overtime = calculatePickupOvertimeFee(order);
+        if (overtime.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+            if (currentExtra.compareTo(overtime) < 0) {
+                BigDecimal diff = overtime.subtract(currentExtra);
+                order.setExtraFee(overtime);
+                order.setTotalPrice(order.getTotalPrice().add(diff));
+                if (order.getOriginalPrice() != null) {
+                    order.setOriginalPrice(order.getOriginalPrice().add(diff));
+                }
+                order.setPaymentStatus("UNPAID");
+                order.setPaidAt(null);
+            }
+        }
+        releaseBoxes(order);
+        // Ô đã trả về pool nên tham chiếu box phải cắt — tránh double-release
+        // giải phóng nhầm ô đã được cấp cho đơn khác ở các lệnh sau này.
+        order.setSendBoxId(null);
+        order.setReceiveBoxId(null);
+        order.setPinCode(null);
+        OrderResponse response = transition(order, "EXPIRED", actorId, null, note);
+        notifyQuietly(order.getUserId(), "Đồ đã chuyển vào kho",
+                "Đơn " + order.getOrderCode()
+                        + " quá hạn lấy hàng. Đồ đã được chuyển vào kho lưu trữ và ô tủ được giải phóng."
+                        + " Vui lòng liên hệ nhân viên để nhận lại đồ.",
+                "ORDER_EXPIRED", order.getId());
+        if (order.getReceiverId() != null) {
+            notifyQuietly(order.getReceiverId(), "Đồ đã chuyển vào kho",
+                    "Kiện hàng " + order.getOrderCode()
+                            + " quá hạn lấy. Đồ đã chuyển vào kho lưu trữ; liên hệ nhân viên để nhận lại.",
+                    "ORDER_EXPIRED", order.getId());
+        }
+        return response;
     }
 
     // G4: trạng thái ô bên locker-service là bản sao best-effort của đơn
