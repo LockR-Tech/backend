@@ -730,26 +730,13 @@ public class LockerController {
     public ApiResponse<DroneDeviceResponse> adminRegisterDroneDevice(
             @PathVariable Long id,
             @RequestBody DroneTelemetryRequest request) {
-        var drone = lockerService.findDroneUnit(id);
-        DroneTelemetryRequest enriched = new DroneTelemetryRequest(
-                drone.getCode(),
-                request.batteryPercent() != null ? request.batteryPercent() : 100,
-                request.voltageV(),
-                request.currentA(),
+        DroneDeviceResponse saved = lockerService.registerOrUpdateDroneDevice(
+                id,
                 request.macAddress(),
                 request.ipAddress(),
-                request.firmwareVersion(),
-                request.mavlinkStatus(),
-                request.flightMode(),
-                request.armed(),
-                request.landedState(),
-                request.gpsFixType(),
-                request.gpsSatellites(),
-                request.cameraStatus(),
                 request.cameraStreamUrl()
         );
-        lockerService.recordDroneTelemetry(enriched);
-        return ApiResponse.ok("DRONE_DEVICE_SAVED", "Drone device saved", lockerService.getDroneDevice(id));
+        return ApiResponse.ok("DRONE_DEVICE_SAVED", "Drone device saved", saved);
     }
 
     @GetMapping({"/api/admin/drone-devices", "/api/admin/drones/devices"})

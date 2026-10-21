@@ -36,7 +36,7 @@ public class DroneDevice {
     private String ipAddress;
 
     @Column(name = "firmware_version", length = 50)
-    private String firmwareVersion = "v1.0.0";
+    private String firmwareVersion;
 
     /// MAVLink link state: CONNECTED, HEARTBEAT_LOST, DISCONNECTED
     @Column(name = "mavlink_status", length = 30)
@@ -44,24 +44,24 @@ public class DroneDevice {
 
     /// Chế độ bay: LOITER, AUTO, GUIDED, STABILIZE, RTL...
     @Column(name = "flight_mode", length = 30)
-    private String flightMode = "UNKNOWN";
+    private String flightMode;
 
     /// Động cơ đã Arm chưa
     @Column(name = "armed")
-    private Boolean armed = false;
+    private Boolean armed;
 
     /// ON_GROUND, IN_AIR, TAKEOFF, LANDING
     @Column(name = "landed_state", length = 30)
-    private String landedState = "ON_GROUND";
+    private String landedState;
 
     @Column(name = "gps_fix_type")
-    private Integer gpsFixType = 0;
+    private Integer gpsFixType;
 
     @Column(name = "gps_satellites")
-    private Integer gpsSatellites = 0;
+    private Integer gpsSatellites;
 
     @Column(name = "battery_percent")
-    private Integer batteryPercent = 100;
+    private Integer batteryPercent;
 
     @Column(name = "voltage_v", precision = 5, scale = 2)
     private BigDecimal voltageV;
@@ -97,4 +97,3 @@ public class DroneDevice {
         updatedAt = LocalDateTime.now();
     }
 }
-
