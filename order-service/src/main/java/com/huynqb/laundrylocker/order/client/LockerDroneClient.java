@@ -50,4 +50,7 @@ public interface LockerDroneClient {
 
     @GetMapping("/internal/drone-incidents/inspection-reports/{id}")
     ApiResponse<IncidentInspectionStatus> getIncidentInspectionReport(@PathVariable Long id);
+
+    @GetMapping("/internal/lockers/boxes/{boxId}/cell")
+    ApiResponse<com.huynqb.laundrylocker.order.dto.BoxCellDto> getBoxCell(@PathVariable Long boxId);
 }

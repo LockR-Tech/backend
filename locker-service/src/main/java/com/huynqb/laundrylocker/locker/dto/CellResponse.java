@@ -2,30 +2,11 @@ package com.huynqb.laundrylocker.locker.dto;
 
 import com.huynqb.laundrylocker.locker.model.CellType;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
 /**
  * Thông tin một ô tủ trong lưới vật lý — dùng cho API layout và màn hình mobile.
- *
- * <p><b>Ý nghĩa các trường:</b>
- * <ul>
- *   <li>{@code id} — PK của locker_boxes.</li>
- *   <li>{@code boxNumber} — số thứ tự ô trong tủ (hiển thị cho người dùng).</li>
- *   <li>{@code size} — kích cỡ vật lý: {@code SMALL}, {@code MEDIUM}, {@code LARGE}, {@code XL}.</li>
- *   <li>{@code cellType} — loại ô, xem {@link CellType}:
- *       <ul>
- *         <li>{@link CellType#STANDARD} — đa dịch vụ (thuê, gửi, giặt).</li>
- *         <li>{@link CellType#DRONE} — chỉ nhận hàng drone; mobile hiển thị icon drone,
- *             không cho phép đặt dịch vụ thường.</li>
- *         <li>{@link CellType#XL} — vali cỡ lớn, thuê tủ loại XL.</li>
- *       </ul>
- *   </li>
- *   <li>{@code rowIndex} — hàng trong lưới, đếm từ 1 (hàng 1 = hàng trên cùng / drone).</li>
- *   <li>{@code colIndex} — cột trong lưới, đếm từ 0.</li>
- *   <li>{@code status} — {@code AVAILABLE}, {@code OCCUPIED}, {@code RESERVED}, {@code FAULT},
- *       {@code CLEANING}, {@code OUT_OF_SERVICE}.</li>
- *   <li>{@code faultReason} — mô tả lỗi nếu status là {@code FAULT}, ngược lại {@code null}.</li>
- *   <li>{@code doorOpen} — trạng thái mở cửa cảm biến (true: mở, false: đóng).</li>
- *   <li>{@code hwState} — trạng thái phần cứng gateway (OPEN / CLOSED).</li>
- * </ul>
  */
 public record CellResponse(
         Long id,
@@ -38,7 +19,28 @@ public record CellResponse(
         String faultReason,
         Boolean doorOpen,
         String hwState,
-        Long lockerId) {
+        Long lockerId,
+        String arucoDictionary,
+        Integer arucoMarkerId,
+        BigDecimal arucoMarkerSizeCm,
+        LocalDateTime arucoAssignedAt,
+        String arucoAssignedBy) {
+
+    public CellResponse(
+            Long id,
+            Integer boxNumber,
+            String size,
+            String cellType,
+            Integer rowIndex,
+            Integer colIndex,
+            String status,
+            String faultReason,
+            Boolean doorOpen,
+            String hwState,
+            Long lockerId) {
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, doorOpen, hwState, lockerId,
+                null, null, null, null, null);
+    }
 
     public CellResponse(
             Long id,
@@ -51,7 +53,8 @@ public record CellResponse(
             String faultReason,
             Boolean doorOpen,
             String hwState) {
-        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, doorOpen, hwState, null);
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, doorOpen, hwState, null,
+                null, null, null, null, null);
     }
 
     public CellResponse(
@@ -63,6 +66,7 @@ public record CellResponse(
             Integer colIndex,
             String status,
             String faultReason) {
-        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, null, null, null);
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, null, null, null,
+                null, null, null, null, null);
     }
 }

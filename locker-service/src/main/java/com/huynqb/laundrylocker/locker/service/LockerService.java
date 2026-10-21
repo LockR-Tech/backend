@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -2930,17 +2931,19 @@ public class LockerService {
             unit = droneUnitRepository.save(unit);
         }
 
+        final Long finalUnitId = unit.getId();
+        final String finalUnitCode = unit.getCode();
         String mac = request.macAddress() != null && !request.macAddress().isBlank()
                 ? request.macAddress().trim().toUpperCase(Locale.ROOT)
                 : "DRONE:" + unit.getCode();
 
-        DroneDevice device = droneDeviceRepository.findByDroneId(unit.getId())
+        DroneDevice device = droneDeviceRepository.findByDroneId(finalUnitId)
                 .or(() -> droneDeviceRepository.findByMacAddress(mac))
                 .orElseGet(() -> {
                     DroneDevice created = new DroneDevice();
                     created.setMacAddress(mac);
-                    created.setDroneId(unit.getId());
-                    created.setDroneCode(unit.getCode());
+                    created.setDroneId(finalUnitId);
+                    created.setDroneCode(finalUnitCode);
                     return created;
                 });
 
@@ -3257,7 +3260,12 @@ public class LockerService {
                 box.getFaultReason(),
                 doorOpen,
                 hwState,
-                box.getLockerId());
+                box.getLockerId(),
+                box.getArucoDictionary(),
+                box.getArucoMarkerId(),
+                box.getArucoMarkerSizeCm(),
+                box.getArucoAssignedAt(),
+                box.getArucoAssignedBy());
     }
 
     private void publishBoxFault(LockerBox box, String reason) {
@@ -4165,4 +4173,60 @@ public class LockerService {
                     report, AttachmentStage.PROGRESS, request.progressAttachments(), userId, logId, rules.reportPhotosPerRequestStaff());
         }
     }
+
+    @Transactional
+    public CellResponse assignArucoMarker(Long boxId, String actorUserId) {
+        LockerBox box = findBox(boxId);
+        if (!CellType.DRONE.equalsIgnoreCase(box.getCellType())) {
+            throw new BusinessException("BOX_NOT_DRONE_COMPATIBLE", "Chỉ ô tủ dành cho Drone mới có thể gán mã ArUco");
+        }
+        String dict = StringUtils.hasText(box.getArucoDictionary()) ? box.getArucoDictionary() : "DICT_4X4_50";
+        if (!"DICT_4X4_50".equals(dict)) {
+            dict = "DICT_4X4_50";
+        }
+
+        List<LockerBox> existing = boxRepository.findByArucoDictionaryAndArucoMarkerIdIsNotNull(dict);
+        Set<Integer> usedIds = new HashSet<>();
+        for (LockerBox b : existing) {
+            if (!b.getId().equals(box.getId()) && b.getArucoMarkerId() != null) {
+                usedIds.add(b.getArucoMarkerId());
+            }
+        }
+
+        // DICT_4X4_50 has IDs 0 through 49
+        int allocatedId = -1;
+        for (int i = 0; i < 50; i++) {
+            if (!usedIds.contains(i)) {
+                allocatedId = i;
+                break;
+            }
+        }
+
+        if (allocatedId < 0) {
+            throw new BusinessException("ARUCO_DICTIONARY_EXHAUSTED", "Tất cả 50 mã ArUco trong từ điển DICT_4X4_50 đã được sử dụng");
+        }
+
+        box.setArucoDictionary(dict);
+        box.setArucoMarkerId(allocatedId);
+        box.setArucoMarkerSizeCm(new BigDecimal("8.00"));
+        box.setArucoAssignedAt(LocalDateTime.now());
+        box.setArucoAssignedBy(actorUserId != null ? actorUserId : "ADMIN");
+
+        LockerBox saved = boxRepository.save(box);
+        log.info("Assigned ArUco marker {} (dict: {}) to box {} (locker {}) by {}",
+                allocatedId, dict, boxId, box.getLockerId(), actorUserId);
+        return toCell(saved);
+    }
+
+    @Transactional
+    public CellResponse unassignArucoMarker(Long boxId) {
+        LockerBox box = findBox(boxId);
+        box.setArucoMarkerId(null);
+        box.setArucoAssignedAt(null);
+        box.setArucoAssignedBy(null);
+        LockerBox saved = boxRepository.save(box);
+        log.info("Unassigned ArUco marker from box {} (locker {})", boxId, box.getLockerId());
+        return toCell(saved);
+    }
+
 }

@@ -1197,4 +1197,19 @@ public class LockerController {
         int count = lockerService.deleteAllBoxesInLocker(id);
         return ApiResponse.ok("BOXES_DELETED", "Deleted all " + count + " boxes successfully", Map.of("deletedCount", count));
     }
+
+    @PostMapping("/api/admin/lockers/boxes/{boxId}/assign-aruco")
+    public ApiResponse<CellResponse> assignArucoMarker(
+            @PathVariable Long boxId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        return ApiResponse.ok("ARUCO_ASSIGNED", "ArUco marker assigned successfully",
+                lockerService.assignArucoMarker(boxId, userId));
+    }
+
+    @DeleteMapping("/api/admin/lockers/boxes/{boxId}/aruco")
+    public ApiResponse<CellResponse> unassignArucoMarker(@PathVariable Long boxId) {
+        return ApiResponse.ok("ARUCO_UNASSIGNED", "ArUco marker unassigned successfully",
+                lockerService.unassignArucoMarker(boxId));
+    }
+
 }

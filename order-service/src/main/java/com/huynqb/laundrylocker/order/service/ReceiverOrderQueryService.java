@@ -175,7 +175,7 @@ public class ReceiverOrderQueryService {
                 drone && active ? DroneDeliveryQueryService.etaMinutes(order.getDeliveryStage()) : null,
                 // Màn theo dõi drone chỉ mở cho người gửi và tài khoản người nhận của đơn.
                 drone && active && userId.equals(order.getReceiverUserId()),
-                drone ? DroneDeliveryQueryService.stageChanges(history.reversed()) : List.of(),
+                drone ? DroneDeliveryQueryService.stageChanges(reversed(history)) : List.of(),
                 order.getCreatedAt(),
                 order.getPaidAt(),
                 order.getUpdatedAt(),
@@ -352,6 +352,13 @@ public class ReceiverOrderQueryService {
         if (userId == null) {
             throw new BusinessException("AUTH_REQUIRED", "Vui lòng đăng nhập.", HttpStatus.UNAUTHORIZED);
         }
+    }
+
+    private static <T> List<T> reversed(List<T> list) {
+        if (list == null || list.isEmpty()) return List.of();
+        List<T> copy = new ArrayList<>(list);
+        Collections.reverse(copy);
+        return copy;
     }
 
     record View(boolean pinVisible, boolean delegateDetails) {

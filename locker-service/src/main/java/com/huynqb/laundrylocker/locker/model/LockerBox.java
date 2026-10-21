@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -58,6 +59,21 @@ public class LockerBox {
     /// sửa xong — ô đang chứa hàng không được về AVAILABLE. NULL = về AVAILABLE.
     @Column(name = "pre_fault_status", length = 30)
     private String preFaultStatus;
+
+    @Column(name = "aruco_dictionary", length = 50)
+    private String arucoDictionary;
+
+    @Column(name = "aruco_marker_id")
+    private Integer arucoMarkerId;
+
+    @Column(name = "aruco_marker_size_cm")
+    private BigDecimal arucoMarkerSizeCm;
+
+    @Column(name = "aruco_assigned_at")
+    private LocalDateTime arucoAssignedAt;
+
+    @Column(name = "aruco_assigned_by", length = 100)
+    private String arucoAssignedBy;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

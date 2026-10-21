@@ -59,7 +59,7 @@ public class DroneDeliveryQueryService {
             throw new BusinessException("ORDER_FORBIDDEN", "Order does not belong to user");
         }
         // Mã lấy hàng chỉ dành cho người gửi: họ đọc cho KTV khi giao kiện.
-        return buildAll(List.of(row(order)), userId.equals(order.getUserId())).getFirst();
+        return buildAll(List.of(row(order)), userId.equals(order.getUserId())).get(0);
     }
 
     @Transactional(readOnly = true)
@@ -70,7 +70,7 @@ public class DroneDeliveryQueryService {
             throw new BusinessException("DRONE_MISSION_NOT_ASSIGNED_TO_USER",
                     "Only the drone technician handling this order may view its detail");
         }
-        return buildAll(List.of(row)).getFirst();
+        return buildAll(List.of(row)).get(0);
     }
 
     /// Đơn bị một phiếu sự cố chặn hoặc đã kết thúc vì phiếu đó — cho KTV sự cố và admin.
@@ -141,7 +141,7 @@ public class DroneDeliveryQueryService {
     }
 
     private DroneDeliveryOrderResponse build(LockerOrder order) {
-        return buildAll(List.of(row(order))).getFirst();
+        return buildAll(List.of(row(order))).get(0);
     }
 
     private Row row(LockerOrder order) {
