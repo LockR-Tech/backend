@@ -27,4 +27,9 @@ public class InternalUserLookupController {
         }
         return ApiResponse.ok(userProfileService.getMany(ids));
     }
+
+    @GetMapping("/internal/users/by-email")
+    public ApiResponse<UserSummary> byEmail(@RequestParam String email) {
+        return ApiResponse.ok(userProfileService.getByEmail(email));
+    }
 }

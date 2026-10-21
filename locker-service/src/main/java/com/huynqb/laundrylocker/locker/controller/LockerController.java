@@ -1026,6 +1026,49 @@ public class LockerController {
         return ApiResponse.ok("REPORT_ATTACHMENT_DELETED", "Report photo deleted");
     }
 
+    @DeleteMapping({"/api/admin/lockers/reports/{id}", "/api/admin/lockers/reports/kiosk/{id}", "/api/admin/lockers/reports/drone/{id}"})
+    public ApiResponse<Void> adminDeleteReport(@PathVariable Long id) {
+        lockerService.deleteReport(id);
+        return ApiResponse.ok("REPORT_DELETED", "Report deleted");
+    }
+
+    @PostMapping({"/api/admin/lockers/reports/batch-delete", "/api/admin/lockers/reports/kiosk/batch-delete", "/api/admin/lockers/reports/drone/batch-delete"})
+    public ApiResponse<Map<String, Object>> adminDeleteReportsBatch(
+            @RequestBody(required = false) BatchDeleteReportsRequest request) {
+        int count = lockerService.deleteReportsBatch(request);
+        return ApiResponse.ok("REPORTS_DELETED", "Deleted " + count + " reports successfully", Map.of("deletedCount", count));
+    }
+
+    @DeleteMapping("/api/admin/lockers/reports")
+    public ApiResponse<Map<String, Object>> adminDeleteReportsBatchWithDelete(
+            @RequestParam(name = "all", defaultValue = "false") boolean all,
+            @RequestParam(required = false) String category,
+            @RequestBody(required = false) BatchDeleteReportsRequest request) {
+        BatchDeleteReportsRequest req = request != null ? request : new BatchDeleteReportsRequest(null, all, category);
+        int count = lockerService.deleteReportsBatch(req);
+        return ApiResponse.ok("REPORTS_DELETED", "Deleted " + count + " reports successfully", Map.of("deletedCount", count));
+    }
+
+    @DeleteMapping("/api/admin/lockers/reports/kiosk")
+    public ApiResponse<Map<String, Object>> adminDeleteKioskReportsBatchWithDelete(
+            @RequestParam(name = "all", defaultValue = "false") boolean all,
+            @RequestBody(required = false) BatchDeleteReportsRequest request) {
+        List<Long> ids = request != null ? request.reportIds() : null;
+        boolean isAll = (request != null && Boolean.TRUE.equals(request.deleteAll())) || all;
+        int count = lockerService.deleteReportsBatch(new BatchDeleteReportsRequest(ids, isAll, "KIOSK"));
+        return ApiResponse.ok("REPORTS_DELETED", "Deleted " + count + " kiosk reports successfully", Map.of("deletedCount", count));
+    }
+
+    @DeleteMapping("/api/admin/lockers/reports/drone")
+    public ApiResponse<Map<String, Object>> adminDeleteDroneReportsBatchWithDelete(
+            @RequestParam(name = "all", defaultValue = "false") boolean all,
+            @RequestBody(required = false) BatchDeleteReportsRequest request) {
+        List<Long> ids = request != null ? request.reportIds() : null;
+        boolean isAll = (request != null && Boolean.TRUE.equals(request.deleteAll())) || all;
+        int count = lockerService.deleteReportsBatch(new BatchDeleteReportsRequest(ids, isAll, "DRONE"));
+        return ApiResponse.ok("REPORTS_DELETED", "Deleted " + count + " drone reports successfully", Map.of("deletedCount", count));
+    }
+
     @GetMapping("/api/admin/lockers")
     public ApiResponse<List<LockerResponse>> adminList(
             @RequestParam(required = false) Long storeId, @RequestParam(required = false) Long technicianId) {

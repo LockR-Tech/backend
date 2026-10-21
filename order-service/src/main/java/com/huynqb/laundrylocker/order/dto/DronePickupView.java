@@ -28,5 +28,7 @@ public record DronePickupView(
         String failureReason,
         String failureNote,
         /// Ghi chú của KTV lúc lấy hàng.
-        String technicianNote) {
+        String technicianNote,
+        String pickupPhotoUrl,
+        LocalDateTime pickupPhotoCapturedAt) {
 }

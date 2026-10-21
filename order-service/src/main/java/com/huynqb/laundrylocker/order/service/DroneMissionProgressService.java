@@ -57,6 +57,7 @@ public class DroneMissionProgressService {
     private final LockerClient lockerClient;
     private final UserClient userClient;
     private final OrderRules rules;
+    private final DroneDeliveryMailer mailer;
 
     /// Chặng kế tiếp của một mission đang bay; null nếu mission không ở chặng bay.
     public static String nextStage(String missionStatus) {
@@ -251,15 +252,16 @@ public class DroneMissionProgressService {
                 : DEADLINE_FORMAT.format(
                         order.getPickupDeadline().atZone(ZoneOffset.UTC).withZoneSameInstant(DISPLAY_ZONE));
         List<String> reached = new ArrayList<>();
+        String where = whereQuietly(order);
 
-        if (receiver != null && !receiverIsSender && sendInAppQuietly(order, receiver, deadline)) {
+        if (receiver != null && !receiverIsSender && sendInAppQuietly(order, receiver, deadline, where)) {
             reached.add("thông báo trong app");
         }
 
         String email = rules.receiverNotifyEmail() ? receiverEmail(order, receiver) : null;
         String phone = receiver == null ? order.getReceiverPhone() : null;
         if (StringUtils.hasText(email) || StringUtils.hasText(phone)) {
-            GuestNotification.Result result = sendOutOfBandQuietly(order, phone, email, deadline);
+            GuestNotification.Result result = sendOutOfBandQuietly(order, phone, email, deadline, where);
             if (result.emailSent()) {
                 reached.add("email " + maskEmail(email));
             }
@@ -279,12 +281,22 @@ public class DroneMissionProgressService {
         recordQuietly(order, note);
     }
 
-    private boolean sendInAppQuietly(LockerOrder order, Long receiver, String deadline) {
+    /// "Tủ Lock.R Q1 (12 Lê Lợi) · Ô số 3" — người nhận phải biết tới tủ nào, mở ô số mấy.
+    private String whereQuietly(LockerOrder order) {
+        try {
+            String where = mailer == null ? null : mailer.destinationWithBox(order);
+            return StringUtils.hasText(where) ? where : "tủ #" + order.getDestinationLockerId();
+        } catch (Exception ignored) {
+            return "tủ #" + order.getDestinationLockerId();
+        }
+    }
+
+    private boolean sendInAppQuietly(LockerOrder order, Long receiver, String deadline, String where) {
         try {
             notificationClient.requestNotification(new NotificationRequest(
                     receiver,
                     "Mã nhận hàng giao bằng drone",
-                    "Kiện hàng " + order.getOrderCode() + " đã vào tủ nhận. Mã mở ô: " + order.getPinCode()
+                    "Kiện hàng " + order.getOrderCode() + " đã vào " + where + ". Mã mở ô: " + order.getPinCode()
                             + ". Hạn nhận: " + deadline + ".",
                     "DRONE_DELIVERY_STATUS_CHANGED",
                     order.getId(),
@@ -296,11 +308,12 @@ public class DroneMissionProgressService {
     }
 
     private GuestNotification.Result sendOutOfBandQuietly(
-            LockerOrder order, String phone, String email, String deadline) {
+            LockerOrder order, String phone, String email, String deadline, String where) {
         String name = StringUtils.hasText(order.getReceiverName()) ? " " + order.getReceiverName() : "";
         String emailBody = "Xin chào" + name + ",\n\n"
                 + "Kiện hàng giao bằng drone của bạn đã nằm trong tủ Lock.R.\n\n"
                 + "Mã đơn: " + order.getOrderCode() + "\n"
+                + "Lấy tại: " + where + "\n"
                 + "Mã mở ô: " + order.getPinCode() + "\n"
                 + "Hạn nhận hàng: " + deadline + "\n\n"
                 + "Nhập mã này trên màn hình tủ để mở ô và lấy hàng. Không chia sẻ mã cho người khác.\n";
@@ -309,8 +322,8 @@ public class DroneMissionProgressService {
                     phone,
                     email,
                     "Mã mở tủ Lock.R cho đơn " + order.getOrderCode(),
-                    "Lock.R: Kien hang " + order.getOrderCode() + " giao bang drone da vao tu. Ma mo tu: "
-                            + order.getPinCode() + ". Han lay: " + deadline + ".",
+                    "Lock.R: Kien hang " + order.getOrderCode() + " giao bang drone da vao " + where
+                            + ". Ma mo tu: " + order.getPinCode() + ". Han lay: " + deadline + ".",
                     emailBody));
             GuestNotification.Result result = response == null ? null : response.data();
             return result == null ? new GuestNotification.Result(false, false, false, false) : result;

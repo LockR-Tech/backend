@@ -143,6 +143,17 @@ public class UserProfileService {
                                         "USER_NOT_FOUND", "No user with phone " + phoneNumber));
     }
 
+    @Transactional(readOnly = true)
+    public UserSummary getByEmail(String email) {
+        String normalized = email == null ? "" : email.trim();
+        return userProfileRepository
+                .findFirstByEmailIgnoreCase(normalized)
+                .filter(user -> "ACTIVE".equalsIgnoreCase(user.getStatus()))
+                .map(this::toSummary)
+                .orElseThrow(() -> new com.huynqb.laundrylocker.common.exception.BusinessException(
+                        "USER_NOT_FOUND", "No active user for email"));
+    }
+
     /// Tra cứu theo lô cho các màn hình báo cáo admin (order/payment-service ghép
     /// tên khách). Id không tồn tại bị bỏ qua thay vì lỗi cả lô.
     @Transactional(readOnly = true)

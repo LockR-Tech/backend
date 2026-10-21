@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.dto.GuestNotification;
@@ -33,6 +34,7 @@ public class DroneDeliveryMailer {
 
     private final NotificationClient notificationClient;
     private final LockerLookupClient lockerLookupClient;
+    private final LockerCellClient lockerCellClient;
 
     /// Kết quả gửi: địa chỉ (đã che) của những người thực sự nhận được thư.
     public record Outcome(boolean senderReached, boolean receiverReached) {
@@ -52,6 +54,7 @@ public class DroneDeliveryMailer {
     /// Drone vừa cất cánh: báo cho cả hai đầu.
     public Outcome launched(LockerOrder order, DroneMission mission) {
         String destination = lockerLabel(order.getDestinationLockerId());
+        String box = boxLabel(order);
         String parcel = parcelLine(order);
         String drone = mission != null && StringUtils.hasText(mission.getDroneCode())
                 ? " bằng drone " + mission.getDroneCode()
@@ -63,7 +66,8 @@ public class DroneDeliveryMailer {
                 + "  Người nhận: " + nameOr(order.getReceiverName(), "—") + "\n"
                 + "  Số điện thoại: " + nameOr(order.getReceiverPhone(), "—") + "\n"
                 + "  Email: " + nameOr(order.getReceiverEmail(), "—") + "\n"
-                + "  Tủ nhận: " + destination + "\n\n"
+                + "  Tủ nhận: " + destination + "\n"
+                + "  Ô nhận: " + box + "\n\n"
                 + "Kiện hàng: " + parcel + "\n\n"
                 + "Khi hàng vào tủ, người nhận sẽ được gửi mã mở ô. Bạn theo dõi hành trình trong ứng dụng Lock.R.\n";
         String senderHtml = DroneDeliveryEmailTemplate.launched(
@@ -76,6 +80,7 @@ public class DroneDeliveryMailer {
                         new DroneDeliveryEmailTemplate.Detail("Điện thoại", nameOr(order.getReceiverPhone(), "—")),
                         new DroneDeliveryEmailTemplate.Detail("Email", nameOr(order.getReceiverEmail(), "—")),
                         new DroneDeliveryEmailTemplate.Detail("Tủ nhận", destination),
+                        new DroneDeliveryEmailTemplate.Detail("Ô nhận", box),
                         new DroneDeliveryEmailTemplate.Detail("Kiện hàng", parcel)),
                 "Khi kiện hàng vào tủ, người nhận sẽ nhận hướng dẫn và mã mở ô qua email.");
 
@@ -86,7 +91,8 @@ public class DroneDeliveryMailer {
                 + "  Số điện thoại: " + nameOr(order.getSenderPhone(), "—") + "\n"
                 + "  Email: " + nameOr(order.getSenderEmail(), "—") + "\n\n"
                 + "Kiện hàng: " + parcel + "\n"
-                + "Nơi nhận: " + destination + "\n\n"
+                + "Nơi nhận: " + destination + "\n"
+                + "Ô nhận: " + box + "\n\n"
                 + "Khi hàng vào tủ, bạn sẽ nhận được email kèm mã mở ô và hạn lấy hàng.\n";
         String receiverHtml = DroneDeliveryEmailTemplate.launched(
                 nameOr(order.getReceiverName(), "bạn"),
@@ -98,7 +104,8 @@ public class DroneDeliveryMailer {
                         new DroneDeliveryEmailTemplate.Detail("Điện thoại", nameOr(order.getSenderPhone(), "—")),
                         new DroneDeliveryEmailTemplate.Detail("Email", nameOr(order.getSenderEmail(), "—")),
                         new DroneDeliveryEmailTemplate.Detail("Kiện hàng", parcel),
-                        new DroneDeliveryEmailTemplate.Detail("Nơi nhận", destination)),
+                        new DroneDeliveryEmailTemplate.Detail("Nơi nhận", destination),
+                        new DroneDeliveryEmailTemplate.Detail("Ô nhận", box)),
                 "Khi hàng vào tủ, bạn sẽ nhận email có mã mở ô và thời hạn lấy hàng.");
 
         return new Outcome(
@@ -191,6 +198,29 @@ public class DroneDeliveryMailer {
                     ex.getClass().getSimpleName(), ex.getMessage(), ex);
             return false;
         }
+    }
+
+    /// Tủ nhận kèm ô đã giữ cho đơn — người nhận cần biết tới tủ nào, mở ô số mấy.
+    public String destinationWithBox(LockerOrder order) {
+        return lockerLabel(order.getDestinationLockerId()) + " · " + boxLabel(order);
+    }
+
+    /// "Ô số 3": số in trên cửa ô nhận, không phải id nội bộ.
+    String boxLabel(LockerOrder order) {
+        Long boxId = order.getReservedBoxId();
+        if (boxId == null) {
+            return "chưa gán ô";
+        }
+        try {
+            var response = lockerCellClient.getCell(boxId);
+            var cell = response == null ? null : response.data();
+            if (cell != null && cell.boxNumber() != null) {
+                return "Ô số " + cell.boxNumber();
+            }
+        } catch (Exception ex) {
+            log.debug("Box {} lookup failed while composing a drone email: {}", boxId, ex.getMessage());
+        }
+        return "ô #" + boxId;
     }
 
     /// Tên + địa chỉ tủ: người nhận cần biết đi đâu, "tủ #7" thì không giúp được gì.

@@ -61,6 +61,33 @@ class UserProfileServiceAdminTest {
     }
 
     @Test
+    void findsActiveAccountByTrimmedCaseInsensitiveEmail() {
+        UserProfile receiver = user(42L, "ACTIVE");
+        receiver.setEmail("Receiver@gmail.com");
+        receiver.setFirstName("Nguyen");
+        receiver.setLastName("An");
+        when(repository.findFirstByEmailIgnoreCase("receiver@gmail.com")).thenReturn(Optional.of(receiver));
+
+        var summary = service.getByEmail(" receiver@gmail.com ");
+
+        assertEquals(42L, summary.id());
+        assertEquals("Receiver@gmail.com", summary.email());
+        assertEquals("Nguyen An", summary.fullName());
+    }
+
+    @Test
+    void doesNotResolveInactiveUserByEmail() {
+        UserProfile inactive = user(43L, "INACTIVE");
+        inactive.setEmail("closed@gmail.com");
+        when(repository.findFirstByEmailIgnoreCase("closed@gmail.com")).thenReturn(Optional.of(inactive));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.getByEmail("closed@gmail.com"));
+
+        assertEquals("USER_NOT_FOUND", error.getCode());
+    }
+
+    @Test
     void updateStatusRejectsMissingOrUnknownValue() {
         BusinessException missing = assertThrows(BusinessException.class, () -> service.updateStatus(5L, null));
         BusinessException literalNull = assertThrows(BusinessException.class, () -> service.updateStatus(5L, "null"));

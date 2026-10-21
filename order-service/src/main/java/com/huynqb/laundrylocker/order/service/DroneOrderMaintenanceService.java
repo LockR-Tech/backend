@@ -112,7 +112,7 @@ public class DroneOrderMaintenanceService {
             order.setStaffId(userId);
             orderRepository.save(order);
             addJourneyEvent(order.getId(), previousStage, "ACCEPTED", userId,
-                    "Kỹ thuật viên mang kiện về tủ gửi và gán drone " + reservedDrone.code());
+                    "Kỹ thuật viên đã mang kiện tới tủ bay và nạp trực tiếp lên drone " + reservedDrone.code());
             notifyDeliveryStageQuietly(order, "accepted", "10 phút");
             return toResponse(order, mission, reservedDrone);
         } catch (RuntimeException failure) {

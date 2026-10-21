@@ -217,6 +217,19 @@ public class ReportAttachmentService {
         mediaStorage.deleteAfterCommit(attachment.getPublicId());
     }
 
+    /// Xóa toàn bộ ảnh đính kèm của một phiếu khi phiếu bị xóa
+    @Transactional
+    public void deleteByReportId(Long reportId) {
+        if (reportId == null) {
+            return;
+        }
+        List<ReportAttachment> attachments = attachmentRepository.findByReportIdOrderByCreatedAtAscIdAsc(reportId);
+        for (ReportAttachment att : attachments) {
+            attachmentRepository.delete(att);
+            mediaStorage.deleteAfterCommit(att.getPublicId());
+        }
+    }
+
     ReportAttachmentResponse toResponse(ReportAttachment attachment) {
         return new ReportAttachmentResponse(
                 attachment.getId(),

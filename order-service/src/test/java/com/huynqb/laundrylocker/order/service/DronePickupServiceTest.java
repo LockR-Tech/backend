@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.model.DroneMission;
@@ -43,6 +44,7 @@ class DronePickupServiceTest {
     @Mock private DroneDeliveryFailureService failureService;
     @Mock private UserClient userClient;
     @Mock private OrderRules rules;
+    @Mock private CloudinaryMediaStorage mediaStorage;
 
     private DronePickupService service;
 
@@ -58,7 +60,8 @@ class DronePickupServiceTest {
                 notificationClient,
                 failureService,
                 userClient,
-                rules);
+                rules,
+                mediaStorage);
     }
 
     @Test
