@@ -426,6 +426,43 @@ public class LockerController {
     }
 
     @GetMapping("/api/admin/drones/{id}/logs")
+    @GetMapping("/api/admin/drones/{id}/iot-logs")
+    public ApiResponse<List<DroneIotLogResponse>> adminDroneIotLogs(
+            @PathVariable Long id,
+            @RequestParam(required = false) String component,
+            @RequestParam(required = false) String eventType,
+            @RequestParam(required = false) String result,
+            @RequestParam(required = false) String search) {
+        return ApiResponse.ok(lockerService.getDroneIotLogs(id, component, eventType, result, search));
+    }
+
+    @PostMapping("/api/admin/drones/{id}/iot-logs")
+    public ApiResponse<DroneIotLogResponse> adminCreateDroneIotLog(
+            @PathVariable Long id,
+            @Valid @RequestBody CreateDroneIotLogRequest request) {
+        CreateDroneIotLogRequest finalReq = request.droneId() == null || !request.droneId().equals(id)
+                ? new CreateDroneIotLogRequest(
+                        id,
+                        request.droneCode(),
+                        request.component(),
+                        request.eventType(),
+                        request.result(),
+                        request.actorType(),
+                        request.actorId(),
+                        request.orderId(),
+
+
+
+
+
+
+
+                        request.message())
+
+                : request;
+        return ApiResponse.ok("DRONE_IOT_LOG_CREATED", "Drone IoT log created", lockerService.createDroneIotLog(finalReq));
+    }
+
     public ApiResponse<List<DroneMaintenanceLogResponse>> adminDroneLogs(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.droneLogs(id));
     }

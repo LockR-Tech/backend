@@ -76,6 +76,7 @@ public class LockerService {
     private final DroneUnitRepository droneUnitRepository;
     private final DroneDeviceRepository droneDeviceRepository;
     private final DroneMaintenanceLogRepository droneMaintenanceLogRepository;
+    private final DroneIotLogRepository droneIotLogRepository;
     private final IotClient iotClient;
     private final UserClient userClient;
     private final OrderClient orderClient;
@@ -2187,6 +2188,7 @@ public class LockerService {
                 log.getId(),
                 log.getScheduleId(),
                 log.getLockerId(),
+
                 locker == null ? null : locker.getName(),
                 locker == null ? null : locker.getCode(),
                 log.getDroneUnitId(),
@@ -3003,8 +3005,46 @@ public class LockerService {
         } else if (device.getCameraStreamUrl() == null && request.ipAddress() != null) {
             device.setCameraStreamUrl("http://" + request.ipAddress() + ":8080/stream.mjpg");
         }
+        boolean wasOffline = !DroneDeviceResponse.isOnline(device.getLastSeenAt());
+        String oldMavlink = device.getMavlinkStatus();
         device.setLastSeenAt(LocalDateTime.now());
         droneDeviceRepository.save(device);
+
+        if (wasOffline) {
+            DroneIotLog logPi = new DroneIotLog();
+            logPi.setDroneId(unit.getId());
+            logPi.setDroneCode(unit.getCode());
+            logPi.setComponent("PI_CONTROLLER");
+            logPi.setEventType("POWER_CONNECTED");
+            logPi.setResult("ONLINE");
+            logPi.setActorType("SYSTEM");
+            logPi.setActorId("Pi-Bootloader");
+            logPi.setMessage("Bo xu ly Raspberry Pi cam nguon truc tuyen. Tiep nhan tin hieu telemetry.");
+
+            logPi.setCreatedAt(LocalDateTime.now());
+            droneIotLogRepository.save(logPi);
+        }
+        if (request.mavlinkStatus() != null && !request.mavlinkStatus().equalsIgnoreCase(oldMavlink)) {
+            String statusUpper = request.mavlinkStatus().toUpperCase(Locale.ROOT);
+            DroneIotLog logPixhawk = new DroneIotLog();
+            logPixhawk.setDroneId(unit.getId());
+            logPixhawk.setDroneCode(unit.getCode());
+            logPixhawk.setComponent("PIXHAWK");
+            if ("CONNECTED".equals(statusUpper)) {
+                logPixhawk.setEventType("PIXHAWK_CONNECTED");
+                logPixhawk.setResult("CONNECTED");
+                logPixhawk.setMessage("Ket noi MAVLink on dinh voi bo dieu khien Pixhawk qua UART.");
+            } else {
+                logPixhawk.setEventType("PIXHAWK_DISCONNECTED");
+                logPixhawk.setResult("DISCONNECTED");
+                logPixhawk.setMessage("Canh bao: Mat ket noi MAVLink voi Pixhawk (" + request.mavlinkStatus() + ").");
+            }
+            logPixhawk.setActorType("SYSTEM");
+            logPixhawk.setActorId("MAVLink-Router");
+
+            logPixhawk.setCreatedAt(LocalDateTime.now());
+            droneIotLogRepository.save(logPixhawk);
+        }
 
         return toDroneUnit(unit);
     }
@@ -3121,6 +3161,66 @@ public class LockerService {
     }
 
     @Transactional(readOnly = true)
+    public List<DroneIotLogResponse> getDroneIotLogs(Long droneId, String component, String eventType, String result, String search) {
+        String comp = (component != null && !component.isBlank() && !"ALL".equalsIgnoreCase(component)) ? component.trim() : null;
+        String evt = (eventType != null && !eventType.isBlank() && !"ALL".equalsIgnoreCase(eventType)) ? eventType.trim() : null;
+        String res = (result != null && !result.isBlank() && !"ALL".equalsIgnoreCase(result)) ? result.trim() : null;
+        String q = (search != null && !search.isBlank()) ? search.trim() : null;
+
+        return droneIotLogRepository.searchLogs(droneId, comp, evt, res, q).stream()
+                .map(this::toDroneIotLogResponse)
+                .toList();
+    }
+
+    @Transactional
+    public DroneIotLogResponse createDroneIotLog(CreateDroneIotLogRequest request) {
+        DroneUnit drone = findDroneUnit(request.droneId());
+        DroneIotLog log = new DroneIotLog();
+        log.setDroneId(drone.getId());
+        log.setDroneCode(drone.getCode());
+        log.setComponent(request.component());
+        log.setEventType(request.eventType());
+        log.setResult(request.result());
+        log.setActorType(request.actorType() != null ? request.actorType() : "SYSTEM");
+        log.setActorId(request.actorId());
+        log.setOrderId(request.orderId());
+
+
+
+
+
+
+
+        log.setMessage(request.message());
+
+        log.setCreatedAt(LocalDateTime.now());
+        return toDroneIotLogResponse(droneIotLogRepository.save(log));
+    }
+
+    private DroneIotLogResponse toDroneIotLogResponse(DroneIotLog log) {
+        return new DroneIotLogResponse(
+                log.getId(),
+                log.getDroneId(),
+                log.getDroneCode(),
+                log.getComponent(),
+                log.getEventType(),
+                log.getResult(),
+                log.getActorType(),
+                log.getActorId(),
+                log.getOrderId(),
+
+
+
+
+
+
+
+                log.getMessage(),
+
+                log.getCreatedAt()
+        );
+    }
+
     public List<DroneMaintenanceLogResponse> droneLogs(Long droneUnitId) {
         return droneMaintenanceLogRepository.findByDroneUnitIdOrderByCreatedAtAsc(droneUnitId).stream()
                 .map(this::toDroneLog)
