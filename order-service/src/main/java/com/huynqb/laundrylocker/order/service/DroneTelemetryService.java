@@ -212,7 +212,10 @@ public class DroneTelemetryService {
     /// Pin thật để bước kiểm tra trước khi phóng không dựa vào số nhập tay. Chỉ gửi khi đổi
     /// và cách lần trước đủ lâu; drone chưa khai báo trên admin thì locker-service trả lỗi, bỏ qua.
     private void syncBatteryQuietly(String droneCode, DroneTelemetryFrame frame, long now) {
-        Integer battery = frame.batteryPercent() != null ? frame.batteryPercent() : 100;
+        Integer battery = frame.batteryPercent();
+        if (battery == null) {
+            return;
+        }
         BatterySync last = lastBattery.get(droneCode);
         if (last != null && last.percent() == battery && now - last.atMs() < 3000) {
             return;
