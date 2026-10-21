@@ -65,6 +65,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DEMO_ENABLED = "app.drone.demo.enabled";
     public static final String DRONE_DEMO_ALLOWED_USER_IDS = "app.drone.demo.allowed-user-ids";
     public static final String DRONE_DEMO_STAGE_DELAY_MS = "app.drone.demo.stage-delay-ms";
+    public static final String DRONE_DEMO_INDOOR_ARUCO_ENABLED = "app.drone.demo.indoor-aruco-enabled";
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
     public static final String DRONE_DEFAULT_PARCEL_WEIGHT = "app.order.drone-default-parcel-weight-grams";
     public static final String DRONE_MAX_PAYLOAD_WEIGHT = "app.order.drone-max-payload-weight-grams";
@@ -213,6 +214,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 bool(INCIDENT_DISPUTE_ALLOWED, INCIDENT, "Cho phép khách yêu cầu xem xét lại",
                         "Giữ proposal cũ và tạo phiên bản mới thay vì ghi đè lịch sử.", true),
 
+                bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng",
+                        "Khi bật: camera ArUco thật kích hoạt tới nơi và mở nắp, chỉ khi đóng nắp xong mới chuyển Sẵn sàng lấy hàng. Tắt: tự chuyển theo thời gian.", false),
                 bool(DRONE_DEMO_ENABLED, DRONE, "Cho phép chế độ drone DEMO",
                         "Bật bộ giả lập chặng bay cho đơn drone.", true),
                 string(DRONE_DEMO_ALLOWED_USER_IDS, DRONE, "User được dùng drone DEMO",

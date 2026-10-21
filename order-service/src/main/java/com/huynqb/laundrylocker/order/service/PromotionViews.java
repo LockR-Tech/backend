@@ -33,7 +33,7 @@ public class PromotionViews {
     }
 
     public PromotionView view(Promotion promotion, boolean admin) {
-        return views(List.of(promotion), admin).getFirst();
+        return views(List.of(promotion), admin).get(0);
     }
 
     /// id tủ → tủ; id null bỏ qua; lỗi tra cứu ⇒ map rỗng.

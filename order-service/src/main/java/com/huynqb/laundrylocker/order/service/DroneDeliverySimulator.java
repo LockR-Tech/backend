@@ -45,6 +45,14 @@ public class DroneDeliverySimulator {
                     || !mission.getStatus().equals(order.getDeliveryStage())) {
                 continue;
             }
+            if (rules.droneDemoIndoorArucoEnabled()) {
+                // In Indoor ArUco Demo mode: do not auto-advance to ARRIVED or READY_FOR_PICKUP by timer!
+                // ARRIVED is triggered by real camera ArUco detection, and READY_FOR_PICKUP is triggered when lid is confirmed CLOSED.
+                if ("APPROACHING".equals(mission.getStatus()) || "ARRIVED".equals(mission.getStatus())) {
+                    positionBroadcaster.broadcast(order, mission, now, stageDelayMs);
+                    continue;
+                }
+            }
             LocalDateTime updatedAt = mission.getUpdatedAt();
             if (updatedAt == null || Duration.between(updatedAt, now).toMillis() < stageDelayMs) {
                 positionBroadcaster.broadcast(order, mission, now, stageDelayMs);

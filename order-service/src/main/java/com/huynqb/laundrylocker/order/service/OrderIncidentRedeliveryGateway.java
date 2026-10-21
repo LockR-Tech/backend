@@ -167,7 +167,6 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             oldOrder.setStatus("CANCELED");
             oldOrder.setDeliveryStage("DROP_REPORTED");
             oldOrder.setStaffNote("Đóng đơn do sự cố rơi kiện (" + incidentCode + "). Đã tạo đơn mới giao lại miễn phí: " + newOrderCode);
-            oldOrder.setCancelNote("Giao lại miễn phí qua đơn mới " + newOrderCode);
             orderRepository.save(oldOrder);
 
             OrderStatusHistory oldHistory = new OrderStatusHistory();

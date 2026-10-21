@@ -220,6 +220,10 @@ public class OrderRules {
         return settings.getBoolean(RECEIVER_NOTIFY_EMAIL);
     }
 
+    public boolean droneDemoIndoorArucoEnabled() {
+        return settings.getBoolean(DRONE_DEMO_INDOOR_ARUCO_ENABLED);
+    }
+
     public boolean droneDemoEnabled() {
         return settings.getBoolean(DRONE_DEMO_ENABLED);
     }

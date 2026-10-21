@@ -614,7 +614,7 @@ public class OrderService {
         try {
             var response = lockerLookupClient.getLockers(List.of(lockerId));
             var lockers = response == null ? null : response.data();
-            return lockers == null || lockers.isEmpty() ? null : lockers.getFirst();
+            return lockers == null || lockers.isEmpty() ? null : lockers.get(0);
         } catch (Exception ex) {
             log.debug("Locker {} lookup failed while composing pickup message: {}", lockerId, ex.getMessage());
             return null;

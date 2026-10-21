@@ -128,7 +128,7 @@ public class OrderBenefitService {
                         promotionClaimRepository.save(claim);
                     });
         }
-        order.setPromotionCode(applied.getFirst());
+        order.setPromotionCode(applied.get(0));
         order.setAppliedPromotionCodes(String.join(",", applied));
         order.setDiscount(discount);
         recomputeTotal(order);

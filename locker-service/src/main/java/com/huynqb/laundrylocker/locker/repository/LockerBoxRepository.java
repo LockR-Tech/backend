@@ -40,4 +40,10 @@ public interface LockerBoxRepository extends JpaRepository<LockerBox, Long> {
     List<LockerBox> findByLockerIdAndIdIn(Long lockerId, java.util.Collection<Long> ids);
 
     List<LockerBox> findByLockerIdAndBoxNumberIn(Long lockerId, java.util.Collection<Integer> boxNumbers);
+
+    List<LockerBox> findByArucoDictionaryAndArucoMarkerIdIsNotNull(String arucoDictionary);
+
+    Optional<LockerBox> findByArucoDictionaryAndArucoMarkerId(String arucoDictionary, Integer arucoMarkerId);
+
+    boolean existsByArucoDictionaryAndArucoMarkerId(String arucoDictionary, Integer arucoMarkerId);
 }

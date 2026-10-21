@@ -379,4 +379,52 @@ public class DroneMissionProgressService {
             default -> null;
         };
     }
+
+    @Transactional
+    public void advanceToStage(LockerOrder order, DroneMission mission, String targetStage, Long actorUserId, String note) {
+        if (targetStage == null) {
+            return;
+        }
+        String previousStage = order.getDeliveryStage();
+
+        boolean deposited = "READY_FOR_PICKUP".equals(targetStage);
+        if (deposited) {
+            mission.setStatus("DEPOSITED");
+            mission.setDepositedAt(LocalDateTime.now());
+            mission.setDepositedByUserId(actorUserId);
+            order.setStatus("STORING");
+            order.setDeliveryStage(targetStage);
+            order.setPinCode(String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000)));
+            order.setPinCodeIssuedAt(LocalDateTime.now());
+            order.setPickupDeadline(LocalDateTime.now().plusHours(rules.dronePickupHours()));
+        } else {
+            mission.setStatus(targetStage);
+            if ("ARRIVED".equals(targetStage)) {
+                mission.setLandedAt(LocalDateTime.now());
+            }
+            order.setDeliveryStage(targetStage);
+        }
+        missionRepository.save(mission);
+        orderRepository.save(order);
+
+        OrderStatusHistory history = new OrderStatusHistory();
+        history.setOrderId(order.getId());
+        history.setOldStatus(previousStage);
+        history.setNewStatus(targetStage);
+        history.setChangedByUserId(actorUserId);
+        history.setNote(note);
+        historyRepository.save(history);
+
+        if (deposited) {
+            occupyDestinationBoxQuietly(order);
+            releaseDroneQuietly(mission);
+        }
+        if (List.of("DEPARTED", "APPROACHING", "ARRIVED", "READY_FOR_PICKUP").contains(targetStage)) {
+            notifyStageQuietly(order, targetStage);
+        }
+        if (deposited) {
+            sendPickupCodeQuietly(order);
+        }
+    }
+
 }
