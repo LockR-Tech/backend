@@ -224,6 +224,10 @@ public class OrderRules {
         return settings.getBoolean(DRONE_DEMO_INDOOR_ARUCO_ENABLED);
     }
 
+    public int droneDemoHoldOpenSeconds() {
+        return settings.getInt(DRONE_DEMO_HOLD_OPEN_SECONDS);
+    }
+
     public boolean droneDemoEnabled() {
         return settings.getBoolean(DRONE_DEMO_ENABLED);
     }

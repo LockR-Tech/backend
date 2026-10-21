@@ -59,7 +59,7 @@ spring:
             - id: locker-service
               uri: lb://locker-service
               predicates:
-                - Path=/api/lockers/**,/api/boxes/**,/api/drone-deliveries,/api/drone-deliveries/**,/api/admin/lockers,/api/admin/lockers/**,/api/admin/drones,/api/admin/drones/**,/api/admin/maintenance,/api/admin/maintenance/**,/internal/lockers/**,/internal/boxes/**,/api/maintenance/**,/api/locker-technician/**,/api/drone-technician/**
+                - Path=/api/lockers/**,/api/boxes/**,/api/drone-deliveries,/api/drone-deliveries/**,/api/admin/lockers,/api/admin/lockers/**,/api/admin/drones,/api/admin/drones/**,/api/admin/drone-devices,/api/admin/drone-devices/**,/api/admin/maintenance,/api/admin/maintenance/**,/internal/lockers/**,/internal/boxes/**,/api/maintenance/**,/api/locker-technician/**,/api/drone-technician/**
 
             - id: payment-service
               uri: lb://payment-service
