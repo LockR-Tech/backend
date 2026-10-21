@@ -53,6 +53,7 @@ class LockerServiceInspectionTest {
     @Mock private DroneUnitRepository droneUnitRepository;
     @Mock private DroneDeviceRepository droneDeviceRepository;
     @Mock private DroneMaintenanceLogRepository droneMaintenanceLogRepository;
+    @Mock private DroneIotLogRepository droneIotLogRepository;
     @Mock private IotClient iotClient;
     @Mock private UserClient userClient;
     @Mock private OrderClient orderClient;
@@ -69,6 +70,7 @@ class LockerServiceInspectionTest {
         service = new LockerService(
                 lockerRepository, boxRepository, reportRepository, repairLogRepository, scheduleRepository,
                 inspectionLogRepository, ratingRepository, droneUnitRepository, droneDeviceRepository, droneMaintenanceLogRepository,
+                droneIotLogRepository,
                 iotClient, userClient, orderClient, attachmentService, rabbitTemplate, TestLockerRules.defaults(),
                 presenceRepository);
         LockerUnit locker = new LockerUnit();

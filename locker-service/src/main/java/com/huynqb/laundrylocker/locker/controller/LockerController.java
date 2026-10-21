@@ -425,8 +425,7 @@ public class LockerController {
                 lockerService.assignDroneTechnician(id, request.technicianId(), userId));
     }
 
-    @GetMapping("/api/admin/drones/{id}/logs")
-    @GetMapping("/api/admin/drones/{id}/iot-logs")
+    @GetMapping({"/api/admin/drones/{id}/logs", "/api/admin/drones/{id}/iot-logs"})
     public ApiResponse<List<DroneIotLogResponse>> adminDroneIotLogs(
             @PathVariable Long id,
             @RequestParam(required = false) String component,
