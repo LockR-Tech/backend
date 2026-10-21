@@ -718,7 +718,33 @@ public class LockerController {
     /// Pin drone tự báo qua telemetry. Không ghi nhật ký bảo trì: đây là số đo máy gửi liên tục.
     @PostMapping("/internal/drones/telemetry")
     public ApiResponse<DroneUnitResponse> internalDroneTelemetry(@Valid @RequestBody DroneTelemetryRequest request) {
-        return ApiResponse.ok(lockerService.recordDroneTelemetry(request.code(), request.batteryPercent()));
+        return ApiResponse.ok(lockerService.recordDroneTelemetry(request));
+    }
+
+    @GetMapping("/api/admin/drones/{id}/device")
+    public ApiResponse<DroneDeviceResponse> adminDroneDevice(@PathVariable Long id) {
+        return ApiResponse.ok(lockerService.getDroneDevice(id));
+    }
+
+    @GetMapping("/api/admin/drone-devices")
+    public ApiResponse<List<DroneDeviceResponse>> adminListDroneDevices() {
+        return ApiResponse.ok(lockerService.listDroneDevices());
+    }
+
+    @PostMapping("/api/admin/drone-devices/{id}/assign")
+    public ApiResponse<DroneDeviceResponse> adminAssignDroneDevice(
+            @PathVariable Long id,
+            @Valid @RequestBody AssignDroneDeviceRequest request) {
+        return ApiResponse.ok(
+                "DRONE_DEVICE_ASSIGNED", "Drone device assigned",
+                lockerService.assignDroneDevice(id, request.droneId()));
+    }
+
+    @PostMapping("/api/admin/drone-devices/{id}/unassign")
+    public ApiResponse<DroneDeviceResponse> adminUnassignDroneDevice(@PathVariable Long id) {
+        return ApiResponse.ok(
+                "DRONE_DEVICE_UNASSIGNED", "Drone device unassigned",
+                lockerService.unassignDroneDevice(id));
     }
 
     @PostMapping("/api/drone-technician/drones/{id}/claim")

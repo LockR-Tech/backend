@@ -24,9 +24,14 @@ public record DroneTelemetryFrame(
         Battery battery,
         Velocity velocity,
         Flight flight,
-        Landed landed) {
+        Landed landed,
+        PiInfo pi) {
 
     private static final Set<String> AIRBORNE_STATES = Set.of("IN_AIR", "TAKEOFF", "LANDING");
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record PiInfo(String macAddress, String ipAddress, String firmware, String cameraStreamUrl, String cameraStatus) {
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Link(String mavlink, Long heartbeatAgeMs) {

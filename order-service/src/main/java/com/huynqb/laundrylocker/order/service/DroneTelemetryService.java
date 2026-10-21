@@ -212,19 +212,34 @@ public class DroneTelemetryService {
     /// Pin thật để bước kiểm tra trước khi phóng không dựa vào số nhập tay. Chỉ gửi khi đổi
     /// và cách lần trước đủ lâu; drone chưa khai báo trên admin thì locker-service trả lỗi, bỏ qua.
     private void syncBatteryQuietly(String droneCode, DroneTelemetryFrame frame, long now) {
-        Integer battery = frame.batteryPercent();
-        if (battery == null) {
-            return;
-        }
+        Integer battery = frame.batteryPercent() != null ? frame.batteryPercent() : 100;
         BatterySync last = lastBattery.get(droneCode);
-        if (last != null && (last.percent() == battery || now - last.atMs() < BATTERY_MIN_INTERVAL_MS)) {
+        if (last != null && last.percent() == battery && now - last.atMs() < 3000) {
             return;
         }
         lastBattery.put(droneCode, new BatterySync(battery, now));
         try {
-            lockerDroneClient.reportTelemetry(new DroneTelemetryReport(droneCode, battery));
+            java.math.BigDecimal voltage = frame.battery() != null && frame.battery().voltageV() != null
+                    ? java.math.BigDecimal.valueOf(frame.battery().voltageV()) : null;
+            java.math.BigDecimal current = frame.battery() != null && frame.battery().currentA() != null
+                    ? java.math.BigDecimal.valueOf(frame.battery().currentA()) : null;
+            String mac = frame.pi() != null ? frame.pi().macAddress() : null;
+            String ip = frame.pi() != null ? frame.pi().ipAddress() : null;
+            String fw = frame.pi() != null ? frame.pi().firmware() : null;
+            String camUrl = frame.pi() != null ? frame.pi().cameraStreamUrl() : null;
+            String camStatus = frame.pi() != null ? frame.pi().cameraStatus() : (camUrl != null ? "LIVE" : "OFFLINE");
+            String mavlink = frame.link() != null ? frame.link().mavlink() : "DISCONNECTED";
+            String mode = frame.flight() != null ? frame.flight().mode() : "UNKNOWN";
+            Boolean armed = frame.flight() != null ? frame.flight().armed() : false;
+            String landed = frame.landed() != null ? frame.landed().landedState() : "ON_GROUND";
+            Integer fixType = frame.gps() != null ? frame.gps().fixType() : 0;
+            Integer satellites = frame.gps() != null ? frame.gps().satellites() : 0;
+
+            lockerDroneClient.reportTelemetry(new DroneTelemetryReport(
+                    droneCode, battery, voltage, current, mac, ip, fw, mavlink, mode, armed, landed, fixType, satellites, camStatus, camUrl
+            ));
         } catch (Exception ex) {
-            log.debug("Battery of drone {} not synced: {}", droneCode, ex.getMessage());
+            log.debug("Telemetry of drone {} not synced: {}", droneCode, ex.getMessage());
         }
     }
 

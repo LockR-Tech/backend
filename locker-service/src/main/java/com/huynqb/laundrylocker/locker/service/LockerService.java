@@ -73,6 +73,7 @@ public class LockerService {
     private final MaintenanceInspectionLogRepository inspectionLogRepository;
     private final LockerReportRatingRepository ratingRepository;
     private final DroneUnitRepository droneUnitRepository;
+    private final DroneDeviceRepository droneDeviceRepository;
     private final DroneMaintenanceLogRepository droneMaintenanceLogRepository;
     private final IotClient iotClient;
     private final UserClient userClient;
@@ -2795,15 +2796,155 @@ public class LockerService {
     /// 100 % là "vừa sạc xong".
     @Transactional
     public DroneUnitResponse recordDroneTelemetry(String code, Integer batteryPercent) {
+        return recordDroneTelemetry(new DroneTelemetryRequest(
+                code, batteryPercent, null, null, null, null, null, null, null, null, null, null, null, null, null));
+    }
+
+    @Transactional
+    public DroneUnitResponse recordDroneTelemetry(DroneTelemetryRequest request) {
         DroneUnit unit = droneUnitRepository
-                .findByCode(code)
+                .findByCode(request.code())
                 .orElseThrow(() -> new BusinessException(
-                        "DRONE_NOT_FOUND", "Drone not found: " + code, org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!batteryPercent.equals(unit.getBatteryPercent())) {
-            unit.setBatteryPercent(batteryPercent);
+                        "DRONE_NOT_FOUND", "Drone not found: " + request.code(), org.springframework.http.HttpStatus.NOT_FOUND));
+        if (request.batteryPercent() != null && !request.batteryPercent().equals(unit.getBatteryPercent())) {
+            unit.setBatteryPercent(request.batteryPercent());
             unit = droneUnitRepository.save(unit);
         }
+
+        String mac = request.macAddress() != null && !request.macAddress().isBlank()
+                ? request.macAddress().trim().toUpperCase(Locale.ROOT)
+                : "DRONE:" + unit.getCode();
+
+        DroneDevice device = droneDeviceRepository.findByDroneId(unit.getId())
+                .or(() -> droneDeviceRepository.findByMacAddress(mac))
+                .orElseGet(() -> {
+                    DroneDevice created = new DroneDevice();
+                    created.setMacAddress(mac);
+                    created.setDroneId(unit.getId());
+                    created.setDroneCode(unit.getCode());
+                    return created;
+                });
+
+        device.setDroneId(unit.getId());
+        device.setDroneCode(unit.getCode());
+        if (request.macAddress() != null && !request.macAddress().isBlank()) {
+            device.setMacAddress(request.macAddress().trim().toUpperCase(Locale.ROOT));
+        }
+        if (request.ipAddress() != null) {
+            device.setIpAddress(request.ipAddress());
+        }
+        if (request.firmwareVersion() != null) {
+            device.setFirmwareVersion(request.firmwareVersion());
+        }
+        if (request.mavlinkStatus() != null) {
+            device.setMavlinkStatus(request.mavlinkStatus());
+        }
+        if (request.flightMode() != null) {
+            device.setFlightMode(request.flightMode());
+        }
+        if (request.armed() != null) {
+            device.setArmed(request.armed());
+        }
+        if (request.landedState() != null) {
+            device.setLandedState(request.landedState());
+        }
+        if (request.gpsFixType() != null) {
+            device.setGpsFixType(request.gpsFixType());
+        }
+        if (request.gpsSatellites() != null) {
+            device.setGpsSatellites(request.gpsSatellites());
+        }
+        if (request.batteryPercent() != null) {
+            device.setBatteryPercent(request.batteryPercent());
+        }
+        if (request.voltageV() != null) {
+            device.setVoltageV(request.voltageV());
+        }
+        if (request.currentA() != null) {
+            device.setCurrentA(request.currentA());
+        }
+        if (request.cameraStatus() != null) {
+            device.setCameraStatus(request.cameraStatus());
+        }
+        if (request.cameraStreamUrl() != null) {
+            device.setCameraStreamUrl(request.cameraStreamUrl());
+        } else if (device.getCameraStreamUrl() == null && request.ipAddress() != null) {
+            device.setCameraStreamUrl("http://" + request.ipAddress() + ":8080/stream.mjpg");
+        }
+        device.setLastSeenAt(LocalDateTime.now());
+        droneDeviceRepository.save(device);
+
         return toDroneUnit(unit);
+    }
+
+    @Transactional(readOnly = true)
+    public DroneDeviceResponse getDroneDevice(Long droneId) {
+        if (droneId == null) return null;
+        return droneDeviceRepository.findByDroneId(droneId)
+                .map(this::toDroneDeviceResponse)
+                .orElse(null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DroneDeviceResponse> listDroneDevices() {
+        return droneDeviceRepository.findAllByOrderByIdAsc().stream()
+                .map(this::toDroneDeviceResponse)
+                .toList();
+    }
+
+    @Transactional
+    public DroneDeviceResponse assignDroneDevice(Long deviceId, Long droneId) {
+        DroneDevice device = droneDeviceRepository.findById(deviceId)
+                .orElseThrow(() -> new NotFoundException("DroneDevice", deviceId));
+        DroneUnit drone = findDroneUnit(droneId);
+
+        droneDeviceRepository.findByDroneId(droneId).ifPresent(old -> {
+            if (!old.getId().equals(deviceId)) {
+                old.setDroneId(null);
+                old.setDroneCode(null);
+                droneDeviceRepository.save(old);
+            }
+        });
+
+        device.setDroneId(drone.getId());
+        device.setDroneCode(drone.getCode());
+        return toDroneDeviceResponse(droneDeviceRepository.save(device));
+    }
+
+    @Transactional
+    public DroneDeviceResponse unassignDroneDevice(Long deviceId) {
+        DroneDevice device = droneDeviceRepository.findById(deviceId)
+                .orElseThrow(() -> new NotFoundException("DroneDevice", deviceId));
+        device.setDroneId(null);
+        device.setDroneCode(null);
+        return toDroneDeviceResponse(droneDeviceRepository.save(device));
+    }
+
+    private DroneDeviceResponse toDroneDeviceResponse(DroneDevice device) {
+        if (device == null) return null;
+        return new DroneDeviceResponse(
+                device.getId(),
+                device.getMacAddress(),
+                device.getDroneId(),
+                device.getDroneCode(),
+                device.getIpAddress(),
+                device.getFirmwareVersion(),
+                device.getMavlinkStatus(),
+                device.getFlightMode(),
+                device.getArmed(),
+                device.getLandedState(),
+                device.getGpsFixType(),
+                device.getGpsSatellites(),
+                device.getBatteryPercent(),
+                device.getVoltageV(),
+                device.getCurrentA(),
+                device.getCameraStatus(),
+                device.getCameraStreamUrl(),
+                device.getLastSeenAt(),
+                DroneDeviceResponse.isOnline(device.getLastSeenAt()),
+                device.getCreatedAt(),
+                device.getUpdatedAt()
+        );
     }
 
     private void requireDroneWithoutActiveMission(DroneUnit unit, String action) {
