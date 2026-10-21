@@ -3066,34 +3066,94 @@ public class LockerService {
 
     @Transactional
     public DroneDeviceResponse assignDroneDevice(Long deviceId, Long droneId) {
+        return assignDroneDevice(deviceId, droneId, null);
+    }
+
+    @Transactional
+    public DroneDeviceResponse assignDroneDevice(Long deviceId, Long droneId, Long actorUserId) {
         DroneDevice device = droneDeviceRepository.findById(deviceId)
                 .orElseThrow(() -> new NotFoundException("DroneDevice", deviceId));
         DroneUnit drone = findDroneUnit(droneId);
 
         droneDeviceRepository.findByDroneId(droneId).ifPresent(old -> {
             if (!old.getId().equals(deviceId)) {
+                String oldDesc = formatDroneDeviceIdentifier(old);
                 old.setDroneId(null);
                 old.setDroneCode(null);
                 droneDeviceRepository.save(old);
+                appendDroneLog(drone.getId(), "Gỡ bộ điều khiển Raspberry Pi cũ: " + oldDesc, actorUserId);
+                recordDroneIotLogSilently(
+                        drone.getId(),
+                        drone.getCode(),
+                        "PI_CONTROLLER",
+                        "HARDWARE_DETACH",
+                        "RELEASED",
+                        actorUserId != null ? "USER#" + actorUserId : "SYSTEM",
+                        "Gỡ bộ điều khiển Raspberry Pi cũ: " + oldDesc
+                );
             }
         });
 
         device.setDroneId(drone.getId());
         device.setDroneCode(drone.getCode());
-        return toDroneDeviceResponse(droneDeviceRepository.save(device));
+        DroneDevice saved = droneDeviceRepository.save(device);
+
+        String deviceDesc = formatDroneDeviceIdentifier(saved);
+        appendDroneLog(drone.getId(), "Gán bộ điều khiển Raspberry Pi: " + deviceDesc, actorUserId);
+        recordDroneIotLogSilently(
+                drone.getId(),
+                drone.getCode(),
+                "PI_CONTROLLER",
+                "HARDWARE_ATTACH",
+                "SUCCESS",
+                actorUserId != null ? "USER#" + actorUserId : "SYSTEM",
+                "Gán bộ điều khiển Raspberry Pi: " + deviceDesc
+        );
+
+        return toDroneDeviceResponse(saved);
     }
 
     @Transactional
     public DroneDeviceResponse unassignDroneDevice(Long deviceId) {
+        return unassignDroneDevice(deviceId, null);
+    }
+
+    @Transactional
+    public DroneDeviceResponse unassignDroneDevice(Long deviceId, Long actorUserId) {
         DroneDevice device = droneDeviceRepository.findById(deviceId)
                 .orElseThrow(() -> new NotFoundException("DroneDevice", deviceId));
+        Long previousDroneId = device.getDroneId();
+        String previousDroneCode = device.getDroneCode();
+        String deviceDesc = formatDroneDeviceIdentifier(device);
+
         device.setDroneId(null);
         device.setDroneCode(null);
-        return toDroneDeviceResponse(droneDeviceRepository.save(device));
+        DroneDevice saved = droneDeviceRepository.save(device);
+
+        if (previousDroneId != null) {
+            appendDroneLog(previousDroneId, "Gỡ bộ điều khiển Raspberry Pi: " + deviceDesc, actorUserId);
+            recordDroneIotLogSilently(
+                    previousDroneId,
+                    previousDroneCode != null ? previousDroneCode : "DRONE-" + previousDroneId,
+                    "PI_CONTROLLER",
+                    "HARDWARE_DETACH",
+                    "RELEASED",
+                    actorUserId != null ? "USER#" + actorUserId : "SYSTEM",
+                    "Gỡ bộ điều khiển Raspberry Pi: " + deviceDesc
+            );
+        }
+
+        return toDroneDeviceResponse(saved);
     }
 
     @Transactional
     public DroneDeviceResponse registerOrUpdateDroneDevice(Long droneId, String macAddress, String ipAddress, String cameraStreamUrl) {
+        return registerOrUpdateDroneDevice(droneId, macAddress, ipAddress, cameraStreamUrl, null);
+    }
+
+    @Transactional
+    public DroneDeviceResponse registerOrUpdateDroneDevice(
+            Long droneId, String macAddress, String ipAddress, String cameraStreamUrl, Long actorUserId) {
         DroneUnit drone = findDroneUnit(droneId);
         String mac = macAddress != null && !macAddress.isBlank()
                 ? macAddress.trim().toUpperCase(Locale.ROOT)
@@ -3122,7 +3182,62 @@ public class LockerService {
         }
         // Thao tác gán cấu hình thiết bị của Admin: KHÔNG giả lập lastSeenAt, pin 100% hay tín hiệu Pixhawk.
         // Chỉ lưu thông tin định danh phần cứng; trạng thái trực tuyến sẽ do telemetry thực tế quyết định.
-        return toDroneDeviceResponse(droneDeviceRepository.save(device));
+        DroneDevice saved = droneDeviceRepository.save(device);
+
+        String deviceDesc = formatDroneDeviceIdentifier(saved);
+        appendDroneLog(drone.getId(), "Gán bộ điều khiển Raspberry Pi: " + deviceDesc, actorUserId);
+        recordDroneIotLogSilently(
+                drone.getId(),
+                drone.getCode(),
+                "PI_CONTROLLER",
+                "HARDWARE_ATTACH",
+                "SUCCESS",
+                actorUserId != null ? "USER#" + actorUserId : "SYSTEM",
+                "Gán bộ điều khiển Raspberry Pi: " + deviceDesc
+        );
+
+        return toDroneDeviceResponse(saved);
+    }
+
+    private String formatDroneDeviceIdentifier(DroneDevice device) {
+        if (device == null) return "—";
+        StringBuilder sb = new StringBuilder();
+        if (StringUtils.hasText(device.getMacAddress())) {
+            sb.append("MAC ").append(device.getMacAddress());
+        }
+        if (StringUtils.hasText(device.getIpAddress())) {
+            if (sb.length() > 0) sb.append(" · ");
+            sb.append("IP ").append(device.getIpAddress());
+        }
+        if (sb.length() == 0) {
+            sb.append("Thiết bị #").append(device.getId());
+        }
+        return sb.toString();
+    }
+
+    private void recordDroneIotLogSilently(
+            Long droneId,
+            String droneCode,
+            String component,
+            String eventType,
+            String result,
+            String actorId,
+            String message) {
+        try {
+            DroneIotLog log = new DroneIotLog();
+            log.setDroneId(droneId);
+            log.setDroneCode(droneCode);
+            log.setComponent(component);
+            log.setEventType(eventType);
+            log.setResult(result);
+            log.setActorType(actorId != null && actorId.startsWith("USER#") ? "ADMIN" : "SYSTEM");
+            log.setActorId(actorId);
+            log.setMessage(message);
+            log.setCreatedAt(LocalDateTime.now());
+            droneIotLogRepository.save(log);
+        } catch (Exception ignored) {
+            // Non-critical telemetry logging failure should not abort device assignment
+        }
     }
 
     private DroneDeviceResponse toDroneDeviceResponse(DroneDevice device) {
@@ -3231,6 +3346,16 @@ public class LockerService {
     public DroneMaintenanceLogResponse addDroneLog(Long droneUnitId, String note, Long actorUserId) {
         DroneUnit unit = findDroneUnit(droneUnitId);
         requireDroneOwnership(unit, actorUserId);
+        String normalized = normalizeText(note);
+        if (!StringUtils.hasText(normalized)) {
+            throw new BusinessException("DRONE_LOG_NOTE_REQUIRED", "Drone maintenance note is required");
+        }
+        return toDroneLog(appendDroneLog(droneUnitId, normalized, actorUserId));
+    }
+
+    @Transactional
+    public DroneMaintenanceLogResponse addDroneLogAsAdmin(Long droneUnitId, String note, Long actorUserId) {
+        findDroneUnit(droneUnitId);
         String normalized = normalizeText(note);
         if (!StringUtils.hasText(normalized)) {
             throw new BusinessException("DRONE_LOG_NOTE_REQUIRED", "Drone maintenance note is required");

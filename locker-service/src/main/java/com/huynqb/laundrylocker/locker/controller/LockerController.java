@@ -425,7 +425,7 @@ public class LockerController {
                 lockerService.assignDroneTechnician(id, request.technicianId(), userId));
     }
 
-    @GetMapping({"/api/admin/drones/{id}/logs", "/api/admin/drones/{id}/iot-logs"})
+    @GetMapping("/api/admin/drones/{id}/iot-logs")
     public ApiResponse<List<DroneIotLogResponse>> adminDroneIotLogs(
             @PathVariable Long id,
             @RequestParam(required = false) String component,
@@ -449,21 +449,24 @@ public class LockerController {
                         request.actorType(),
                         request.actorId(),
                         request.orderId(),
-
-
-
-
-
-
-
                         request.message())
-
                 : request;
         return ApiResponse.ok("DRONE_IOT_LOG_CREATED", "Drone IoT log created", lockerService.createDroneIotLog(finalReq));
     }
 
+    @GetMapping({"/api/admin/drones/{id}/logs", "/api/admin/drones/{id}/operation-logs"})
     public ApiResponse<List<DroneMaintenanceLogResponse>> adminDroneLogs(@PathVariable Long id) {
         return ApiResponse.ok(lockerService.droneLogs(id));
+    }
+
+    @PostMapping({"/api/admin/drones/{id}/logs", "/api/admin/drones/{id}/operation-logs"})
+    public ApiResponse<DroneMaintenanceLogResponse> adminAddDroneLog(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok(
+                "DRONE_LOG_ADDED", "Drone log added",
+                lockerService.addDroneLogAsAdmin(id, body != null ? body.get("note") : null, userId));
     }
 
     @PostMapping("/api/admin/lockers/schedules")
@@ -765,12 +768,14 @@ public class LockerController {
     @PostMapping({"/api/admin/drones/{id}/device", "/api/admin/drones/{id}/hardware"})
     public ApiResponse<DroneDeviceResponse> adminRegisterDroneDevice(
             @PathVariable Long id,
-            @RequestBody DroneTelemetryRequest request) {
+            @RequestBody DroneTelemetryRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         DroneDeviceResponse saved = lockerService.registerOrUpdateDroneDevice(
                 id,
                 request.macAddress(),
                 request.ipAddress(),
-                request.cameraStreamUrl()
+                request.cameraStreamUrl(),
+                userId
         );
         return ApiResponse.ok("DRONE_DEVICE_SAVED", "Drone device saved", saved);
     }
@@ -783,17 +788,20 @@ public class LockerController {
     @PostMapping({"/api/admin/drone-devices/{id}/assign", "/api/admin/drones/devices/{id}/assign"})
     public ApiResponse<DroneDeviceResponse> adminAssignDroneDevice(
             @PathVariable Long id,
-            @Valid @RequestBody AssignDroneDeviceRequest request) {
+            @Valid @RequestBody AssignDroneDeviceRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         return ApiResponse.ok(
                 "DRONE_DEVICE_ASSIGNED", "Drone device assigned",
-                lockerService.assignDroneDevice(id, request.droneId()));
+                lockerService.assignDroneDevice(id, request.droneId(), userId));
     }
 
     @PostMapping({"/api/admin/drone-devices/{id}/unassign", "/api/admin/drones/devices/{id}/unassign"})
-    public ApiResponse<DroneDeviceResponse> adminUnassignDroneDevice(@PathVariable Long id) {
+    public ApiResponse<DroneDeviceResponse> adminUnassignDroneDevice(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         return ApiResponse.ok(
                 "DRONE_DEVICE_UNASSIGNED", "Drone device unassigned",
-                lockerService.unassignDroneDevice(id));
+                lockerService.unassignDroneDevice(id, userId));
     }
 
     @PostMapping("/api/drone-technician/drones/{id}/claim")
