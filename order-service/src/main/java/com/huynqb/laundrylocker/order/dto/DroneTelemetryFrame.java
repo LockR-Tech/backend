@@ -61,6 +61,21 @@ public record DroneTelemetryFrame(
     public record Landed(String landedState, Long ageMs, Boolean stale) {
     }
 
+    public DroneTelemetryFrame(
+            Integer schemaVersion,
+            String droneId,
+            Long sequence,
+            String observedAt,
+            Link link,
+            Position position,
+            Gps gps,
+            Battery battery,
+            Velocity velocity,
+            Flight flight,
+            Landed landed) {
+        this(schemaVersion, droneId, sequence, observedAt, link, position, gps, battery, velocity, flight, landed, null);
+    }
+
     /// `observedAt` dạng epoch mili giây; null nếu thiếu hoặc sai định dạng.
     public Long observedAtMs() {
         if (observedAt == null) {

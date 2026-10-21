@@ -27,6 +27,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
@@ -197,7 +198,7 @@ class DroneTelemetryServiceTest {
         verify(lockerDroneClient, never()).reportTelemetry(any());
 
         service.ingest(DRONE, frame("ON_GROUND", SOURCE[0], SOURCE[1], 3, 0.0, 14.8));
-        verify(lockerDroneClient, times(1)).reportTelemetry(new DroneTelemetryReport(DRONE, 76));
+        verify(lockerDroneClient, times(1)).reportTelemetry(argThat(r -> DRONE.equals(r.code()) && Integer.valueOf(76).equals(r.batteryPercent())));
     }
 
     @Test

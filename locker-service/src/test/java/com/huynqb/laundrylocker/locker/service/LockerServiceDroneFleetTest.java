@@ -68,6 +68,8 @@ class LockerServiceDroneFleetTest {
     @Mock
     private DroneUnitRepository droneUnitRepository;
     @Mock
+    private DroneDeviceRepository droneDeviceRepository;
+    @Mock
     private DroneMaintenanceLogRepository droneMaintenanceLogRepository;
     @Mock
     private IotClient iotClient;
@@ -99,6 +101,7 @@ class LockerServiceDroneFleetTest {
                         inspectionLogRepository,
                         ratingRepository,
                         droneUnitRepository,
+                        droneDeviceRepository,
                         droneMaintenanceLogRepository,
                         iotClient,
                         userClient,

@@ -1,4 +1,4 @@
-﻿package com.huynqb.laundrylocker.order.service;
+package com.huynqb.laundrylocker.order.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
@@ -186,7 +186,7 @@ class DroneParcelIncidentServiceTest {
         assertEquals(false, camera.get("integrationAvailable"));
         assertEquals(DroneParcelIncidentService.FPT_HCM_LATITUDE, camera.get("latitude"));
         assertEquals(DroneParcelIncidentService.FPT_HCM_LONGITUDE, camera.get("longitude"));
-        assertEquals("SIMULATION_FPT_HCM", camera.get("locationSource"));
+        assertEquals("FLIGHT_PATH", camera.get("locationSource"));
         assertFalse(camera.containsKey("streamUrl"));
     }
 

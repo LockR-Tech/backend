@@ -3118,7 +3118,7 @@ public class LockerService {
         return value.trim();
     }
 
-    private DroneUnit findDroneUnit(Long id) {
+    public DroneUnit findDroneUnit(Long id) {
         return droneUnitRepository.findById(id).orElseThrow(() -> new NotFoundException("DroneUnit", id));
     }
 
