@@ -1,0 +1,72 @@
+name: VM ops (trạng thái / chẩn đoán / khởi động lại service)
+
+# Chạy tay từ tab Actions khi production có service lỗi (VD gateway trả 503), cho người
+# không có SSH vào VM. Script: scripts/vm-ops.sh — chỉ in dòng lỗi đã che dữ liệu cá nhân.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "status = mọi container + RAM · diagnose = lỗi gần nhất của service · restart = khởi động lại service"
+        type: choice
+        default: status
+        options:
+          - status
+          - diagnose
+          - restart
+      service:
+        description: "Service (dùng cho diagnose / restart)"
+        type: choice
+        default: order-service
+        options:
+          - order-service
+          - auth-service
+          - user-service
+          - locker-service
+          - payment-service
+          - notification-service
+          - iot-service
+          - store-service
+          - loyalty-service
+          - assistant-service
+          - api-gateway
+          - discovery-server
+
+# Chung nhóm với deploy: không chạy chen lúc đang deploy (deploy mới vẫn huỷ lần chạy này).
+concurrency:
+  group: laundry-locker-microservices-azure
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+          AZURE_VM_SSH_KEY: ${{ secrets.AZURE_VM_SSH_KEY }}
+        run: |
+          test -n "$AZURE_VM_HOST"
+          test -n "$AZURE_VM_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AZURE_VM_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$AZURE_VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: ${{ inputs.action }} ${{ inputs.service }}
+        env:
+          AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+          AZURE_VM_USER: ${{ secrets.AZURE_VM_USER }}
+          AZURE_VM_PORT: ${{ secrets.AZURE_VM_PORT }}
+          ACTION: ${{ inputs.action }}
+          SERVICE: ${{ inputs.service }}
+        run: |
+          PORT="${AZURE_VM_PORT:-22}"
+          ssh -p "$PORT" -i ~/.ssh/deploy_key "$AZURE_VM_USER@$AZURE_VM_HOST" \
+            bash -s -- "$ACTION" "$SERVICE" < scripts/vm-ops.sh

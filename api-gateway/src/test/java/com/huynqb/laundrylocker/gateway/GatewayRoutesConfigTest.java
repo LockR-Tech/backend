@@ -69,6 +69,15 @@ class GatewayRoutesConfigTest {
         assertEquals("none", props.getProperty("management.endpoint.gateway.access"));
     }
 
+    /// Trang "Drone logs" của admin: controller ở order-service, trước đây không có route ⇒ 404.
+    @Test
+    void adminDroneLockerLogsRouteToOrderService() {
+        assertRoutedTo("/api/admin/drone-locker-logs", "lb://order-service");
+        assertRoutedTo("/api/admin/drone-locker-logs/sessions/abc", "lb://order-service");
+        assertRoutedTo("/api/admin/drone-locker-logs/orders/12", "lb://order-service");
+        assertRoutedTo("/api/admin/drone-locker-logs/active-sessions", "lb://order-service");
+    }
+
     private void assertFirstRoutedTo(String path, String expectedUri) {
         List<String> uris = matchingRouteUris(path);
         assertTrue(!uris.isEmpty(), path + " must match a route");

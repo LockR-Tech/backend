@@ -101,7 +101,7 @@ class IotServiceTest {
         previous.setBoxId(9002L);
         previous.setFailedCount(1);
         when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.of(previous));
-        when(orderClient.getByAccess("WRONG")).thenThrow(new RuntimeException("not found"));
+        when(orderClient.getByAccess("WRONG")).thenThrow(orderServiceError(404));
 
         var result = strict.verifyAccess(9002L, "WRONG");
 
@@ -279,6 +279,60 @@ class IotServiceTest {
 
         assertEquals("RENTAL_ACCESS", result.get("nextStep"));
         verify(orderClient, never()).dropOpened(anyLong());
+    }
+
+    /// order-service sập (gateway nội bộ không còn instance ⇒ 503) hay mất kết nối không phải khách
+    /// nhập sai: kiosk báo "hệ thống bận" và không tính lần thử, nếu không mã đúng cũng làm khoá ô.
+    @Test
+    void orderServiceOutageIsNotCountedAsWrongCode() {
+        for (Exception outage : new Exception[]{
+                orderServiceError(503),
+                new feign.RetryableException(-1, "Connection refused", feign.Request.HttpMethod.GET,
+                        (Long) null, feignRequest())}) {
+            org.mockito.Mockito.doThrow(outage).when(orderClient).getByAccess("PIN-123");
+
+            var verify = iotService.verifyAccess(9002L, "PIN-123");
+            Map<String, Object> unlock = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+            Map<String, Object> drop = iotService.confirmDropWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+            Map<String, Object> end = iotService.endRentalWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+            assertFalse(Boolean.TRUE.equals(verify.valid()));
+            assertEquals(IotService.ORDER_LOOKUP_UNAVAILABLE, verify.reasonCode());
+            for (Map<String, Object> result : java.util.List.of(unlock, drop, end)) {
+                assertFalse(Boolean.TRUE.equals(result.get("accepted")));
+                assertEquals(IotService.ORDER_LOOKUP_UNAVAILABLE, result.get("reasonCode"));
+                assertEquals(IotService.ORDER_LOOKUP_UNAVAILABLE_MESSAGE, result.get("message"));
+            }
+        }
+        verify(accessAttemptRepository, never()).save(any(AccessAttempt.class));
+        verify(lockerClient, never()).openBox(anyLong());
+    }
+
+    @Test
+    void wrongCodeAtKioskStillReadsAsInvalid() {
+        when(orderClient.getByAccess("WRONG")).thenThrow(orderServiceError(400));
+
+        Map<String, Object> unlock = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "WRONG"));
+        Map<String, Object> drop = iotService.confirmDropWithCode(new UnlockWithCodeRequest(7L, "WRONG"));
+
+        assertEquals("Mã không hợp lệ hoặc đã hết hạn", unlock.get("message"));
+        assertEquals("Mã không hợp lệ hoặc đã hết hạn", drop.get("message"));
+        assertFalse(unlock.containsKey("reasonCode"));
+    }
+
+    private static feign.Request feignRequest() {
+        return feign.Request.create(feign.Request.HttpMethod.GET, "/internal/orders/by-access",
+                Map.of(), null, java.nio.charset.StandardCharsets.UTF_8, null);
+    }
+
+    private static feign.FeignException orderServiceError(int status) {
+        feign.Response response = feign.Response.builder()
+                .status(status)
+                .reason("order-service")
+                .request(feignRequest())
+                .headers(Map.of())
+                .build();
+        return feign.FeignException.errorStatus("OrderClient#getByAccess(String)", response);
     }
 
     // ---- Kiosk: xác nhận bỏ hàng / kết thúc thuê bằng mã ----

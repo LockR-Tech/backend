@@ -359,7 +359,7 @@ public class LockerService {
                     "Không thể gán trạng thái " + targetStatus + " thủ công. Trạng thái này do luồng đơn hàng quản lý.",
                     HttpStatus.BAD_REQUEST);
         }
-        if (holdsOrder(box) || getActiveOrderByBox(boxId) != null) {
+        if (holdsOrder(box) || requireActiveOrderLookup(boxId) != null) {
             throw new BusinessException(
                     "BOX_IN_USE",
                     "Ô #" + box.getBoxNumber() + " đang chứa hàng hoặc giữ chỗ cho đơn hàng — không thể đổi trạng thái thủ công",
@@ -397,7 +397,7 @@ public class LockerService {
                             "Không thể gán trạng thái " + targetStatus + " thủ công. Trạng thái này do luồng đơn hàng quản lý.",
                             HttpStatus.BAD_REQUEST);
                 }
-                if (holdsOrder(box) || getActiveOrderByBox(boxId) != null) {
+                if (holdsOrder(box) || requireActiveOrderLookup(boxId) != null) {
                     throw new BusinessException(
                             "BOX_IN_USE",
                             "Ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ cho một đơn — không thể đổi trạng thái",
@@ -1688,7 +1688,7 @@ public class LockerService {
         if (StringUtils.hasText(box.getPreFaultStatus())) {
             target = box.getPreFaultStatus();
         } else {
-            ActiveBoxOrderDto activeOrder = getActiveOrderByBox(box.getId());
+            ActiveBoxOrderDto activeOrder = requireActiveOrderLookup(box.getId());
             target = (activeOrder != null) ? "OCCUPIED" : "AVAILABLE";
         }
         box.setStatus(target);
@@ -4234,6 +4234,22 @@ public class LockerService {
         }
     }
 
+    /// Như [#getActiveOrderByBox] nhưng không tra được đơn (order-service không trả lời) thì dừng với
+    /// 503 thay vì coi ô là trống. Dùng ở chỗ quyết định nhả / khoá / đổi trạng thái ô: coi nhầm là
+    /// trống thì ô còn đồ của khách bị đặt AVAILABLE và cấp cho đơn khác.
+    private ActiveBoxOrderDto requireActiveOrderLookup(Long boxId) {
+        try {
+            var res = orderClient.getActiveOrderByBox(boxId);
+            return res != null ? res.data() : null;
+        } catch (Exception ex) {
+            log.warn("Active order lookup unavailable for box {}: {}", boxId, ex.getMessage());
+            throw new BusinessException(
+                    "ORDER_LOOKUP_UNAVAILABLE",
+                    "Chưa kiểm tra được đơn hàng trong ô, vui lòng thử lại sau ít phút",
+                    HttpStatus.SERVICE_UNAVAILABLE);
+        }
+    }
+
     private static final Set<String> BOX_INCIDENT_ACTIONS =
             Set.of("QUICK_FIX", "RELOCATE", "HANDOVER", "HUB_ESCROW", "LOCK_ONLY");
 
@@ -4272,7 +4288,7 @@ public class LockerService {
         report.setBoxId(box.getId());
         report.setCategory(ReportCategory.BOX);
 
-        ActiveBoxOrderDto activeOrder = getActiveOrderByBox(box.getId());
+        ActiveBoxOrderDto activeOrder = requireActiveOrderLookup(box.getId());
         if (report.getOrderId() == null && activeOrder != null) {
             report.setOrderId(activeOrder.orderId());
             report.setOrderCode(activeOrder.orderCode());

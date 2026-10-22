@@ -263,6 +263,35 @@ class LockerServiceForceOpenAndIncidentTest {
         verify(boxRepository).save(box);
     }
 
+    /// order-service không trả lời: không được coi ô là trống — ô còn đồ của khách sẽ bị đặt
+    /// AVAILABLE và cấp cho đơn khác. Dừng với 503, không đổi ô nào.
+    @Test
+    void incidentResolutionStopsWhenActiveOrderCannotBeChecked() {
+        box.setStatus("FAULT");
+        when(orderClient.getActiveOrderByBox(BOX_ID)).thenThrow(new RuntimeException("order-service down"));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.resolveBoxIncident(
+                100L, new BoxIncidentResolutionRequest(BOX_ID, "QUICK_FIX", null, null, null, null, null, false),
+                TECH, "LOCKER_TECHNICIAN"));
+
+        assertEquals("ORDER_LOOKUP_UNAVAILABLE", ex.getCode());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatus());
+        assertEquals("FAULT", box.getStatus());
+        verify(boxRepository, never()).save(any(LockerBox.class));
+    }
+
+    @Test
+    void manualBoxStatusChangeStopsWhenActiveOrderCannotBeChecked() {
+        box.setStatus("FAULT");
+        when(orderClient.getActiveOrderByBox(BOX_ID)).thenThrow(new RuntimeException("order-service down"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateBoxStatus(BOX_ID, "AVAILABLE"));
+
+        assertEquals("ORDER_LOOKUP_UNAVAILABLE", ex.getCode());
+        verify(boxRepository, never()).save(any(LockerBox.class));
+    }
+
     @Test
     void updateBoxStatusThrowsWhenBoxHoldsOrder() {
         box.setStatus("OCCUPIED");

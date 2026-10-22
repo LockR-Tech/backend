@@ -154,6 +154,13 @@ jobs:
             check "Danh sách tủ (public)" "$API/api/lockers"     200
             check "Admin API không token" "$API/api/admin/users" 401
             check "Đường vòng gateway"    "$API/user-service/api/admin/users" 404
+            # Mỗi service nghiệp vụ một lần gọi qua gateway (đường công khai, không cần token):
+            # service không còn instance ⇒ gateway trả 503. Trước đây chỉ kiểm locker-service nên
+            # order-service chết (22/10) mà deploy vẫn xanh.
+            for svc in auth-service user-service order-service locker-service payment-service \
+                       notification-service iot-service store-service loyalty-service assistant-service; do
+              check "Service $svc" "$API/v3/api-docs/$svc" 200
+            done
           } > verify.md
           cat verify.md
           echo "failed=$fail" >> "$GITHUB_OUTPUT"

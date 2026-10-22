@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
     environment:
       SERVER_PORT: 8761
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     ports:
       - "127.0.0.1:8761:8761"
     networks:
@@ -70,7 +70,7 @@ services:
       # Comma-separated allowed CORS origins; override in the server .env to add the
       # production domain (e.g. http://localhost:3000,http://localhost:3001,https://lockerly.tech).
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
-      JAVA_OPTS: "-Xms64m -Xmx320m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx320m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     # Cổng duy nhất của hệ thống mở ra ngoài. 9 service nghiệp vụ KHÔNG publish
     # port lên host: mọi lời gọi phải đi qua gateway để chịu xác thực JWT + RBAC.
     # Chúng vẫn gọi lẫn nhau bình thường qua mạng Docker (Eureka + lb://).
@@ -122,7 +122,7 @@ services:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
       # SEC-01 — xem ghi chú ở khối api-gateway.
       APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:?chua dat - xem docs/04-engineering/cau-hinh-dich-vu-ngoai.md}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -151,7 +151,7 @@ services:
       # Ảnh (ADR-0004): trống ⇒ tắt upload ảnh. Cùng giá trị ở user/order/locker/store-service.
       CLOUDINARY_URL: ${CLOUDINARY_URL:-}
       MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -187,7 +187,10 @@ services:
       DRONE_MQTT_BROKER_URL: ${DRONE_MQTT_BROKER_URL:-${MQTT_BROKER_URL:-tcp://broker.hivemq.com:1883}}
       DRONE_MQTT_USERNAME: ${DRONE_MQTT_USERNAME:-}
       DRONE_MQTT_PASSWORD: ${DRONE_MQTT_PASSWORD:-}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      # Service lớn nhất (đơn, drone, khuyến mãi, doanh thu) nên heap rộng hơn các service khác.
+      # Mọi service: hết bộ nhớ thì thoát hẳn để `restart: unless-stopped` dựng lại, thay vì treo
+      # mà container vẫn "running" và mất đăng ký Eureka (gateway trả 503).
+      JAVA_OPTS: "-Xms64m -Xmx384m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -217,7 +220,7 @@ services:
       MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
       # true ⇒ KTV phải có ≥1 ảnh nghiệm thu mới hoàn tất được phiếu (bật sau khi app mobile mới phát hành).
       APP_MAINTENANCE_REQUIRE_RESOLUTION_PHOTO: ${APP_MAINTENANCE_REQUIRE_RESOLUTION_PHOTO:-false}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -253,7 +256,7 @@ services:
       SEPAY_DRONE_ACCOUNT_NAME: ${SEPAY_DRONE_ACCOUNT_NAME:-}
       SEPAY_MERCHANT_ID: ${SEPAY_MERCHANT_ID:-}
       SEPAY_SECRET_KEY: ${SEPAY_SECRET_KEY:-}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -318,7 +321,7 @@ services:
       APP_SMS_TWILIO_ACCOUNT_SID: ${APP_SMS_TWILIO_ACCOUNT_SID:-}
       APP_SMS_TWILIO_AUTH_TOKEN: ${APP_SMS_TWILIO_AUTH_TOKEN:-}
       APP_SMS_TWILIO_FROM_NUMBER: ${APP_SMS_TWILIO_FROM_NUMBER:-}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -350,7 +353,7 @@ services:
       MQTT_BROKER_URL: ${MQTT_BROKER_URL:-tcp://broker.hivemq.com:1883}
       MQTT_USERNAME: ${MQTT_USERNAME:-}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -398,7 +401,7 @@ services:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
       CLOUDINARY_URL: ${CLOUDINARY_URL:-}
       MEDIA_FOLDER_ROOT: ${MEDIA_FOLDER_ROOT:-lockr}
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -424,7 +427,7 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
       SPRING_RABBITMQ_HOST: rabbitmq
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
-      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx256m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       postgres:
         condition: service_healthy
@@ -478,7 +481,7 @@ services:
       ASSISTANT_CHAT_MODEL: ${ASSISTANT_CHAT_MODEL:-claude-haiku-4-5}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-voyage-4}
-      JAVA_OPTS: "-Xms64m -Xmx320m -XX:+UseContainerSupport"
+      JAVA_OPTS: "-Xms64m -Xmx320m -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError"
     depends_on:
       assistant-db:
         condition: service_healthy
