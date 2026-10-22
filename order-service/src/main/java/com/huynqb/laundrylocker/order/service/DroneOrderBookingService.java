@@ -13,6 +13,7 @@ import com.huynqb.laundrylocker.order.dto.CreateDroneDeliveryOrderRequest;
 import com.huynqb.laundrylocker.order.dto.DroneDeliveryOrderResponse;
 import com.huynqb.laundrylocker.order.dto.DroneDeliveryQuoteRequest;
 import com.huynqb.laundrylocker.order.dto.DroneDeliveryQuoteResponse;
+import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
 import com.huynqb.laundrylocker.order.dto.DroneLockerPointResponse;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
@@ -66,6 +67,7 @@ public class DroneOrderBookingService {
     private final OrderRules rules;
     private final DroneSourceLockerSelector sourceLockerSelector;
     private final DroneDeliveryQueryService queryService;
+    private final DroneWeatherService weatherService;
     /// Mã giảm giá (kiểm theo TỦ GỬI) + điểm thưởng; đơn còn 0đ được ghi đã thanh toán ngay.
     private final OrderBenefitService benefits;
     private final PaidOrderEffects paidEffects;
@@ -77,12 +79,14 @@ public class DroneOrderBookingService {
         int weight = validateWeight(request.parcelWeightGrams());
         DroneSourceLockerSelector.Selection selection = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
+        DroneWeatherAssessment weather = weatherService.assessRoute(selection.source(), selection.destination());
         return new DroneDeliveryQuoteResponse(
                 point(selection.source()),
                 point(selection.destination()),
                 selection.pickupDistanceMeters(),
                 selection.routeDistanceMeters(),
-                rules.droneDeliveryFee(weight));
+                rules.droneDeliveryFee(weight),
+                weather);
     }
 
     @Transactional
@@ -113,6 +117,13 @@ public class DroneOrderBookingService {
 
         DroneSourceLockerSelector.Selection route = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
+        DroneWeatherAssessment weather = weatherService.assessRoute(route.source(), route.destination());
+        if (!weather.safe()) {
+            String code = "UNAVAILABLE".equals(weather.status())
+                    ? "DRONE_WEATHER_UNAVAILABLE"
+                    : "DRONE_WEATHER_UNSAFE";
+            throw new BusinessException(code, weather.message());
+        }
         // Mọi kiểm tra xong mới giữ ô nhận: lỗi sau bước này phải nhả ô.
         Long reservedBoxId = reserveDestinationBox(request);
 
