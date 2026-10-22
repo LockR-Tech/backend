@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -66,8 +67,8 @@ public class DroneWeatherService {
 
     private static RestClient createClient(RestClient.Builder builder, String apiUrl) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofSeconds(3));
-        requestFactory.setReadTimeout(Duration.ofSeconds(4));
+        requestFactory.setConnectTimeout(Duration.ofSeconds(8));
+        requestFactory.setReadTimeout(Duration.ofSeconds(12));
         return builder.requestFactory(requestFactory).baseUrl(apiUrl).build();
     }
 
@@ -91,13 +92,22 @@ public class DroneWeatherService {
                     .body(JsonNode.class);
             return assessResponse(response, points.size(), now);
         } catch (Exception exception) {
-            log.warn("Open-Meteo weather check failed: {}", exception.getMessage());
+            if (exception instanceof RestClientResponseException responseException) {
+                log.warn("Open-Meteo weather check returned HTTP {}", responseException.getStatusCode().value());
+            } else {
+                Throwable cause = exception.getCause();
+                log.warn("Open-Meteo weather check failed ({}{})",
+                        exception.getClass().getSimpleName(),
+                        cause == null ? "" : ", cause=" + cause.getClass().getSimpleName());
+            }
             return DroneWeatherAssessment.unavailable(now);
         }
     }
 
     private DroneWeatherAssessment assessResponse(JsonNode response, int expectedPoints, OffsetDateTime checkedAt) {
         if (response == null || (response.isArray() && response.size() != expectedPoints)) {
+            log.warn("Open-Meteo returned an unexpected response shape (expected route points={}, actual={})",
+                    expectedPoints, response == null ? "null" : response.isArray() ? response.size() : "object");
             return DroneWeatherAssessment.unavailable(checkedAt);
         }
         double maximumWind = 0;
@@ -119,6 +129,7 @@ public class DroneWeatherService {
             JsonNode visibility = forecast.path("visibility");
             if (!times.isArray() || !precipitation.isArray() || !weatherCodes.isArray()
                     || !winds.isArray() || !gusts.isArray() || !visibility.isArray()) {
+                log.warn("Open-Meteo response is missing minutely_15 fields at route point {}", pointIndex);
                 return DroneWeatherAssessment.unavailable(checkedAt);
             }
             for (int i = 0; i < times.size(); i++) {
@@ -130,6 +141,7 @@ public class DroneWeatherService {
                 if (i >= precipitation.size() || i >= weatherCodes.size() || i >= winds.size()
                         || i >= gusts.size() || i >= visibility.size()
                         || anyMissing(precipitation.get(i), weatherCodes.get(i), winds.get(i), gusts.get(i), visibility.get(i))) {
+                    log.warn("Open-Meteo response has missing weather values at route point {}, sample {}", pointIndex, i);
                     return DroneWeatherAssessment.unavailable(checkedAt);
                 }
                 sawForecast = true;
@@ -150,6 +162,8 @@ public class DroneWeatherService {
             }
         }
         if (!sawForecast) {
+            log.warn("Open-Meteo returned no samples in the 30-minute route window (points={}, checkedAt={})",
+                    expectedPoints, checkedAt);
             return DroneWeatherAssessment.unavailable(checkedAt);
         }
         String message = unsafe
