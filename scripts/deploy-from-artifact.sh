@@ -84,6 +84,13 @@ wait_for_eureka_apps() {
 
     if [ "$SECONDS" -ge "$deadline" ]; then
       echo "Timed out waiting for Eureka registrations. Missing: ${missing[*]}" >&2
+      # In nguyên nhân ngay trong log Actions (trước khi rollback xoá dấu vết), để người
+      # không có SSH vẫn biết service chết vì gì. Cùng cách che dữ liệu với scripts/vm-ops.sh.
+      for app in "${missing[@]}"; do
+        local svc
+        svc="$(printf '%s' "$app" | tr '[:upper:]' '[:lower:]')"
+        APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/vm-ops.sh" diagnose "$svc" >&2 || true
+      done
       return 1
     fi
 
