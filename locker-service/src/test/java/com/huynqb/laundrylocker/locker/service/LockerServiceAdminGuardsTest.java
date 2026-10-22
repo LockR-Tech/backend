@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.locker.service;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
+import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.dto.DroneUnitRequest;
 import com.huynqb.laundrylocker.locker.dto.UpdateBoxRequest;
 import com.huynqb.laundrylocker.locker.model.DroneUnit;
@@ -41,6 +42,8 @@ class LockerServiceAdminGuardsTest {
     @Mock private LockerBoxRepository boxRepository;
     @Mock private DroneUnitRepository droneUnitRepository;
     @Mock private IotClient iotClient;
+    // Không có đơn nào trong ô (mock trả null); thiếu mock thì tra đơn lỗi và ô bị coi là chưa kiểm được.
+    @Mock private OrderClient orderClient;
     @Mock private RabbitTemplate rabbitTemplate;
 
     @InjectMocks private LockerService service;

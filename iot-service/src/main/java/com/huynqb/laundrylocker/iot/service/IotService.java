@@ -222,6 +222,10 @@ public class IotService {
         try {
             order = orderClient.getByAccess(request.code()).data();
         } catch (Exception ex) {
+            if (isOrderLookupUnavailable(ex)) {
+                log.warn("Order lookup unavailable on unlock-with-code at locker {}: {}", request.lockerId(), ex.getMessage());
+                return denied(null, ORDER_LOOKUP_UNAVAILABLE_MESSAGE, ORDER_LOOKUP_UNAVAILABLE);
+            }
             return Map.of("accepted", false, "message", "Mã không hợp lệ hoặc đã hết hạn");
         }
         Long boxId = order.receiveBoxId() != null ? order.receiveBoxId() : order.sendBoxId();
@@ -300,6 +304,13 @@ public class IotService {
             return new VerifyPinResponse(
                     true, order.id(), boxId, order.status(), "Access verified", order.userId(), order.type(), null);
         } catch (Exception ex) {
+            // Không tra được đơn (order-service sập, mất kết nối) không phải lỗi của khách: không tính
+            // là nhập sai, nếu không mã đúng cũng làm ô bị khoá suốt lúc order-service không trả lời.
+            if (isOrderLookupUnavailable(ex)) {
+                log.warn("Order lookup unavailable while verifying box {}: {}", boxId, ex.getMessage());
+                return new VerifyPinResponse(
+                        false, null, boxId, null, ORDER_LOOKUP_UNAVAILABLE_MESSAGE, null, null, ORDER_LOOKUP_UNAVAILABLE);
+            }
             boolean locked = recordFailedAttempt(boxId);
             if (locked) {
                 String msg = "Nhập sai quá " + rules.lockoutMaxAttempts() + " lần! Ô tủ bị tạm khóa "
@@ -310,11 +321,26 @@ public class IotService {
         }
     }
 
+    /// order-service trả 4xx khi mã sai / không còn hiệu lực. Mọi lỗi khác — gateway nội bộ không còn
+    /// instance (503), mất kết nối, quá giờ (`RetryableException`, status -1) — là hệ thống không tra
+    /// được đơn.
+    static boolean isOrderLookupUnavailable(Exception ex) {
+        if (ex instanceof feign.FeignException feignError) {
+            return feignError.status() < 400 || feignError.status() >= 500;
+        }
+        return true;
+    }
+
     /// Kiosk: người gửi/người thuê đã mở ô bằng mã và bỏ đồ xong, bấm "Đã bỏ hàng xong".
     /// Kiosk không đăng nhập, nên quyền đến từ chính mã + việc ô của đơn vừa được mở
     /// thành công gần đây; khi đó xác nhận thay mặt chủ đơn.
     public Map<String, Object> confirmDropWithCode(UnlockWithCodeRequest request) {
-        OrderLookupResponse order = findOrderAtLocker(request);
+        OrderLookupResponse order;
+        try {
+            order = findOrderAtLocker(request);
+        } catch (OrderLookupUnavailableException ex) {
+            return denied(null, ORDER_LOOKUP_UNAVAILABLE_MESSAGE, ORDER_LOOKUP_UNAVAILABLE);
+        }
         if (order == null) {
             return denied(null, INVALID_CODE_MESSAGE, null);
         }
@@ -337,7 +363,12 @@ public class IotService {
 
     /// Kiosk: người thuê lấy hết đồ và kết thúc lượt thuê ngay tại tủ.
     public Map<String, Object> endRentalWithCode(UnlockWithCodeRequest request) {
-        OrderLookupResponse order = findOrderAtLocker(request);
+        OrderLookupResponse order;
+        try {
+            order = findOrderAtLocker(request);
+        } catch (OrderLookupUnavailableException ex) {
+            return denied(null, ORDER_LOOKUP_UNAVAILABLE_MESSAGE, ORDER_LOOKUP_UNAVAILABLE);
+        }
         if (order == null) {
             return denied(null, INVALID_CODE_MESSAGE, null);
         }
@@ -359,10 +390,22 @@ public class IotService {
     }
 
     private static final String INVALID_CODE_MESSAGE = "Mã không hợp lệ hoặc đã hết hạn";
+    static final String ORDER_LOOKUP_UNAVAILABLE = "ORDER_LOOKUP_UNAVAILABLE";
+    static final String ORDER_LOOKUP_UNAVAILABLE_MESSAGE =
+            "Hệ thống đang bận, chưa kiểm tra được mã. Vui lòng thử lại sau ít phút.";
+
+    /// Không tra được đơn vì order-service không trả lời (khác với mã sai).
+    private static final class OrderLookupUnavailableException extends RuntimeException {
+        OrderLookupUnavailableException(Throwable cause) {
+            super(cause);
+        }
+    }
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
             new com.fasterxml.jackson.databind.ObjectMapper();
 
+    /// null khi mã sai hoặc không thuộc tủ này; ném [OrderLookupUnavailableException] khi order-service
+    /// không trả lời.
     private OrderLookupResponse findOrderAtLocker(UnlockWithCodeRequest request) {
         try {
             OrderLookupResponse order = orderClient.getByAccess(request.code()).data();
@@ -371,6 +414,10 @@ public class IotService {
             }
             return order;
         } catch (Exception ex) {
+            if (isOrderLookupUnavailable(ex)) {
+                log.warn("Order lookup unavailable at locker {}: {}", request.lockerId(), ex.getMessage());
+                throw new OrderLookupUnavailableException(ex);
+            }
             return null;
         }
     }
