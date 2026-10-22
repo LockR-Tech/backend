@@ -53,4 +53,9 @@ public interface LockerDroneClient {
 
     @GetMapping("/internal/lockers/boxes/{boxId}/cell")
     ApiResponse<com.huynqb.laundrylocker.order.dto.BoxCellDto> getBoxCell(@PathVariable Long boxId);
+
+    @PostMapping("/internal/drones/{id}/iot-logs")
+    ApiResponse<Object> recordDroneIotLog(
+            @PathVariable("id") Long id,
+            @RequestBody com.huynqb.laundrylocker.order.dto.CreateDroneIotLogDto request);
 }

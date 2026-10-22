@@ -87,6 +87,7 @@ public class DroneLockerCommunicationService {
         private String correlationId;
         private Long orderId;
         private Long journeyId;
+        private Long droneUnitId;
         private String droneId;
         private Long lockerId;
         private Long compartmentId;
@@ -332,6 +333,7 @@ public class DroneLockerCommunicationService {
                     "WRONG_MARKER", errMsg, 0, null);
 
             log.warn("[COMM] WRONG_MARKER rejected: {}", errMsg);
+            recordDroneIotLog(mission.getDroneUnitId(), droneId, "VISION_CAMERA", "MARKER_MISMATCH", "FAILED", orderId, errMsg);
             return;
         }
 
@@ -352,6 +354,7 @@ public class DroneLockerCommunicationService {
         session.setCompartmentId(targetBoxId);
         session.setTargetDictionary(expectedDict);
         session.setTargetMarkerId(expectedMarkerId);
+        session.setDroneUnitId(mission.getDroneUnitId());
         session.setMode(mode);
         session.setState("MARKER_VALIDATED");
 
@@ -374,6 +377,13 @@ public class DroneLockerCommunicationService {
 
         publishCommand("MARKER_VALIDATED", sessionId, correlationId, orderId, droneId,
                 destLockerId, targetBoxId, null, null);
+
+        recordDroneIotLog(mission.getDroneUnitId(), droneId, "VISION_CAMERA", "DETECT_TARGET", "SUCCESS", orderId,
+                "Camera AI thi giac nhan dien ma ArUco #" + detectedMarkerId + " (" + detectedDict + ")");
+        recordDroneIotLog(mission.getDroneUnitId(), droneId, "PI_CONTROLLER", "ARUCO_DETECTED", "SUCCESS", orderId,
+                "Xac thuc ma ArUco #" + expectedMarkerId + " hop le cho o #" + targetBoxId + " (Tu #" + destLockerId + ")");
+        recordDroneIotLog(mission.getDroneUnitId(), droneId, "TELEMETRY", "TELEMETRY_ONLINE", "SUCCESS", orderId,
+                "Gui lenh yeu cau mo nap truot toi tu #" + destLockerId + " (o #" + targetBoxId + ")");
 
         // 6. IMMEDIATELY ADVANCE JOURNEY TO "ARRIVED" (Đã tới nơi)
         // Admin & Customer progress bar instantly ticks green up to ARRIVED!
@@ -412,6 +422,8 @@ public class DroneLockerCommunicationService {
         commLogRepository.save(inLog);
 
         if (session != null) {
+            recordDroneIotLog(session.getDroneUnitId(), session.getDroneId(), "CARGO_HOOK", "HOOK_RELEASE", "RELEASED", session.getOrderId(),
+                    "Moc treo nhan tin hieu va nha kien hang an toan vao o tu");
             requestCloseLid(session, "Drone gửi xác nhận hoàn tất giai đoạn nhả hàng");
         }
     }
@@ -487,6 +499,8 @@ public class DroneLockerCommunicationService {
             // Notify drone that lid is fully open
             publishCommand("LID_OPENED", session.getSessionId(), correlationId, orderId, droneId,
                     lockerId, boxId, null, "Nắp ô tủ đã mở hoàn toàn");
+            recordDroneIotLog(session.getDroneUnitId(), droneId, "CARGO_HOOK", "HOOK_ATTACH", "SUCCESS", orderId,
+                    "Nap o tu da mo hoan toan. San sang tiep can tha kien hang");
 
             // Check mode
             if ("INDOOR_ARUCO_DEMO".equalsIgnoreCase(session.getMode())) {
@@ -604,6 +618,8 @@ public class DroneLockerCommunicationService {
         publishCommand("DELIVERY_READY", session != null ? session.getSessionId() : null,
                 correlationId, orderId, droneId, lockerId, boxId, null,
                 "Kiện hàng đã vào ô tủ và đóng nắp thành công");
+        recordDroneIotLog(session != null ? session.getDroneUnitId() : null, droneId, "PI_CONTROLLER", "DISARMED", "SUCCESS", orderId,
+                "Nap o tu da dong va khoa an toan. Don hang hoan tat giao drone");
 
         if (session != null) {
             session.setState("READY_FOR_PICKUP");
@@ -704,6 +720,22 @@ public class DroneLockerCommunicationService {
         } catch (Exception ex) {
             log.error("[COMM] Failed to persist comm log: {}", ex.getMessage());
             return null;
+        }
+    }
+
+    private void recordDroneIotLog(Long droneUnitId, String droneCode, String component, String eventType,
+                                   String result, Long orderId, String message) {
+        if (droneUnitId == null) {
+            return;
+        }
+        try {
+            com.huynqb.laundrylocker.order.dto.CreateDroneIotLogDto req =
+                    new com.huynqb.laundrylocker.order.dto.CreateDroneIotLogDto(
+                            droneUnitId, droneCode, component, eventType, result, "SYSTEM", "DroneCommService", orderId, message);
+            lockerDroneClient.recordDroneIotLog(droneUnitId, req);
+            log.info("[COMM] Recorded DroneIotLog: {}/{} for drone #{}", component, eventType, droneUnitId);
+        } catch (Exception ex) {
+            log.warn("[COMM] Failed to record DroneIotLog for drone #{}: {}", droneUnitId, ex.getMessage());
         }
     }
 
