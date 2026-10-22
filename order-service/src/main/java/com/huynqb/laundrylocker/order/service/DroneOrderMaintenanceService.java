@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
+import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.model.DroneMission;
@@ -42,6 +43,8 @@ public class DroneOrderMaintenanceService {
     private final DroneDeliveryMailer mailer;
     /// Trả lượt mã giảm giá + hoàn điểm thưởng khi đơn bị huỷ.
     private final OrderBenefitService benefits;
+    private final LockerLookupClient lockerLookupClient;
+    private final DroneWeatherService weatherService;
 
     private static final java.security.SecureRandom SEAL_RANDOM = new java.security.SecureRandom();
     private static final java.time.ZoneId FLIGHT_ZONE = java.time.ZoneId.of("Asia/Ho_Chi_Minh");
@@ -218,6 +221,7 @@ public class DroneOrderMaintenanceService {
         validateReservedDroneForLaunch(drone);
         LockerLayoutDto layout = fetchLockerLayout(requireDestinationLockerId(order));
         validateLockerPreflight(layout, "Destination");
+        assertWeatherSafe(order, mission);
         DroneUnitDto updatedDrone = transitionDroneStatus(
                 mission.getDroneUnitId(), "RESERVED", "IN_FLIGHT", null);
         mission.setStatus("LAUNCHING");
@@ -241,6 +245,39 @@ public class DroneOrderMaintenanceService {
                         : "Đã gửi email báo đơn đã phóng cho " + mailed + ".");
         notifyDeliveryStageQuietly(order, "launching", "9 phút");
         return toResponse(order, mission, updatedDrone);
+    }
+
+    private void assertWeatherSafe(LockerOrder order, DroneMission mission) {
+        try {
+            Long sourceId = mission.getSourceLockerId() != null ? mission.getSourceLockerId() : order.getSourceLockerId();
+            Long destinationId = mission.getDestinationLockerId() != null
+                    ? mission.getDestinationLockerId()
+                    : order.getDestinationLockerId() != null ? order.getDestinationLockerId() : order.getLockerId();
+            if (sourceId == null || destinationId == null) {
+                throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể xác định tuyến bay để kiểm tra thời tiết.");
+            }
+            var response = lockerLookupClient.getLockers(List.of(sourceId, destinationId));
+            var lockers = response == null ? null : response.data();
+            if (lockers == null) {
+                throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể tải vị trí tủ để kiểm tra thời tiết.");
+            }
+            var source = lockers.stream().filter(locker -> Objects.equals(locker.id(), sourceId)).findFirst().orElse(null);
+            var destination = lockers.stream().filter(locker -> Objects.equals(locker.id(), destinationId)).findFirst().orElse(null);
+            if (source == null || destination == null) {
+                throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể xác định tọa độ tuyến bay để kiểm tra thời tiết.");
+            }
+            var weather = weatherService.assessRoute(source, destination);
+            if (!weather.safe()) {
+                String code = "UNAVAILABLE".equals(weather.status())
+                        ? "DRONE_WEATHER_UNAVAILABLE"
+                        : "DRONE_WEATHER_UNSAFE";
+                throw new BusinessException(code, weather.message());
+            }
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể xác nhận thời tiết tuyến bay.");
+        }
     }
 
     @Transactional

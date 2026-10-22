@@ -9,6 +9,7 @@ import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.CellDto;
 import com.huynqb.laundrylocker.order.dto.CreateDroneDeliveryOrderRequest;
+import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
@@ -55,6 +56,7 @@ class DroneOrderBookingBenefitsTest {
     @Mock private RabbitTemplate rabbitTemplate;
     @Mock private DroneSourceLockerSelector sourceLockerSelector;
     @Mock private DroneDeliveryQueryService queryService;
+    @Mock private DroneWeatherService weatherService;
     @Mock private OrderBenefitService benefits;
     @Mock private PaidOrderEffects paidEffects;
 
@@ -64,7 +66,11 @@ class DroneOrderBookingBenefitsTest {
     void setUp() {
         service = new DroneOrderBookingService(
                 orderRepository, historyRepository, userClient, lockerClient, lockerCellClient, notificationClient,
-                rabbitTemplate, TestOrderRules.of(Map.of()), sourceLockerSelector, queryService, benefits, paidEffects);
+                rabbitTemplate, TestOrderRules.of(Map.of()), sourceLockerSelector, queryService, weatherService,
+                benefits, paidEffects);
+        when(weatherService.assessRoute(any(), any())).thenReturn(new DroneWeatherAssessment(
+                true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",
+                java.time.OffsetDateTime.now(), 30, 3, 10, 15, 0, 0));
         when(sourceLockerSelector.select(10.77, 106.70, 5L, null)).thenReturn(new DroneSourceLockerSelector.Selection(
                 OrderBenefitServiceTest.locker(7L, "TU07", "Tủ Thư viện"),
                 OrderBenefitServiceTest.locker(5L, "TU05", "Tủ Ký túc xá"), 300, 2000));
@@ -120,6 +126,20 @@ class DroneOrderBookingBenefitsTest {
         verify(notificationClient).requestNotification(org.mockito.ArgumentMatchers.argThat(
                 notification -> notification.userId().equals(88L)
                         && notification.type().equals("ORDER_CREATED")));
+    }
+
+    @Test
+    void unsafeWeatherBlocksBookingBeforeDestinationCellIsReserved() {
+        when(weatherService.assessRoute(any(), any())).thenReturn(new DroneWeatherAssessment(
+                false, "UNSAFE", "Không thể đặt chuyến bay: có mưa hoặc dông trên tuyến trong 30 phút tới.",
+                java.time.OffsetDateTime.now(), 30, 3, 12, 18, 0.4, 95));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.create(request(null, null), 44L, "idem-weather-unsafe"));
+
+        assertEquals("DRONE_WEATHER_UNSAFE", error.getCode());
+        verify(lockerClient, never()).reserveBox(any(), any());
+        verify(orderRepository, never()).saveAndFlush(any());
     }
 
     @Test
