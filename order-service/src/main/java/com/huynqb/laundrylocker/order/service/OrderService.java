@@ -85,12 +85,6 @@ public class OrderService {
     /// Đơn 0đ sau giảm giá: ghi PAID và chạy các bước "đã thanh toán" như payment.completed.
     private final PaidOrderEffects paidEffects;
 
-    /// Tạo đơn từ API công khai: giá luôn do server tính, bỏ qua `totalPrice` client gửi.
-    @Transactional
-    public OrderResponse create(CreateOrderRequest request) {
-        return create(request, null);
-    }
-
     /// `serverPrice` = giá server đã tính theo cấu hình (gửi hàng, thuê tủ); null ⇒ tính theo danh sách món.
     @Transactional
     public OrderResponse create(CreateOrderRequest request, BigDecimal serverPrice) {
@@ -143,12 +137,12 @@ public class OrderService {
 
     /// Đổi trạng thái thủ công (admin). Chỉ cho các bước chuyển trong [STAFF_TRANSITIONS] và đi
     /// qua đúng đường nghiệp vụ của bước đó (huỷ / chốt đơn / dời kho), để không mở lại đơn đã
-    /// đóng hay bỏ qua bước cấp PIN, giữ ô, hoàn ưu đãi.
+    /// đóng hay bỏ qua bước cấp PIN, giữ ô, hoàn ưu đãi. `actorId` = admin trong JWT, ghi vào lịch sử.
     @Transactional
-    public OrderResponse updateStatus(Long id, UpdateOrderStatusRequest request) {
+    public OrderResponse updateStatus(Long id, String status, Long actorId) {
         LockerOrder order = orderRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Order", id));
         String current = order.getStatus() == null ? "" : order.getStatus().toUpperCase();
-        String target = request.status() == null ? "" : request.status().trim().toUpperCase();
+        String target = status == null ? "" : status.trim().toUpperCase();
         Set<String> allowed = STAFF_TRANSITIONS.getOrDefault(current, Set.of());
         if (!allowed.contains(target)) {
             throw new BusinessException(
@@ -158,9 +152,9 @@ public class OrderService {
                             : "Từ " + current + " chỉ được chuyển sang " + String.join(", ", new TreeSet<>(allowed)));
         }
         return switch (target) {
-            case "CANCELED" -> cancelOrder(order, request.staffId(), null, "Order canceled by admin");
-            case "COMPLETED" -> checkout(order.getId(), request.staffId(), "Order closed by admin");
-            case "EXPIRED" -> moveToStorage(order, request.staffId(), "Admin chuyển đồ vào kho lưu trữ, ô đã giải phóng");
+            case "CANCELED" -> cancelOrder(order, actorId, null, "Order canceled by admin");
+            case "COMPLETED" -> checkout(order.getId(), actorId, "Order closed by admin");
+            case "EXPIRED" -> moveToStorage(order, actorId, "Admin chuyển đồ vào kho lưu trữ, ô đã giải phóng");
             default -> throw new IllegalStateException("Unhandled transition " + current + " -> " + target);
         };
     }
@@ -918,9 +912,8 @@ public class OrderService {
             throw new BusinessException("ORDER_STATUS_INVALID", "Only completed or canceled orders can be reordered");
         }
         String type = original.getType() == null ? "" : original.getType().toUpperCase();
-        // SEND/RENTAL carry box reservation + pricing rules that the generic create()
-        // path below cannot reproduce (no cellType/hours field on CreateOrderRequest),
-        // so they reorder through the same entry points a fresh booking would use.
+        // Đặt lại đi qua đúng đường đặt mới (giữ ô + giá theo cấu hình). Loại khác không đặt lại:
+        // đường tạo đơn chung tính giá theo món, đơn không có món thành 0đ và được tự ghi PAID.
         if ("SEND".equals(type)) {
             return createSend(
                     new SendOrderRequest(
@@ -948,32 +941,8 @@ public class OrderService {
                             null),
                     userId);
         }
-        List<OrderItemRequest> items =
-                detailRepository.findByOrderId(originalOrderId).stream()
-                        .map(d -> new OrderItemRequest(d.getServiceId(), d.getQuantity(), d.getDescription()))
-                        .toList();
-        return create(
-                new CreateOrderRequest(
-                        original.getUserId(),
-                        original.getLockerId(),
-                        null,
-                        null,
-                        original.getStoreId(),
-                        original.getType(),
-                        original.getServiceCategory(),
-                        original.getReceiverId(),
-                        original.getReceiverPhone(),
-                        original.getReceiverName(),
-                        original.getIntendedReceiveAt(),
-                        original.getActualWeight(),
-                        original.getCustomerNote(),
-                        original.getDeliveryAddress(),
-                        null,
-                        items,
-                        null,
-                        null,
-                        null,
-                        null));
+        throw new BusinessException(
+                "ORDER_REORDER_UNSUPPORTED", "Chỉ đặt lại được đơn gửi hàng hoặc thuê tủ");
     }
 
     @Transactional(readOnly = true)
@@ -1017,15 +986,7 @@ public class OrderService {
     }
 
     @Transactional(readOnly = true)
-    public OrderResponse getByCode(String orderCode) {
-        return toResponse(
-                orderRepository
-                        .findByOrderCode(orderCode)
-                        .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Order not found: " + orderCode)));
-    }
-
-    @Transactional(readOnly = true)
-    public OrderResponse getByPin(String pinCode) {
+    OrderResponse getByPin(String pinCode) {
         LockerOrder order =
                 orderRepository
                         .findByPinCode(pinCode)
@@ -1135,11 +1096,6 @@ public class OrderService {
         return orders.stream()
                 .map(order -> toResponse(order, histories.getOrDefault(order.getId(), List.of())))
                 .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public List<OrderResponse> list(String status, Long staffId) {
-        return list(status, null, staffId);
     }
 
     @Transactional(readOnly = true)

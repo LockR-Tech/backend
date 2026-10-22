@@ -97,7 +97,7 @@ public class LockerController {
             @PathVariable Long id,
             @Valid @RequestBody(required = false) BoxFaultRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return markFault(id, body, userId, null);
+        return markFaultFor(id, body, userId, null);
     }
 
     // Nguồn dữ liệu cho job đối soát ô ↔ đơn của order-service (Gap G4).
@@ -116,12 +116,23 @@ public class LockerController {
         return ApiResponse.ok(lockerService.layout(id));
     }
 
+    // Báo hỏng thẳng một ô bất kỳ (khoá ô, mở phiếu) là việc của KTV tủ/ADMIN (SEC-06). Khách báo
+    // hỏng qua đơn của mình: order-service kiểm chủ đơn rồi gọi /internal/boxes/{id}/fault.
     @PostMapping("/api/boxes/{id}/fault")
     public ApiResponse<CellResponse> markFault(
             @PathVariable Long id,
             @Valid @RequestBody(required = false) BoxFaultRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        if (!UserRoles.hasAny(roles, "ADMIN", "LOCKER_TECHNICIAN")) {
+            throw new BusinessException(
+                    "BOX_FAULT_FORBIDDEN", "Chỉ kỹ thuật viên tủ hoặc quản trị viên được báo hỏng ô trực tiếp",
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        return markFaultFor(id, body, userId, roles);
+    }
+
+    private ApiResponse<CellResponse> markFaultFor(Long id, BoxFaultRequest body, Long userId, String roles) {
         String reason = body == null ? null : body.reason();
         List<ReportAttachmentRequest> attachments = body == null ? null : body.attachments();
         Long orderId = body == null ? null : body.orderId();

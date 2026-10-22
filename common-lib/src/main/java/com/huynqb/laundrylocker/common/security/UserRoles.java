@@ -23,4 +23,9 @@ public final class UserRoles {
     public static boolean isAdmin(String header) {
         return parse(header).contains("ADMIN");
     }
+
+    public static boolean hasAny(String header, String... roles) {
+        List<String> granted = parse(header);
+        return Arrays.stream(roles).anyMatch(granted::contains);
+    }
 }

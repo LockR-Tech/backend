@@ -86,7 +86,8 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
             boolean mutatingLockerStructure =
                     !org.springframework.http.HttpMethod.GET.equals(exchange.getRequest().getMethod())
                             && (path.startsWith("/api/lockers") || path.startsWith("/api/boxes"))
-                            && !isCustomerLockerAction(path);
+                            && !isCustomerLockerAction(path)
+                            && !isTechnicianBoxFault(path);
             if (!hasRequiredRole(path, exchange.getRequest().getMethod(), roles)
                     || (mutatingLockerStructure && !hasAny(roles, "ADMIN"))) {
                 exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
@@ -201,6 +202,13 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
         if (path.startsWith("/api/locker-technician")) {
             return hasAny(roles, "LOCKER_TECHNICIAN");
         }
+        // Báo ô hỏng trực tiếp và đẩy trạng thái thiết bị/ô là việc vận hành. Khách báo hỏng qua
+        // đơn của mình (/api/orders/{id}/report-box-fault); Pi gửi trạng thái qua MQTT.
+        if (isTechnicianBoxFault(path)
+                || path.equals("/api/iot/device-status")
+                || path.equals("/api/iot/box-status")) {
+            return hasAny(roles, "LOCKER_TECHNICIAN");
+        }
         // Sửa lịch và đổi KTV phụ trách lịch là việc của ADMIN; KTV chỉ xem và hoàn tất kiểm tra.
         if (path.startsWith("/api/maintenance/schedules/")
                 && org.springframework.http.HttpMethod.PUT.equals(method)) {
@@ -216,12 +224,18 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
     // faults, file reports, rate a resolved report, or trigger an open on
     // their own cell.
     private boolean isCustomerLockerAction(String path) {
-        return path.endsWith("/fault")
-                || path.endsWith("/report")
+        return path.endsWith("/report")
                 || path.endsWith("/open")
                 || path.endsWith("/rate")
                 // Người báo bổ sung ảnh hiện trường; locker-service tự kiểm chủ phiếu.
                 || (path.startsWith("/api/lockers/reports/") && path.endsWith("/attachments"));
+    }
+
+    private static final java.util.regex.Pattern BOX_FAULT_PATH =
+            java.util.regex.Pattern.compile("^/api/boxes/\\d+/fault$");
+
+    private boolean isTechnicianBoxFault(String path) {
+        return BOX_FAULT_PATH.matcher(path).matches();
     }
 
     // Giá/giới hạn hiển thị cho khách (ADR-0005) — chỉ đúng endpoint public, không mở /api/admin/settings.
@@ -295,7 +309,9 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
                 || path.startsWith("/api/admin/auth")
                 || path.equals("/")
                 || path.startsWith("/ws")
-                || path.startsWith("/actuator")
+                || path.equals("/actuator/health")
+                || path.startsWith("/actuator/health/")
+                || path.equals("/actuator/info")
                 || path.startsWith("/v3/api-docs")
                 || path.startsWith("/swagger-ui")
                 || path.equals("/swagger-ui.html")

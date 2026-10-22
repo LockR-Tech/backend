@@ -232,9 +232,14 @@ eureka:
 management:
   endpoints:
     web:
+      # Gateway là cổng công khai duy nhất và actuator không đi qua JwtGatewayFilter, nên chỉ mở
+      # health/info. Endpoint `gateway` cho POST/DELETE route lúc chạy (thêm route vượt chặn
+      # /internal, SSRF); metrics/prometheus/sbom lộ thông tin nội bộ.
       exposure:
-        include: health,info,gateway,metrics,prometheus,sbom
+        include: health,info
   endpoint:
+    gateway:
+      access: none
     health:
       probes:
         enabled: true

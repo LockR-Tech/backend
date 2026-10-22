@@ -260,6 +260,12 @@ public class ReceiverOrderQueryService {
 
     /// Số điện thoại của tài khoản gọi; null khi tài khoản chưa có số. Không tra được user-service
     /// thì báo lỗi thay vì trả danh sách rỗng gây hiểu nhầm "không có đơn".
+    /// Người gọi là người nhận hoặc người lấy hộ của đơn — cùng quy tắc với [#detail].
+    @Transactional(readOnly = true)
+    public boolean isReceiverOrDelegate(LockerOrder order, Long userId) {
+        return userId != null && viewerOf(order, userId, callerPhone(userId)) != null;
+    }
+
     private String callerPhone(Long userId) {
         try {
             ApiResponse<UserSummary> response = userClient.getUser(userId);

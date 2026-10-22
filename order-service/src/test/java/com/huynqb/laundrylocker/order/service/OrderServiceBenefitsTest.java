@@ -14,7 +14,6 @@ import com.huynqb.laundrylocker.order.dto.OrderResponse;
 import com.huynqb.laundrylocker.order.dto.PromotionRequest;
 import com.huynqb.laundrylocker.order.dto.PromotionView;
 import com.huynqb.laundrylocker.order.dto.SendOrderRequest;
-import com.huynqb.laundrylocker.order.dto.UpdateOrderStatusRequest;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.Promotion;
 import com.huynqb.laundrylocker.order.model.PromotionClaim;
@@ -209,7 +208,7 @@ class OrderServiceBenefitsTest {
         order.setPinCode("123456");
         when(promotionUsageRepository.findByOrderId(21L)).thenReturn(List.of());
 
-        orderService.updateStatus(21L, new UpdateOrderStatusRequest("CANCELED", null, null));
+        orderService.updateStatus(21L, "CANCELED", null);
 
         assertEquals("CANCELED", order.getStatus());
         // Admin huỷ đi cùng đường với khách huỷ: PIN cũ không còn mở được ô.
@@ -221,19 +220,19 @@ class OrderServiceBenefitsTest {
     void adminCannotReopenOrSkipStepsThroughStatusUpdate() {
         existingOrder("COMPLETED");
         assertEquals("ORDER_STATUS_TRANSITION_INVALID", assertThrows(BusinessException.class,
-                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("INITIALIZED", null, null)))
+                () -> orderService.updateStatus(21L, "INITIALIZED", null))
                 .getCode());
 
         existingOrder("INITIALIZED");
         // STORING chỉ đến qua confirm() (cấp PIN người nhận, giữ ô).
         assertEquals("ORDER_STATUS_TRANSITION_INVALID", assertThrows(BusinessException.class,
-                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("STORING", null, null)))
+                () -> orderService.updateStatus(21L, "STORING", null))
                 .getCode());
 
         existingOrder("STORING");
         // Đồ còn trong ô: admin chốt đơn hoặc dời kho, không huỷ.
         assertEquals("ORDER_STATUS_TRANSITION_INVALID", assertThrows(BusinessException.class,
-                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("CANCELED", null, null)))
+                () -> orderService.updateStatus(21L, "CANCELED", null))
                 .getCode());
         verify(lockerClient, never()).releaseBox(anyLong());
     }
@@ -244,7 +243,7 @@ class OrderServiceBenefitsTest {
         order.setReceiveBoxId(301L);
         order.setPinCode("123456");
 
-        orderService.updateStatus(21L, new UpdateOrderStatusRequest("EXPIRED", 9L, null));
+        orderService.updateStatus(21L, "EXPIRED", 9L);
 
         assertEquals("EXPIRED", order.getStatus());
         assertNull(order.getReceiveBoxId());
@@ -259,7 +258,7 @@ class OrderServiceBenefitsTest {
         order.setDeliveryStage("PICKED_UP");
 
         assertEquals("DRONE_ORDER_STATUS_INVALID", assertThrows(BusinessException.class,
-                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("CANCELED", null, null)))
+                () -> orderService.updateStatus(21L, "CANCELED", null))
                 .getCode());
         assertEquals("AWAITING_DISPATCH", order.getStatus());
     }

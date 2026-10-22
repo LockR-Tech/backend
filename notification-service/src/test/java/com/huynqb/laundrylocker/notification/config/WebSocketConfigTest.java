@@ -23,6 +23,7 @@ class WebSocketConfigTest {
         WebSocketConfig config = new WebSocketConfig(
                 interceptor,
                 new JwtHandshakePrincipalHandler(interceptor),
+                new BrokerDestinationGuardInterceptor(),
                 new DeliveryTopicSubscriptionInterceptor(orderId -> null));
         WebMvcStompEndpointRegistry registry = new WebMvcStompEndpointRegistry(
                 new SubProtocolWebSocketHandler(new ExecutorSubscribableChannel(), new ExecutorSubscribableChannel()),
