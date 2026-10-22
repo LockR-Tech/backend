@@ -5,7 +5,13 @@ SET status = 'MAINTENANCE',
     maintenance_source = 'ADMIN',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 1
-  AND code = 'CAB-DEMO-01';
+  AND code = 'CAB-DEMO-01'
+  AND EXISTS (
+      SELECT 1
+      FROM locker_schema.lockers
+      WHERE id = 7
+        AND code = 'CAB-TU01'
+  );
 
 -- TU01 has two configured DRONE cells and is online. Its landing-pad marker
 -- is intentionally left unset until the physical pad marker is provisioned.
