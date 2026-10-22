@@ -368,6 +368,33 @@ class JwtGatewayFilterTest {
         assertFalse(structureForwarded.get());
     }
 
+    /// SEC-06: báo ô hỏng trực tiếp (khoá ô, mở phiếu) và đẩy trạng thái thiết bị/ô là việc vận
+    /// hành. Khách báo hỏng qua đơn của mình (/api/orders/{id}/report-box-fault).
+    @Test
+    void boxFaultAndIotStatusPushNeedLockerTechnicianOrAdmin() {
+        for (String path : new String[]{"/api/boxes/5/fault", "/api/iot/device-status", "/api/iot/box-status"}) {
+            assertForwarded(MockServerHttpRequest.post(path), "CUSTOMER", false);
+            assertForwarded(MockServerHttpRequest.post(path), "DRONE_TECHNICIAN", false);
+            assertForwarded(MockServerHttpRequest.post(path), "LOCKER_TECHNICIAN", true);
+            assertForwarded(MockServerHttpRequest.post(path), "ADMIN", true);
+        }
+        assertForwarded(MockServerHttpRequest.post("/api/orders/5/report-box-fault"), "CUSTOMER", true);
+    }
+
+    @Test
+    void onlyActuatorHealthAndInfoArePublic() {
+        assertPublicGet("/actuator/health");
+        assertPublicGet("/actuator/health/liveness");
+        assertPublicGet("/actuator/info");
+
+        MockServerWebExchange exchange =
+                MockServerWebExchange.from(MockServerHttpRequest.post("/actuator/gateway/routes/x").build());
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        filter.filter(exchange, chainThatMarks(chainCalled)).block();
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+        assertFalse(chainCalled.get());
+    }
+
     @Test
     void keepsOpenApiAndSwaggerUiPublic() {
         assertPublicGet("/v3/api-docs");

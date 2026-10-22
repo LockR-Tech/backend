@@ -1,11 +1,14 @@
 package com.huynqb.laundrylocker.iot.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.iot.dto.*;
 import com.huynqb.laundrylocker.iot.service.DeviceManagementService;
 import com.huynqb.laundrylocker.iot.service.IotService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,9 +21,22 @@ public class IotController {
     private final IotService iotService;
     private final DeviceManagementService deviceManagementService;
 
+    // Pi báo trạng thái qua MQTT; đường HTTP này chỉ cho vận hành (KTV tủ/ADMIN) — khách mà gọi
+    // được thì giả thiết bị online/offline tuỳ ý (SEC-06). Gateway cũng chặn theo vai trò.
     @PostMapping("/api/iot/device-status")
-    public ApiResponse<DeviceStatusResponse> updateStatus(@Valid @RequestBody DeviceStatusRequest request) {
+    public ApiResponse<DeviceStatusResponse> updateStatus(
+            @Valid @RequestBody DeviceStatusRequest request,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        requireOperator(roles);
         return ApiResponse.ok("IOT_STATUS_UPDATED", "Device status updated", iotService.updateStatus(request));
+    }
+
+    private static void requireOperator(String roles) {
+        if (!UserRoles.hasAny(roles, "ADMIN", "LOCKER_TECHNICIAN")) {
+            throw new BusinessException(
+                    "IOT_OPERATOR_REQUIRED", "Chỉ kỹ thuật viên tủ hoặc quản trị viên được cập nhật trạng thái thiết bị",
+                    HttpStatus.FORBIDDEN);
+        }
     }
 
     // Operations visibility for Admin (web console): mọi thiết bị, kèm tên tủ và
@@ -117,13 +133,16 @@ public class IotController {
     }
 
     @PostMapping("/api/iot/box-status")
-    public ApiResponse<Void> boxStatus(@Valid @RequestBody BoxStatusUpdateRequest request) {
+    public ApiResponse<Void> boxStatus(
+            @Valid @RequestBody BoxStatusUpdateRequest request,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        requireOperator(roles);
         iotService.updateBoxStatus(request);
         return ApiResponse.ok("BOX_STATUS_UPDATED", "Box status event published");
     }
 
     @PostMapping("/internal/iot/device-status")
     public ApiResponse<DeviceStatusResponse> updateStatusInternal(@Valid @RequestBody DeviceStatusRequest request) {
-        return updateStatus(request);
+        return ApiResponse.ok("IOT_STATUS_UPDATED", "Device status updated", iotService.updateStatus(request));
     }
 }

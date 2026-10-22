@@ -57,6 +57,18 @@ class GatewayRoutesConfigTest {
         assertFirstRoutedTo("/api/orders/delegated-to-me/42", "lb://order-service");
     }
 
+    /// Actuator không đi qua JwtGatewayFilter: endpoint `gateway` cho thêm/xoá route lúc chạy,
+    /// metrics/prometheus/sbom lộ thông tin nội bộ — chỉ được mở health/info.
+    @Test
+    void actuatorExposesOnlyHealthAndInfo() {
+        YamlPropertiesFactoryBean yaml = new YamlPropertiesFactoryBean();
+        yaml.setResources(new ClassPathResource("application.yml"));
+        Properties props = yaml.getObject();
+
+        assertEquals("health,info", props.getProperty("management.endpoints.web.exposure.include"));
+        assertEquals("none", props.getProperty("management.endpoint.gateway.access"));
+    }
+
     private void assertFirstRoutedTo(String path, String expectedUri) {
         List<String> uris = matchingRouteUris(path);
         assertTrue(!uris.isEmpty(), path + " must match a route");
