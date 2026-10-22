@@ -11,6 +11,7 @@ import com.huynqb.laundrylocker.order.dto.CreateDroneDeliveryOrderRequest;
 import com.huynqb.laundrylocker.order.dto.DroneDeliveryOrderResponse;
 import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
+import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
 import com.huynqb.laundrylocker.order.dto.GuestNotification;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
 import com.huynqb.laundrylocker.order.dto.OpenReportDto;
@@ -120,6 +121,9 @@ public abstract class DroneFlowPostgresTestBase extends OrderServicePostgresTest
         openReports.clear();
         emails.clear();
         refundRequests.clear();
+        lenient().when(droneWeatherService.assessRoute(any(), any())).thenReturn(new DroneWeatherAssessment(
+                true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",
+                java.time.OffsetDateTime.now(), 30, 3, 8, 12, 0, 0));
         for (long locker : List.of(LOCKER_A, LOCKER_B, LOCKER_C)) {
             lockerStatus.put(locker, "ACTIVE");
             landingPadStatus.put(locker, "OK");

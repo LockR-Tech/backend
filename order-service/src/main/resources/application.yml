@@ -91,6 +91,13 @@ app:
   security:
     qr-secret: ${APP_SECURITY_QR_SECRET:laundry-locker-dev-qr-secret-change-me-32chars}
   drone:
+    weather:
+      api-url: ${APP_DRONE_WEATHER_API_URL:https://api.open-meteo.com/v1/forecast}
+      api-key: ${APP_DRONE_WEATHER_API_KEY:}
+      # Initial operating limits; calibrate against the selected airframe and local flight approval.
+      max-wind-speed-kmh: ${APP_DRONE_WEATHER_MAX_WIND_SPEED_KMH:30}
+      max-wind-gust-kmh: ${APP_DRONE_WEATHER_MAX_WIND_GUST_KMH:40}
+      min-visibility-meters: ${APP_DRONE_WEATHER_MIN_VISIBILITY_METERS:1500}
     demo:
       enabled: ${APP_DRONE_DEMO_ENABLED:true}
       allowed-user-ids: ${APP_DRONE_DEMO_ALLOWED_USER_IDS:}

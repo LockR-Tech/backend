@@ -12,6 +12,7 @@ import com.huynqb.laundrylocker.order.client.PaymentReportClient;
 import com.huynqb.laundrylocker.order.client.StoreLookupClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.client.UserLookupClient;
+import com.huynqb.laundrylocker.order.service.DroneWeatherService;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -86,6 +87,8 @@ public abstract class OrderServicePostgresTestBase {
     protected StoreLookupClient storeLookupClient;
     @MockitoBean
     protected DronePositionClient dronePositionClient;
+    @MockitoBean
+    protected DroneWeatherService droneWeatherService;
     @MockitoBean
     protected RabbitTemplate rabbitTemplate;
 }

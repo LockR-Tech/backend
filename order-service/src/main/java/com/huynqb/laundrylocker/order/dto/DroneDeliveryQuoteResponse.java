@@ -10,5 +10,6 @@ public record DroneDeliveryQuoteResponse(
         int pickupDistanceMeters,
         /// Tủ gửi → tủ nhận, mét.
         int routeDistanceMeters,
-        BigDecimal fee) {
+        BigDecimal fee,
+        DroneWeatherAssessment weather) {
 }
