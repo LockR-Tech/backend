@@ -530,6 +530,11 @@ public class IotService {
                 || "RETURNED".equalsIgnoreCase(status);
     }
 
+    public void logExternalAccess(
+            Long boxId, Long lockerId, Long orderId, Long actorUserId, String credentialType, String result, String message) {
+        logAccess(boxId, lockerId, orderId, actorUserId, credentialType, result, message);
+    }
+
     private void logAccess(
             Long boxId, Long lockerId, Long orderId, Long actorUserId, String credentialType, String result, String message) {
         try {

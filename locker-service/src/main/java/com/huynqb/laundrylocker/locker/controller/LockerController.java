@@ -435,7 +435,7 @@ public class LockerController {
         return ApiResponse.ok(lockerService.getDroneIotLogs(id, component, eventType, result, search));
     }
 
-    @PostMapping("/api/admin/drones/{id}/iot-logs")
+    @PostMapping({"/api/admin/drones/{id}/iot-logs", "/internal/drones/{id}/iot-logs"})
     public ApiResponse<DroneIotLogResponse> adminCreateDroneIotLog(
             @PathVariable Long id,
             @Valid @RequestBody CreateDroneIotLogRequest request) {

@@ -185,11 +185,52 @@ public class LockerMqttService {
             JsonNode data = objectMapper.readTree(payload);
             if (topic.startsWith("cabinet/") && topic.endsWith("/result")) {
                 completeCommand(data);
+                inbound.execute(() -> onCommandResult(topic, data));
             } else {
                 inbound.execute(() -> route(topic, data));
             }
         } catch (Exception e) {
             log.error("Error parsing MQTT message on topic {}: {}", topic, e.getMessage());
+        }
+    }
+
+    private void onCommandResult(String topic, JsonNode data) {
+        try {
+            String[] segments = topic.split("/");
+            if (segments.length >= 5 && "cabinet".equals(segments[0]) && "command".equals(segments[2]) && "result".equals(segments[4])) {
+                Long lockerId = parseLongOrNull(segments[1]);
+                String action = segments[3];
+                if ("open".equalsIgnoreCase(action) || "close".equalsIgnoreCase(action)) {
+                    Long boxId = data.hasNonNull("boxId") ? data.get("boxId").asLong() : null;
+                    if (boxId == null && data.hasNonNull("slotIndex") && lockerId != null) {
+                        boxId = layoutLookup.boxIdAt(lockerId, data.get("slotIndex").asInt()).orElse(null);
+                    }
+                    String status = text(data, "status");
+                    String hwState = text(data, "hwState");
+                    String errMsg = text(data, "errorMessage");
+                    boolean success = "SUCCESS".equalsIgnoreCase(status);
+
+                    String result = success ? ("open".equalsIgnoreCase(action) ? "OPEN" : "CLOSED") : "FAILED";
+                    String desc;
+                    if (success) {
+                        desc = "open".equalsIgnoreCase(action)
+                                ? "Nắp trượt ô tủ đã mở thành công đón kiện hàng từ Drone"
+                                : "Nắp trượt ô tủ đã đóng và khoá an toàn sau khi Drone giao hàng";
+                    } else {
+                        desc = "Lệnh " + action + " ô tủ thất bại: " + (errMsg != null ? errMsg : status);
+                    }
+
+                    applicationContext.getBean(IotService.class).logExternalAccess(
+                            boxId, lockerId, null, null, "DRONE", result, desc);
+
+                    if (boxId != null && hwState != null) {
+                        applicationContext.getBean(IotService.class).updateBoxStatus(
+                                new BoxStatusUpdateRequest(boxId, hwState, lockerId));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Error processing locker command result log: {}", e.getMessage());
         }
     }
 
