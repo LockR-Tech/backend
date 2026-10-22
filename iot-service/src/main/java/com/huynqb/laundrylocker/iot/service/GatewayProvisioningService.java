@@ -82,6 +82,9 @@ public class GatewayProvisioningService {
         });
         device.setHardware(text(data, "hardware"));
         device.setFirmwareVersion(text(data, "firmwareVersion"));
+        if (data.hasNonNull("ipAddress")) {
+            device.setIpAddress(data.get("ipAddress").asText());
+        }
         device.setReportedLockerId(data.hasNonNull("lockerId") ? data.get("lockerId").asLong() : null);
         JsonNode slaves = data.path("slaves");
         if (slaves.isArray() && !slaves.isEmpty()) {
@@ -452,7 +455,7 @@ public class GatewayProvisioningService {
                 device.getId(), device.getMacAddress(), device.getHardware(), device.getFirmwareVersion(),
                 device.getSlaveId(), device.getAvailableSlots(), device.getReportedLockerId(), device.getLockerId(),
                 online, device.getSetupStatus(), device.getSetupProgress(), result,
-                device.getSetupRequestedAt(), device.getSetupFinishedAt(), lastSeen);
+                device.getSetupRequestedAt(), device.getSetupFinishedAt(), lastSeen, device.getIpAddress());
     }
 
     private static String text(JsonNode data, String field) {

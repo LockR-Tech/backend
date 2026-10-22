@@ -21,5 +21,26 @@ public record GatewayDeviceResponse(
         JsonNode setupResult,
         LocalDateTime setupRequestedAt,
         LocalDateTime setupFinishedAt,
-        LocalDateTime lastSeenAt) {
+        LocalDateTime lastSeenAt,
+        String ipAddress) {
+
+    public GatewayDeviceResponse(
+            Long id,
+            String macAddress,
+            String hardware,
+            String firmwareVersion,
+            Integer slaveId,
+            Integer availableSlots,
+            Long reportedLockerId,
+            Long lockerId,
+            boolean online,
+            String setupStatus,
+            String setupProgress,
+            JsonNode setupResult,
+            LocalDateTime setupRequestedAt,
+            LocalDateTime setupFinishedAt,
+            LocalDateTime lastSeenAt) {
+        this(id, macAddress, hardware, firmwareVersion, slaveId, availableSlots, reportedLockerId, lockerId,
+                online, setupStatus, setupProgress, setupResult, setupRequestedAt, setupFinishedAt, lastSeenAt, null);
+    }
 }

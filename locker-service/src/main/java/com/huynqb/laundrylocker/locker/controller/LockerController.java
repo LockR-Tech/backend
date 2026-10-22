@@ -792,7 +792,7 @@ public class LockerController {
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
         return ApiResponse.ok(
                 "DRONE_DEVICE_ASSIGNED", "Drone device assigned",
-                lockerService.assignDroneDevice(id, request.droneId(), userId));
+                lockerService.assignDroneDevice(id, request.droneId(), request.ipAddress(), userId));
     }
 
     @PostMapping({"/api/admin/drone-devices/{id}/unassign", "/api/admin/drones/devices/{id}/unassign"})

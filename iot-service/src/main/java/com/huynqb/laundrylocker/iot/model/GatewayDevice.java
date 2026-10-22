@@ -22,6 +22,10 @@ public class GatewayDevice {
     @Column(name = "mac_address", nullable = false, unique = true, length = 17)
     private String macAddress;
 
+    /// Địa chỉ IP mạng của Pi
+    @Column(name = "ip_address", length = 45)
+    private String ipAddress;
+
     /// `gpio`, `rs485` hoặc `simulation` — Pi tự báo.
     @Column(length = 30)
     private String hardware;

@@ -3066,14 +3066,51 @@ public class LockerService {
 
     @Transactional
     public DroneDeviceResponse assignDroneDevice(Long deviceId, Long droneId) {
-        return assignDroneDevice(deviceId, droneId, null);
+        return assignDroneDevice(deviceId, droneId, null, null);
     }
 
     @Transactional
     public DroneDeviceResponse assignDroneDevice(Long deviceId, Long droneId, Long actorUserId) {
+        return assignDroneDevice(deviceId, droneId, null, actorUserId);
+    }
+
+    @Transactional
+    public DroneDeviceResponse assignDroneDevice(Long deviceId, Long droneId, String ipAddress, Long actorUserId) {
         DroneDevice device = droneDeviceRepository.findById(deviceId)
                 .orElseThrow(() -> new NotFoundException("DroneDevice", deviceId));
         DroneUnit drone = findDroneUnit(droneId);
+
+        // Chặn gán trùng: Nếu thiết bị này đã được gán cho drone khác
+        if (device.getDroneId() != null && !device.getDroneId().equals(droneId)) {
+            String otherDrone = device.getDroneCode() != null ? device.getDroneCode() : ("#" + device.getDroneId());
+            String piIdent = StringUtils.hasText(device.getIpAddress()) ? device.getIpAddress() : device.getMacAddress();
+            throw new BusinessException(
+                    "DRONE_DEVICE_ALREADY_ASSIGNED",
+                    "Bộ điều khiển Raspberry Pi (IP: " + piIdent + ") đang được gán cho drone " + otherDrone + ". Không được gán trùng!",
+                    HttpStatus.CONFLICT
+            );
+        }
+
+        // Nếu có cập nhật IP, kiểm tra xem IP này có đang bị drone khác dùng không
+        if (StringUtils.hasText(ipAddress)) {
+            String trimmedIp = ipAddress.trim();
+            droneDeviceRepository.findAll().stream()
+                    .filter(d -> d.getDroneId() != null && !d.getDroneId().equals(droneId) && !d.getId().equals(deviceId))
+                    .filter(d -> trimmedIp.equalsIgnoreCase(d.getIpAddress()))
+                    .findFirst()
+                    .ifPresent(other -> {
+                        String otherDrone = other.getDroneCode() != null ? other.getDroneCode() : ("#" + other.getDroneId());
+                        throw new BusinessException(
+                                "DRONE_DEVICE_ALREADY_ASSIGNED",
+                                "Bộ điều khiển Raspberry Pi (IP: " + trimmedIp + ") đang được gán cho drone " + otherDrone + ". Không được gán trùng!",
+                                HttpStatus.CONFLICT
+                        );
+                    });
+            device.setIpAddress(trimmedIp);
+            if (device.getCameraStreamUrl() == null || device.getCameraStreamUrl().isBlank()) {
+                device.setCameraStreamUrl("http://" + trimmedIp + ":8080/stream.mjpg");
+            }
+        }
 
         droneDeviceRepository.findByDroneId(droneId).ifPresent(old -> {
             if (!old.getId().equals(deviceId)) {
@@ -3158,9 +3195,29 @@ public class LockerService {
         String mac = macAddress != null && !macAddress.isBlank()
                 ? macAddress.trim().toUpperCase(Locale.ROOT)
                 : "DRONE:" + drone.getCode();
+        String trimmedIp = ipAddress != null && !ipAddress.isBlank() ? ipAddress.trim() : null;
+
+        // Chặn gán trùng: Kiểm tra xem IP hoặc MAC này có đang được gán cho một drone KHÁC hay không
+        if (trimmedIp != null || (mac != null && !mac.startsWith("DRONE:"))) {
+            droneDeviceRepository.findAll().stream()
+                    .filter(d -> d.getDroneId() != null && !d.getDroneId().equals(drone.getId()))
+                    .filter(d -> (trimmedIp != null && trimmedIp.equalsIgnoreCase(d.getIpAddress()))
+                            || (mac != null && !mac.startsWith("DRONE:") && mac.equalsIgnoreCase(d.getMacAddress())))
+                    .findFirst()
+                    .ifPresent(other -> {
+                        String otherDrone = other.getDroneCode() != null ? other.getDroneCode() : ("#" + other.getDroneId());
+                        String ident = trimmedIp != null ? trimmedIp : other.getMacAddress();
+                        throw new BusinessException(
+                                "DRONE_DEVICE_ALREADY_ASSIGNED",
+                                "Bộ điều khiển Raspberry Pi (IP: " + ident + ") đang được gán cho drone " + otherDrone + ". Không được gán trùng!",
+                                HttpStatus.CONFLICT
+                        );
+                    });
+        }
 
         DroneDevice device = droneDeviceRepository.findByDroneId(drone.getId())
-                .or(() -> droneDeviceRepository.findByMacAddress(mac))
+                .or(() -> macAddress != null && !macAddress.isBlank() ? droneDeviceRepository.findByMacAddress(mac) : java.util.Optional.empty())
+                .or(() -> trimmedIp != null ? droneDeviceRepository.findByIpAddress(trimmedIp) : java.util.Optional.empty())
                 .orElseGet(() -> {
                     DroneDevice created = new DroneDevice();
                     created.setMacAddress(mac);
@@ -3169,11 +3226,21 @@ public class LockerService {
                     return created;
                 });
 
+        if (device.getDroneId() != null && !device.getDroneId().equals(drone.getId())) {
+            String otherDrone = device.getDroneCode() != null ? device.getDroneCode() : ("#" + device.getDroneId());
+            String ident = device.getIpAddress() != null ? device.getIpAddress() : device.getMacAddress();
+            throw new BusinessException(
+                    "DRONE_DEVICE_ALREADY_ASSIGNED",
+                    "Bộ điều khiển Raspberry Pi (IP: " + ident + ") đang được gán cho drone " + otherDrone + ". Không được gán trùng!",
+                    HttpStatus.CONFLICT
+            );
+        }
+
         device.setDroneId(drone.getId());
         device.setDroneCode(drone.getCode());
         device.setMacAddress(mac);
-        if (ipAddress != null && !ipAddress.isBlank()) {
-            device.setIpAddress(ipAddress.trim());
+        if (trimmedIp != null) {
+            device.setIpAddress(trimmedIp);
         }
         if (cameraStreamUrl != null && !cameraStreamUrl.isBlank()) {
             device.setCameraStreamUrl(cameraStreamUrl.trim());

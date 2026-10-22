@@ -673,6 +673,69 @@ class LockerServiceDroneFleetTest {
     }
 
     @Test
+    void assignDroneDevice_ThrowsConflict_WhenDeviceAlreadyAssignedToOtherDrone() {
+        DroneDevice device = new DroneDevice();
+        device.setId(100L);
+        device.setDroneId(2L);
+        device.setDroneCode("DRONE-02");
+        device.setMacAddress("B8:27:EB:12:34:56");
+        device.setIpAddress("192.168.1.50");
+
+        when(droneDeviceRepository.findById(100L)).thenReturn(Optional.of(device));
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+                service.assignDroneDevice(100L, 1L, "192.168.1.50", 99L));
+
+        assertEquals("DRONE_DEVICE_ALREADY_ASSIGNED", ex.getCode());
+        assertTrue(ex.getMessage().contains("DRONE-02"));
+    }
+
+    @Test
+    void assignDroneDevice_ThrowsConflict_WhenIpAlreadyAssignedToOtherDrone() {
+        DroneDevice device = new DroneDevice();
+        device.setId(100L);
+        device.setDroneId(null);
+        device.setMacAddress("B8:27:EB:12:34:56");
+
+        DroneDevice other = new DroneDevice();
+        other.setId(200L);
+        other.setDroneId(2L);
+        other.setDroneCode("DRONE-02");
+        other.setIpAddress("192.168.1.50");
+
+        when(droneDeviceRepository.findById(100L)).thenReturn(Optional.of(device));
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+        when(droneDeviceRepository.findAll()).thenReturn(List.of(device, other));
+
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+                service.assignDroneDevice(100L, 1L, "192.168.1.50", 99L));
+
+        assertEquals("DRONE_DEVICE_ALREADY_ASSIGNED", ex.getCode());
+        assertTrue(ex.getMessage().contains("DRONE-02"));
+    }
+
+    @Test
+    void registerOrUpdateDroneDevice_ThrowsConflict_WhenIpAlreadyAssignedToOtherDrone() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+
+        DroneDevice other = new DroneDevice();
+        other.setId(200L);
+        other.setDroneId(2L);
+        other.setDroneCode("DRONE-02");
+        other.setIpAddress("192.168.1.50");
+        other.setMacAddress("AA:BB:CC:DD:EE:FF");
+
+        when(droneDeviceRepository.findAll()).thenReturn(List.of(other));
+
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+                service.registerOrUpdateDroneDevice(1L, "B8:27:EB:12:34:56", "192.168.1.50", null, 99L));
+
+        assertEquals("DRONE_DEVICE_ALREADY_ASSIGNED", ex.getCode());
+        assertTrue(ex.getMessage().contains("DRONE-02"));
+    }
+
+    @Test
     void adminCanAddDroneLogWithoutTechnicianOwnership() {
         when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
 

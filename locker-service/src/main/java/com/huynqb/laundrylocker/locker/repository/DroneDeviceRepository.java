@@ -16,6 +16,7 @@ public interface DroneDeviceRepository extends JpaRepository<DroneDevice, Long> 
 
     Optional<DroneDevice> findByDroneCode(String droneCode);
 
+    Optional<DroneDevice> findByIpAddress(String ipAddress);
+
     List<DroneDevice> findAllByOrderByIdAsc();
 }
-
