@@ -204,13 +204,77 @@ class OrderServiceBenefitsTest {
 
     @Test
     void adminCancelThroughStatusUpdateAlsoReturnsBenefits() {
-        LockerOrder order = existingOrder("STORING");
+        LockerOrder order = existingOrder("INITIALIZED");
         order.setPointsUsed(10);
+        order.setPinCode("123456");
         when(promotionUsageRepository.findByOrderId(21L)).thenReturn(List.of());
 
         orderService.updateStatus(21L, new UpdateOrderStatusRequest("CANCELED", null, null));
 
+        assertEquals("CANCELED", order.getStatus());
+        // Admin huỷ đi cùng đường với khách huỷ: PIN cũ không còn mở được ô.
+        assertNull(order.getPinCode());
         verify(loyaltyClient).refund(21L);
+    }
+
+    @Test
+    void adminCannotReopenOrSkipStepsThroughStatusUpdate() {
+        existingOrder("COMPLETED");
+        assertEquals("ORDER_STATUS_TRANSITION_INVALID", assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("INITIALIZED", null, null)))
+                .getCode());
+
+        existingOrder("INITIALIZED");
+        // STORING chỉ đến qua confirm() (cấp PIN người nhận, giữ ô).
+        assertEquals("ORDER_STATUS_TRANSITION_INVALID", assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("STORING", null, null)))
+                .getCode());
+
+        existingOrder("STORING");
+        // Đồ còn trong ô: admin chốt đơn hoặc dời kho, không huỷ.
+        assertEquals("ORDER_STATUS_TRANSITION_INVALID", assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("CANCELED", null, null)))
+                .getCode());
+        verify(lockerClient, never()).releaseBox(anyLong());
+    }
+
+    @Test
+    void adminExpireMovesOrderToStorageAndReleasesCell() {
+        LockerOrder order = existingOrder("STORING");
+        order.setReceiveBoxId(301L);
+        order.setPinCode("123456");
+
+        orderService.updateStatus(21L, new UpdateOrderStatusRequest("EXPIRED", 9L, null));
+
+        assertEquals("EXPIRED", order.getStatus());
+        assertNull(order.getReceiveBoxId());
+        assertNull(order.getPinCode());
+        verify(lockerClient).releaseBox(301L);
+    }
+
+    @Test
+    void adminCannotCancelDroneOrderAfterParcelPickedUp() {
+        LockerOrder order = existingOrder("AWAITING_DISPATCH");
+        order.setType("DRONE_DELIVERY");
+        order.setDeliveryStage("PICKED_UP");
+
+        assertEquals("DRONE_ORDER_STATUS_INVALID", assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(21L, new UpdateOrderStatusRequest("CANCELED", null, null)))
+                .getCode());
+        assertEquals("AWAITING_DISPATCH", order.getStatus());
+    }
+
+    @Test
+    void resetPinOnlyWhileOrderStillUsesItsPin() {
+        LockerOrder order = existingOrder("COMPLETED");
+        order.setPinCode(null);
+        assertEquals("ORDER_STATUS_INVALID", assertThrows(BusinessException.class,
+                () -> orderService.resetPin(21L, 44L)).getCode());
+
+        order = existingOrder("STORING");
+        order.setPinCode("123456");
+        orderService.resetPin(21L, 44L);
+        assertTrue(order.getPinCode() != null && !"123456".equals(order.getPinCode()));
     }
 
     @Test
