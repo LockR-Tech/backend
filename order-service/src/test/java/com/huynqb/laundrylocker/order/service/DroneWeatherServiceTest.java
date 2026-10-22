@@ -53,6 +53,30 @@ class DroneWeatherServiceTest {
         server.verify();
     }
 
+    @Test
+    void acceptsOpenMeteoUtcTimestampsWithoutOffset() throws Exception {
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://weather.test/v1/forecast");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        DroneWeatherService service = new DroneWeatherService(builder.build(), 30, 40, 1500);
+        OffsetDateTime firstForecast = OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(2)
+                .truncatedTo(ChronoUnit.MINUTES);
+        List<String> times = List.of(
+                firstForecast.toLocalDateTime().toString(),
+                firstForecast.plusMinutes(15).toLocalDateTime().toString(),
+                firstForecast.plusMinutes(30).toLocalDateTime().toString());
+        Map<String, Object> safePoint = point(times, List.of(0, 0, 0), List.of(0, 0, 0),
+                List.of(8, 9, 8), List.of(12, 13, 12), List.of(10000, 10000, 10000));
+        server.expect(requestTo(containsString("minutely_15=")))
+                .andExpect(method(GET))
+                .andRespond(withSuccess(JSON.writeValueAsString(safePoint), MediaType.APPLICATION_JSON));
+
+        var result = service.assessRoute(locker(3L, 10.70, 106.70), locker(5L, 10.71, 106.71));
+
+        assertTrue(result.safe());
+        assertEquals("SAFE", result.status());
+        server.verify();
+    }
+
     private static Map<String, Object> point(
             List<String> times, List<? extends Number> precipitation, List<Integer> weatherCode,
             List<Integer> wind, List<Integer> gust, List<Integer> visibility) {

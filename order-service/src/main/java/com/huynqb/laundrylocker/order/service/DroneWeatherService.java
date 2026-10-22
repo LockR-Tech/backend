@@ -10,6 +10,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -121,7 +122,7 @@ public class DroneWeatherService {
                 return DroneWeatherAssessment.unavailable(checkedAt);
             }
             for (int i = 0; i < times.size(); i++) {
-                OffsetDateTime forecastAt = OffsetDateTime.parse(times.get(i).asText());
+                OffsetDateTime forecastAt = parseForecastTime(times.get(i).asText());
                 if (forecastAt.isBefore(checkedAt.minusMinutes(1))
                         || forecastAt.isAfter(checkedAt.plusMinutes(WINDOW_MINUTES))) {
                     continue;
@@ -181,6 +182,15 @@ public class DroneWeatherService {
             if (value == null || value.isNull() || !value.isNumber()) return true;
         }
         return false;
+    }
+
+    /** Open-Meteo returns UTC ISO timestamps without an offset when timezone=UTC. */
+    private static OffsetDateTime parseForecastTime(String value) {
+        try {
+            return OffsetDateTime.parse(value);
+        } catch (java.time.format.DateTimeParseException ignored) {
+            return LocalDateTime.parse(value).atOffset(ZoneOffset.UTC);
+        }
     }
 
     private static boolean isRainOrStorm(int weatherCode) {
