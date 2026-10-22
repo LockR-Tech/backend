@@ -15,9 +15,10 @@ public interface DroneIotLogRepository extends JpaRepository<DroneIotLog, Long> 
            "AND (:component IS NULL OR l.component = :component) " +
            "AND (:eventType IS NULL OR l.eventType = :eventType) " +
            "AND (:result IS NULL OR l.result = :result) " +
-           "AND (:search IS NULL OR LOWER(l.message) LIKE LOWER(CONCAT('%', :search, '%')) " +
-           "     OR LOWER(l.actorId) LIKE LOWER(CONCAT('%', :search, '%')) " +
-           "     OR (l.orderId IS NOT NULL AND CAST(l.orderId AS string) LIKE CONCAT('%', :search, '%'))) " +
+           "AND (:search IS NULL OR :search = '' " +
+           "     OR LOWER(l.message) LIKE CONCAT('%', LOWER(CAST(:search AS string)), '%') " +
+           "     OR LOWER(l.actorId) LIKE CONCAT('%', LOWER(CAST(:search AS string)), '%') " +
+           "     OR (l.orderId IS NOT NULL AND CAST(l.orderId AS string) LIKE CONCAT('%', CAST(:search AS string), '%'))) " +
            "ORDER BY l.createdAt DESC")
     List<DroneIotLog> searchLogs(
             @Param("droneId") Long droneId,

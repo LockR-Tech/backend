@@ -195,7 +195,21 @@ class DroneTelemetryServiceTest {
         mission.setStatus("READY_TO_LAUNCH");
 
         service.ingest(DRONE, frame("ON_GROUND", SOURCE[0], SOURCE[1], 3, 0.0, 0.0));
-        verify(lockerDroneClient, never()).reportTelemetry(any());
+        verify(lockerDroneClient, times(1)).reportTelemetry(argThat(r -> DRONE.equals(r.code()) && r.batteryPercent() == null));
+
+        clock += 1_000;
+        DroneTelemetryFrame disconnectedPi = new DroneTelemetryFrame(
+                1, DRONE, clock, Instant.ofEpochMilli(clock).toString(),
+                new DroneTelemetryFrame.Link("disconnected", null),
+                new DroneTelemetryFrame.Position(null, null, null, null, null, true),
+                new DroneTelemetryFrame.Gps(null, null, null, true),
+                new DroneTelemetryFrame.Battery(null, null, null, null, true),
+                new DroneTelemetryFrame.Velocity(null, null, null, true),
+                new DroneTelemetryFrame.Flight(null, null, null, null, true),
+                new DroneTelemetryFrame.Landed(null, null, true),
+                new DroneTelemetryFrame.PiInfo("88:A2:9E:D9:FD:67", "10.3.78.45", "v1.0.0", "http://10.3.78.45:8080/stream.mjpg", "LIVE"));
+        service.ingest(DRONE, disconnectedPi);
+        verify(lockerDroneClient, times(1)).reportTelemetry(argThat(r -> DRONE.equals(r.code()) && "disconnected".equals(r.mavlinkStatus())));
 
         service.ingest(DRONE, frame("ON_GROUND", SOURCE[0], SOURCE[1], 3, 0.0, 14.8));
         verify(lockerDroneClient, times(1)).reportTelemetry(argThat(r -> DRONE.equals(r.code()) && Integer.valueOf(76).equals(r.batteryPercent())));

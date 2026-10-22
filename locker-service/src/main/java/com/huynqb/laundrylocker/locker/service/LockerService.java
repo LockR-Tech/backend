@@ -3349,7 +3349,14 @@ public class LockerService {
         String res = (result != null && !result.isBlank() && !"ALL".equalsIgnoreCase(result)) ? result.trim() : null;
         String q = (search != null && !search.isBlank()) ? search.trim() : null;
 
-        return droneIotLogRepository.searchLogs(droneId, comp, evt, res, q).stream()
+        List<DroneIotLog> logs;
+        if (comp == null && evt == null && res == null && q == null) {
+            logs = droneIotLogRepository.findByDroneIdOrderByCreatedAtDesc(droneId);
+        } else {
+            logs = droneIotLogRepository.searchLogs(droneId, comp, evt, res, q);
+        }
+
+        return logs.stream()
                 .map(this::toDroneIotLogResponse)
                 .toList();
     }
