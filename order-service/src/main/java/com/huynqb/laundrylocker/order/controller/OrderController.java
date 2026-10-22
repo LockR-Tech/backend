@@ -14,6 +14,7 @@ import com.huynqb.laundrylocker.order.service.DroneOrderBookingService;
 import com.huynqb.laundrylocker.order.service.DroneParcelService;
 import com.huynqb.laundrylocker.order.service.DronePickupService;
 import com.huynqb.laundrylocker.order.service.DroneRefundService;
+import com.huynqb.laundrylocker.order.service.OrderAccessGuard;
 import com.huynqb.laundrylocker.order.service.OrderService;
 import com.huynqb.laundrylocker.order.service.PromotionImageService;
 import com.huynqb.laundrylocker.order.service.ReceiverOrderQueryService;
@@ -38,15 +39,16 @@ public class OrderController {
     private final DroneOrderBookingService droneOrderBookingService;
     private final DronePickupService dronePickupService;
     private final DroneDeliveryFailureService droneDeliveryFailureService;
+    private final OrderAccessGuard orderAccess;
     private final OrderService orderService;
     private final PromotionImageService promotionImageService;
     private final ReceiverOrderQueryService receiverOrderQueryService;
     private final StoreRatingQueryService storeRatingQueryService;
 
-    @PostMapping("/api/orders")
-    public ApiResponse<OrderResponse> create(@Valid @RequestBody CreateOrderRequest request) {
-        return ApiResponse.ok("ORDER_CREATED", "Order created", orderService.create(request));
-    }
+    // Đã gỡ (SEC-03/05): `POST /api/orders` (userId lấy từ body, đơn 0đ tự PAID),
+    // `PATCH /api/orders/{id}/status`, `POST /api/orders/{id}/checkout`, `GET /api/orders`,
+    // `GET /api/orders/code|pin|access/...`. Admin đổi trạng thái qua /api/admin/orders/{id}/status;
+    // kiosk tra mã qua iot-service (/internal/orders/by-access).
 
     @PostMapping("/api/orders/send")
     public ApiResponse<OrderResponse> createSend(
@@ -98,11 +100,6 @@ public class OrderController {
             @PathVariable Long orderId,
             @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("ORDER_OVERTIME_ASSESSED", "Overtime fee assessed", orderService.assessOvertime(orderId, userId));
-    }
-
-    @GetMapping("/api/orders/access/{code}")
-    public ApiResponse<OrderResponse> getByAccess(@PathVariable String code) {
-        return ApiResponse.ok(orderService.getByAccess(code));
     }
 
     @GetMapping("/internal/orders/by-access")
@@ -167,12 +164,6 @@ public class OrderController {
         return ApiResponse.ok(null);
     }
 
-    @PatchMapping("/api/orders/{id}/status")
-    public ApiResponse<OrderResponse> updateStatus(
-            @PathVariable Long id, @Valid @RequestBody UpdateOrderStatusRequest request) {
-        return ApiResponse.ok("ORDER_STATUS_UPDATED", "Order status updated", orderService.updateStatus(id, request));
-    }
-
     @PutMapping("/api/orders/{orderId}/confirm")
     public ApiResponse<OrderResponse> confirm(@PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("ORDER_CONFIRMED", "Order confirmed", orderService.confirm(orderId, userId));
@@ -217,15 +208,6 @@ public class OrderController {
         return ApiResponse.ok("ORDER_DELEGATED", "Order pickup delegated", orderService.delegate(orderId, userId, request));
     }
 
-    @PostMapping("/api/orders/{orderId}/checkout")
-    public ApiResponse<OrderResponse> checkout(
-            @PathVariable Long orderId,
-            @RequestBody(required = false) Map<String, Object> request,
-            @RequestHeader(value = "X-User-Id", required = false) Long staffId) {
-        String note = request == null || request.get("note") == null ? null : String.valueOf(request.get("note"));
-        return ApiResponse.ok("ORDER_CHECKED_OUT", "Order checked out", orderService.checkout(orderId, staffId, note));
-    }
-
     @PostMapping("/api/orders/{orderId}/pickup-storage")
     public ApiResponse<OrderResponse> pickupStorage(
             @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
@@ -256,7 +238,11 @@ public class OrderController {
     }
 
     @GetMapping("/api/orders/{id}")
-    public ApiResponse<OrderResponse> get(@PathVariable Long id) {
+    public ApiResponse<OrderResponse> get(
+            @PathVariable Long id,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        orderAccess.requireOwner(id, userId, roles);
         return ApiResponse.ok(orderService.get(id));
     }
 
@@ -542,26 +528,12 @@ public class OrderController {
     }
 
     @GetMapping("/api/orders/{orderId}/status")
-    public ApiResponse<OrderStatusResponse> status(@PathVariable Long orderId) {
+    public ApiResponse<OrderStatusResponse> status(
+            @PathVariable Long orderId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        orderAccess.requireOwner(orderId, userId, roles);
         return ApiResponse.ok(orderService.status(orderId));
-    }
-
-    @GetMapping("/api/orders/code/{orderCode}")
-    public ApiResponse<OrderResponse> getByCode(@PathVariable String orderCode) {
-        return ApiResponse.ok(orderService.getByCode(orderCode));
-    }
-
-    @GetMapping("/api/orders/pin/{pinCode}")
-    public ApiResponse<OrderResponse> getByPin(@PathVariable String pinCode) {
-        return ApiResponse.ok(orderService.getByPin(pinCode));
-    }
-
-    @GetMapping("/api/orders")
-    public ApiResponse<List<OrderResponse>> list(
-            @RequestParam(required = false) Long userId,
-            @RequestParam(required = false) String status,
-            @RequestParam(required = false) Long staffId) {
-        return ApiResponse.ok(userId == null ? orderService.list(status, staffId) : orderService.listByUser(userId));
     }
 
     @GetMapping("/api/orders/my-orders")
@@ -606,7 +578,11 @@ public class OrderController {
     }
 
     @GetMapping("/api/orders/{orderId}/rating")
-    public ApiResponse<OrderRatingResponse> rating(@PathVariable Long orderId) {
+    public ApiResponse<OrderRatingResponse> rating(
+            @PathVariable Long orderId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        orderAccess.requireParticipant(orderId, userId, roles);
         return ApiResponse.ok(orderService.rating(orderId));
     }
 
@@ -624,7 +600,11 @@ public class OrderController {
     }
 
     @GetMapping("/api/orders/{orderId}/complaints")
-    public ApiResponse<List<OrderComplaintResponse>> complaints(@PathVariable Long orderId) {
+    public ApiResponse<List<OrderComplaintResponse>> complaints(
+            @PathVariable Long orderId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        orderAccess.requireParticipant(orderId, userId, roles);
         return ApiResponse.ok(orderService.complaints(orderId));
     }
 
@@ -634,7 +614,11 @@ public class OrderController {
     }
 
     @GetMapping("/api/orders/{orderId}/timeline")
-    public ApiResponse<List<OrderTimelineEvent>> timeline(@PathVariable Long orderId) {
+    public ApiResponse<List<OrderTimelineEvent>> timeline(
+            @PathVariable Long orderId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        orderAccess.requireParticipant(orderId, userId, roles);
         return ApiResponse.ok(orderService.timeline(orderId));
     }
 
@@ -658,12 +642,17 @@ public class OrderController {
 
     @GetMapping("/api/admin/orders/{id}")
     public ApiResponse<OrderResponse> adminOrder(@PathVariable Long id) {
-        return get(id);
+        return ApiResponse.ok(orderService.get(id));
     }
 
+    /// Người thao tác ghi vào lịch sử đơn là admin trong JWT (X-User-Id), không lấy `staffId` từ body.
     @PutMapping("/api/admin/orders/{id}/status")
-    public ApiResponse<OrderResponse> adminStatus(@PathVariable Long id, @Valid @RequestBody UpdateOrderStatusRequest request) {
-        return updateStatus(id, request);
+    public ApiResponse<OrderResponse> adminStatus(
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateOrderStatusRequest request,
+            @RequestHeader("X-User-Id") Long adminId) {
+        return ApiResponse.ok(
+                "ORDER_STATUS_UPDATED", "Order status updated", orderService.updateStatus(id, request.status(), adminId));
     }
 
     @GetMapping("/api/admin/dashboard/overview")

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -52,11 +53,15 @@ public class AdminOrderController {
         return ApiResponse.ok(queryService.detail(id));
     }
 
-    /// Alias PATCH của `PUT /api/admin/orders/{id}/status` — cùng body JSON {status, staffId?, receiveBoxId?}.
+    /// Alias PATCH của `PUT /api/admin/orders/{id}/status` — cùng body JSON {status}; người thao tác
+    /// lấy từ JWT (X-User-Id).
     @PatchMapping("/api/admin/orders/{id}/status")
     public ApiResponse<OrderResponse> patchStatus(
-            @PathVariable Long id, @Valid @RequestBody UpdateOrderStatusRequest request) {
-        return ApiResponse.ok("ORDER_STATUS_UPDATED", "Order status updated", orderService.updateStatus(id, request));
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateOrderStatusRequest request,
+            @RequestHeader("X-User-Id") Long adminId) {
+        return ApiResponse.ok(
+                "ORDER_STATUS_UPDATED", "Order status updated", orderService.updateStatus(id, request.status(), adminId));
     }
 
     @GetMapping("/internal/orders/batch")

@@ -305,6 +305,23 @@ class OrderServiceRentalPaymentTest {
         return order;
     }
 
+    /// Đường tạo đơn chung tính giá theo món: đơn không có món thành 0đ và tự PAID, nên loại đơn
+    /// khác SEND/RENTAL không được đặt lại.
+    @Test
+    void reorderRefusesTypesWithoutABookingPath() {
+        LockerOrder original = new LockerOrder();
+        original.setId(30L);
+        original.setUserId(44L);
+        original.setType("STORAGE");
+        original.setStatus("COMPLETED");
+        when(orderRepository.findById(30L)).thenReturn(Optional.of(original));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.reorder(30L, 44L));
+
+        assertEquals("ORDER_REORDER_UNSUPPORTED", ex.getCode());
+        verify(orderRepository, never()).save(any(LockerOrder.class));
+    }
+
     @Test
     void reorderUsesStoredRentalDurationHoursInsteadOfCreatedAtToDeadlineGap() {
         LockerOrder original = new LockerOrder();

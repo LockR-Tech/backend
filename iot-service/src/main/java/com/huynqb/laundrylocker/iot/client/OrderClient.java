@@ -8,9 +8,6 @@ import org.springframework.web.bind.annotation.*;
 @FeignClient(name = "order-service")
 public interface OrderClient {
 
-    @GetMapping("/api/orders/pin/{pinCode}")
-    ApiResponse<OrderLookupResponse> getByPin(@PathVariable String pinCode);
-
     @GetMapping("/internal/orders/by-access")
     ApiResponse<OrderLookupResponse> getByAccess(@RequestParam("code") String code);
 
