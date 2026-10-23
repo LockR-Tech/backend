@@ -191,6 +191,11 @@ public class LockerOrder {
     @Column(name = "box_incident_opened_at")
     private LocalDateTime boxIncidentOpenedAt;
 
+    /// Sự cố ô đã được xác nhận (KTV khoá ô, ô báo hỏng phần cứng): không mở ô bằng mã tới khi xử lý xong.
+    /// False khi khách mới báo, ô chờ KTV kiểm tra — phí quá giờ đã dừng nhưng chủ đồ vẫn tự mở ô được.
+    @Column(name = "box_incident_blocks_access", nullable = false)
+    private boolean boxIncidentBlocksAccess;
+
     /// Lần đầu ô được mở để BỎ hàng (đơn còn INITIALIZED). Xác nhận bỏ hàng SEND
     /// dựa vào mốc này để không cho xác nhận khi chưa từng mở ô.
     @Column(name = "drop_opened_at")

@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.order.service;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.common.dto.OrderSummary;
+import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
@@ -13,6 +14,7 @@ import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
+import com.huynqb.laundrylocker.order.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.model.*;
@@ -736,8 +738,9 @@ public class OrderService {
         assertOwnerOrReceiver(order, userId);
         validateStatus(order, Set.of("STORING", "RETURNED", "EXPIRED"));
         // Đồ còn kẹt trong ô hỏng: tự bấm "đã lấy đồ" sẽ đóng đơn và nhả ô (cấp cho khách khác)
-        // trong khi đồ vẫn bên trong. KTV kết thúc bằng bàn giao trực tiếp / chuyển ô.
-        assertNoOpenBoxIncident(order);
+        // trong khi đồ vẫn bên trong. KTV kết thúc bằng bàn giao trực tiếp / chuyển ô. Ô mới chờ KTV kiểm tra
+        // thì khách vẫn lấy đồ được (phí dừng ở mốc báo).
+        assertNoBlockingBoxIncident(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -883,7 +886,7 @@ public class OrderService {
                         ? Set.of("STORING", "RETURNED", "EXPIRED")
                         : Set.of("STORING", "INITIALIZED", "RETURNED", "EXPIRED"));
         // Như complete: kết thúc thuê lúc đồ còn kẹt sẽ nhả ô có đồ bên trong.
-        assertNoOpenBoxIncident(order);
+        assertNoBlockingBoxIncident(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -921,6 +924,7 @@ public class OrderService {
         if (boxId == null) {
             throw new BusinessException("BOX_NOT_FOUND", "Order has no active box to report");
         }
+        boolean confirmedFault;
         try {
             Map<String, Object> body = new HashMap<>();
             if (reason != null && !reason.isBlank()) {
@@ -935,7 +939,11 @@ public class OrderService {
             if (order.getOrderCode() != null && !order.getOrderCode().isBlank()) {
                 body.put("orderCode", order.getOrderCode());
             }
-            lockerClient.reportFault(boxId, body, userId);
+            var cell = lockerClient.reportFault(boxId, body, userId);
+            // Khách báo ⇒ ô chờ KTV kiểm tra (PENDING_CHECK), chủ đồ vẫn mở được. Ô đã được xác nhận hỏng
+            // (FAULT) từ trước thì khoá mở ô như cũ.
+            Object status = cell == null || cell.data() == null ? null : cell.data().get("status");
+            confirmedFault = "FAULT".equalsIgnoreCase(String.valueOf(status));
         } catch (Exception ex) {
             throw unwrapDownstreamError(ex, "BOX_FAULT_REPORT_FAILED", "Could not report fault for box " + boxId);
         }
@@ -945,37 +953,86 @@ public class OrderService {
             releaseBoxes(order);
             return transition(order, "CANCELED", userId, null, "Order auto-canceled after reporting reserved box fault");
         }
-        addHistory(order.getId(), order.getStatus(), order.getStatus(), userId, "Customer reported a fault on the assigned box");
-        openBoxIncident(order);
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), userId, "Khách báo sự cố ô của đơn");
+        openBoxIncident(order, LocalDateTime.now(), confirmedFault);
         return toResponse(order);
     }
 
-    /// locker-service báo ô của đơn bị báo sự cố qua đường khác (màn "Báo sự cố" của tủ, KTV, tủ báo kẹt
-    /// khoá). Gọi lặp an toàn.
+    /// locker-service báo ô có hàng của đơn bị báo sự cố qua đường khác (màn "Báo sự cố" của tủ, KTV, tủ báo
+    /// kẹt khoá, KTV xác nhận khoá ô) hoặc lần quét định kỳ. Gọi lặp an toàn. `notice` null (bản cũ) ⇒ coi như
+    /// sự cố đã xác nhận, mốc là bây giờ.
+    @Transactional
+    public OrderResponse boxIncidentOpened(Long orderId, BoxIncidentNotice notice) {
+        LockerOrder order = find(orderId);
+        boolean confirmed = notice == null || !Boolean.FALSE.equals(notice.confirmed());
+        Long reporter = notice == null ? null : notice.reporterUserId();
+        if (!confirmed && reporter != null
+                && !reporter.equals(order.getUserId())
+                && !reporter.equals(order.getReceiverId())
+                && !reporter.equals(order.getReceiverUserId())) {
+            // Người khác báo ô đang chứa đồ của đơn này: chờ KTV xác nhận rồi mới đụng tới đơn.
+            return toResponse(order);
+        }
+        openBoxIncident(order, notice == null ? null : notice.reportedAt(), confirmed);
+        return toResponse(order);
+    }
+
     @Transactional
     public OrderResponse boxIncidentOpened(Long orderId) {
-        LockerOrder order = find(orderId);
-        openBoxIncident(order);
-        return toResponse(order);
+        return boxIncidentOpened(orderId, null);
     }
 
-    /// Đơn đang có hàng mà ô bị báo sự cố: dừng phí quá giờ từ bây giờ, chặn thu tiền / mở ô bằng mã tới
-    /// khi KTV xử lý. Đơn chưa có hàng hoặc đã mở sự cố thì thôi.
-    private void openBoxIncident(LockerOrder order) {
-        if (order.getBoxIncidentOpenedAt() != null
-                || !("STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus()))) {
+    /// Đơn đang có hàng mà ô bị báo sự cố: dừng phí quá giờ từ lúc báo (`reportedAt`, mặc định bây giờ).
+    /// `blocksAccess` (sự cố đã xác nhận) ⇒ chặn thu tiền / mở ô bằng mã tới khi KTV xử lý; chưa xác nhận thì
+    /// chủ đồ vẫn mở ô được. Gọi lại với mốc sớm hơn (phiếu có từ trước lần đầu đơn được báo) ⇒ dời mốc về
+    /// đúng lúc báo và trả phần phí đã tính sau mốc đó. Đơn chưa có hàng thì thôi.
+    private void openBoxIncident(LockerOrder order, LocalDateTime reportedAt, boolean blocksAccess) {
+        if (!("STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus()))) {
             return;
         }
-        order.setBoxIncidentOpenedAt(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime at = reportedAt == null || reportedAt.isAfter(now) ? now : reportedAt;
+        // Phiếu có từ trước khi đơn giữ ô này: phí của đơn chỉ dừng từ lúc đơn được tạo.
+        if (order.getCreatedAt() != null && at.isBefore(order.getCreatedAt())) {
+            at = order.getCreatedAt();
+        }
+        boolean opened = order.getBoxIncidentOpenedAt() == null;
+        boolean movedEarlier = !opened && at.isBefore(order.getBoxIncidentOpenedAt());
+        boolean newlyBlocked = blocksAccess && !order.isBoxIncidentBlocksAccess();
+        if (!opened && !movedEarlier && !newlyBlocked) {
+            return;
+        }
+        if (opened || movedEarlier) {
+            order.setBoxIncidentOpenedAt(at);
+        }
+        if (blocksAccess) {
+            order.setBoxIncidentBlocksAccess(true);
+        }
         capOvertimeAtIncident(order);
         orderRepository.save(order);
-        addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
-                "Ô của đơn đang có sự cố: tạm dừng phí quá giờ tới khi KTV xử lý");
-        notifyQuietly(order.getUserId(), "Đã ghi nhận sự cố ô",
-                "Lock.R đã nhận báo sự cố ô của đơn " + order.getOrderCode() + ". Đồ của bạn được giữ nguyên "
-                        + "trong ô, phí quá giờ tạm dừng từ bây giờ tới khi KTV xử lý xong — bạn chưa cần "
-                        + "thanh toán. Lock.R sẽ báo khi lấy được đồ.",
-                "ORDER_BOX_INCIDENT_OPENED", order.getId());
+        if (opened) {
+            addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
+                    OrderDetailViews.NOTE_BOX_INCIDENT_OPENED);
+        } else if (movedEarlier) {
+            addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
+                    "Dời mốc sự cố ô về lúc báo " + formatDeadline(at) + ": phí quá giờ chỉ tính tới mốc này");
+        }
+        if (blocksAccess && (opened || newlyBlocked)) {
+            if (!opened) {
+                addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
+                        "KTV xác nhận ô hỏng: tạm khoá mở ô bằng mã tới khi xử lý xong");
+            }
+            notifyQuietly(order.getUserId(), "Ô của bạn đang được xử lý sự cố",
+                    "Ô của đơn " + order.getOrderCode() + " đã được xác nhận gặp sự cố. Đồ của bạn được giữ nguyên "
+                            + "trong ô, phí quá giờ tạm dừng tới khi KTV xử lý xong — bạn chưa cần thanh toán. "
+                            + "Lock.R sẽ báo khi lấy được đồ.",
+                    "ORDER_BOX_INCIDENT_OPENED", order.getId());
+        } else if (opened) {
+            notifyQuietly(order.getUserId(), "Đã ghi nhận sự cố ô",
+                    "Lock.R đã nhận báo sự cố ô của đơn " + order.getOrderCode() + ". Kỹ thuật viên sẽ tới kiểm tra; "
+                            + "bạn vẫn có thể mở ô bằng mã PIN để lấy đồ. Phí quá giờ tạm dừng từ lúc báo.",
+                    "ORDER_BOX_INCIDENT_OPENED", order.getId());
+        }
     }
 
     /// KTV xử lý xong sự cố ô của đơn (sửa tại chỗ, kiểm tra không lỗi, chuyển ô, hoàn tất phiếu):
@@ -1010,6 +1067,7 @@ public class OrderService {
         capOvertimeAtIncident(order);
         LocalDateTime now = LocalDateTime.now();
         order.setBoxIncidentOpenedAt(null);
+        order.setBoxIncidentBlocksAccess(false);
         if (order.getPickupDeadline() != null) {
             java.time.Duration stuck = java.time.Duration.between(openedAt, now);
             LocalDateTime shifted = order.getPickupDeadline().plus(stuck.isNegative() ? java.time.Duration.ZERO : stuck);
@@ -1018,7 +1076,7 @@ public class OrderService {
         }
         addHistory(order.getId(), order.getStatus(), order.getStatus(), actorId,
                 (StringUtils.hasText(note) ? note + ". " : "")
-                        + "Đã xử lý sự cố ô: bỏ phí quá giờ trong thời gian chờ KTV"
+                        + OrderDetailViews.NOTE_BOX_INCIDENT_CLOSED + ": bỏ phí quá giờ trong thời gian chờ KTV"
                         + (order.getPickupDeadline() != null
                         ? ", hạn lấy đồ mới " + formatDeadline(order.getPickupDeadline())
                         : ""));
@@ -2124,8 +2182,18 @@ public class OrderService {
         return "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory());
     }
 
+    /// Gia hạn lúc sự cố còn mở sẽ tính lại giờ từ hạn cũ, bỏ qua mốc dừng phí ⇒ chặn cả khi ô mới chờ kiểm tra.
     private static void assertNoOpenBoxIncident(LockerOrder order) {
         if (OrderAccessPolicy.hasOpenBoxIncident(order)) {
+            throw new BusinessException("ORDER_BOX_INCIDENT_OPEN",
+                    "Ô của đơn đang chờ KTV xử lý sự cố — phí quá giờ đang tạm dừng nên chưa cần gia hạn. "
+                            + "Lock.R sẽ báo khi KTV xử lý xong.",
+                    HttpStatus.CONFLICT);
+        }
+    }
+
+    private static void assertNoBlockingBoxIncident(LockerOrder order) {
+        if (OrderAccessPolicy.boxIncidentBlocksAccess(order)) {
             throw new BusinessException("ORDER_BOX_INCIDENT_OPEN",
                     "Ô của đơn đang chờ KTV xử lý sự cố — đồ vẫn được giữ trong ô và phí quá giờ đang tạm dừng. "
                             + "Lock.R sẽ báo khi lấy được đồ.",
@@ -2244,7 +2312,7 @@ public class OrderService {
 
     private OrderSummary toSummary(LockerOrder order) {
         return new OrderSummary(order.getId(), order.getUserId(), order.getStatus(), order.getTotalPrice(), order.getType(),
-                order.getOrderCode(), OrderAccessPolicy.hasOpenBoxIncident(order));
+                order.getOrderCode(), OrderAccessPolicy.boxIncidentBlocksAccess(order));
     }
 
     private OrderResponse toResponse(LockerOrder order) {
@@ -2530,12 +2598,27 @@ public class OrderService {
             return null;
         }
         LockerOrder order = list.get(0);
+        // Đơn thuê/giữ đồ không có người nhận: người lấy đồ là chủ đơn. KTV cần tên + SĐT để đối chiếu
+        // với khách tại tủ (trước đây hiện "Khách: Khách ()").
+        String name = order.getReceiverName();
+        String phone = order.getReceiverPhone();
+        if ((!StringUtils.hasText(name) || !StringUtils.hasText(phone)) && order.getUserId() != null) {
+            try {
+                UserSummary owner = userClient.getUser(order.getUserId()).data();
+                if (owner != null) {
+                    name = StringUtils.hasText(name) ? name : owner.fullName();
+                    phone = StringUtils.hasText(phone) ? phone : owner.phoneNumber();
+                }
+            } catch (Exception ex) {
+                log.warn("Could not load owner of order {} for box {}: {}", order.getId(), boxId, ex.getMessage());
+            }
+        }
         return new ActiveBoxOrderResponse(
                 order.getId(),
                 order.getOrderCode(),
                 order.getUserId(),
-                order.getReceiverName(),
-                order.getReceiverPhone(),
+                name,
+                phone,
                 order.getType(),
                 order.getStatus(),
                 order.getPinCode(),
@@ -2547,11 +2630,22 @@ public class OrderService {
     public OrderResponse relocateBox(Long orderId, Long newBoxId, Integer newBoxNumber) {
         LockerOrder order = find(orderId);
         Long oldBoxId = activeBoxId(order);
+        // Đổi mọi trường đang trỏ ô cũ: đơn gửi đã bỏ hàng có cả sendBoxId lẫn receiveBoxId là ô cũ — chỉ đổi
+        // một trường thì lúc lấy hàng vẫn mở ô hỏng, và đơn vẫn bị tra ra là "đang nằm trong ô cũ".
+        boolean moved = false;
         if (oldBoxId != null && oldBoxId.equals(order.getSendBoxId())) {
             order.setSendBoxId(newBoxId);
-        } else if (oldBoxId != null && oldBoxId.equals(order.getReceiveBoxId())) {
+            moved = true;
+        }
+        if (oldBoxId != null && oldBoxId.equals(order.getReceiveBoxId())) {
             order.setReceiveBoxId(newBoxId);
-        } else {
+            moved = true;
+        }
+        if (oldBoxId != null && oldBoxId.equals(order.getReservedBoxId())) {
+            order.setReservedBoxId(newBoxId);
+            moved = true;
+        }
+        if (!moved) {
             order.setReservedBoxId(newBoxId);
         }
         String newPin = generatePinCode();
@@ -2559,7 +2653,7 @@ public class OrderService {
         order.setPinCodeIssuedAt(LocalDateTime.now());
         String boxLabel = newBoxNumber != null ? ("#" + newBoxNumber) : ("#" + newBoxId);
         addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
-                "KTV điều chuyển hàng sang ô " + boxLabel + " do sự cố ô cũ");
+                OrderDetailViews.NOTE_BOX_RELOCATED_PREFIX + boxLabel + OrderDetailViews.NOTE_BOX_RELOCATED_SUFFIX);
         closeBoxIncident(order, null, "KTV điều chuyển hàng sang ô " + boxLabel);
         LockerOrder saved = orderRepository.save(order);
 
@@ -2597,6 +2691,7 @@ public class OrderService {
         // Chốt phí ở mức lúc báo sự cố trước khi đơn hoàn tất (thời gian chờ KTV không tính).
         capOvertimeAtIncident(order);
         order.setBoxIncidentOpenedAt(null);
+        order.setBoxIncidentBlocksAccess(false);
         order.setPinCode(null);
         addHistory(order.getId(), order.getStatus(), "COMPLETED", null,
                 "KTV đã bàn giao hàng trực tiếp cho khách hàng tại Kiosk do sự cố");

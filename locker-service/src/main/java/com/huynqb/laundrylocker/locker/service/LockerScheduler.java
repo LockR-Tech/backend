@@ -41,6 +41,19 @@ public class LockerScheduler {
         }
     }
 
+    // Ô chờ KTV kiểm tra quá hạn giữ (cấu hình admin) thì trả về hoạt động, phiếu vẫn mở.
+    @Scheduled(fixedDelayString = "${app.locker.pending-check-release-ms:900000}", initialDelay = 120000)
+    public void releaseStalePendingChecks() {
+        try {
+            int released = lockerService.releaseStalePendingChecks();
+            if (released > 0) {
+                log.info("Released {} box(es) left waiting for a technician check", released);
+            }
+        } catch (Exception ex) {
+            log.warn("Pending-check release failed: {}", ex.getMessage());
+        }
+    }
+
     // Giờ VN (JVM chạy UTC). Mỗi kỳ hạn chỉ nhắc một lần nên chạy lại cũng không nhắc trùng.
     @Scheduled(cron = "${app.maintenance.schedule-reminder-cron:0 0 7 * * *}", zone = "Asia/Ho_Chi_Minh")
     public void remindDueSchedules() {

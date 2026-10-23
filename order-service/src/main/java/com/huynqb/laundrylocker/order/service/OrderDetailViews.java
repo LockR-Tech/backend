@@ -21,6 +21,13 @@ public final class OrderDetailViews {
     private OrderDetailViews() {
     }
 
+    /// Ghi chú lịch sử OrderService viết khi ô của đơn có sự cố — các mốc sự cố đọc lại từ đây vì đơn
+    /// không có cột thời gian riêng cho chúng (một đơn có thể bị sự cố nhiều lần).
+    static final String NOTE_BOX_INCIDENT_OPENED = "Ô của đơn đang có sự cố: tạm dừng phí quá giờ tới khi KTV xử lý";
+    static final String NOTE_BOX_RELOCATED_PREFIX = "KTV điều chuyển hàng sang ô ";
+    static final String NOTE_BOX_RELOCATED_SUFFIX = " do sự cố ô cũ";
+    static final String NOTE_BOX_INCIDENT_CLOSED = "Đã xử lý sự cố ô";
+
     /// null khi đơn không khai gì về kiện — client khỏi vẽ một mục rỗng.
     public static OrderParcelView parcel(LockerOrder order) {
         boolean empty = !StringUtils.hasText(order.getDescription())
@@ -65,6 +72,7 @@ public final class OrderDetailViews {
         add(result, "STORED", drone ? "Kiện đã vào ô tủ nhận" : "Hàng đã vào ô, chờ lấy",
                 firstReached(history, drone ? "READY_FOR_PICKUP" : "STORING"));
         add(result, "DELEGATED", "Đã ủy quyền lấy hộ", order.getDelegatedAt());
+        addBoxIncidents(result, history);
         if (order.getDeliveryBlockReason() != null) {
             add(result, "BLOCKED", "Tạm dừng: " + DroneFailureReasons.label(order.getDeliveryBlockReason()),
                     order.getDeliveryBlockedAt());
@@ -81,6 +89,25 @@ public final class OrderDetailViews {
         // Sắp xếp ổn định: hai mốc cùng thời điểm giữ thứ tự nghiệp vụ ở trên.
         result.sort(Comparator.comparing(OrderMilestone::occurredAt));
         return List.copyOf(result);
+    }
+
+    /// Mỗi lần ô báo sự cố / KTV chuyển ô / xử lý xong là một mốc (dòng chỉ ghi chú, trạng thái giữ nguyên).
+    private static void addBoxIncidents(List<OrderMilestone> result, List<OrderStatusHistory> history) {
+        for (OrderStatusHistory h : history) {
+            String note = h.getNote();
+            if (note == null || !Objects.equals(h.getOldStatus(), h.getNewStatus())) {
+                continue;
+            }
+            if (note.startsWith(NOTE_BOX_INCIDENT_OPENED)) {
+                add(result, "BOX_INCIDENT_OPENED", "Ô báo sự cố, tạm dừng phí quá giờ", h.getCreatedAt());
+            } else if (note.contains(NOTE_BOX_INCIDENT_CLOSED)) {
+                add(result, "BOX_INCIDENT_RESOLVED", "Đã xử lý xong sự cố ô", h.getCreatedAt());
+            } else if (note.startsWith(NOTE_BOX_RELOCATED_PREFIX) && note.endsWith(NOTE_BOX_RELOCATED_SUFFIX)) {
+                String box = note.substring(
+                        NOTE_BOX_RELOCATED_PREFIX.length(), note.length() - NOTE_BOX_RELOCATED_SUFFIX.length());
+                add(result, "BOX_RELOCATED", "KTV chuyển đồ sang ô " + box, h.getCreatedAt());
+            }
+        }
     }
 
     private static void add(List<OrderMilestone> result, String code, String label, LocalDateTime at) {

@@ -1,10 +1,12 @@
 package com.huynqb.laundrylocker.locker.client;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.locker.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.locker.dto.ActiveBoxOrderDto;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
@@ -33,7 +35,9 @@ public interface OrderClient {
             @RequestParam("sealNumber") String sealNumber);
 
     @PostMapping("/{id}/box-incident-opened")
-    ApiResponse<Map<String, Object>> boxIncidentOpened(@PathVariable("id") Long id);
+    ApiResponse<Map<String, Object>> boxIncidentOpened(
+            @PathVariable("id") Long id,
+            @RequestBody BoxIncidentNotice notice);
 
     @PostMapping("/{id}/box-incident-resolved")
     ApiResponse<Map<String, Object>> boxIncidentResolved(
