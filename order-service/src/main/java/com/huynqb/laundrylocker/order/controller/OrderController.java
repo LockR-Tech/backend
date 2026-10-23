@@ -7,6 +7,7 @@ import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
 import com.huynqb.laundrylocker.order.service.DroneDeliveryQueryService;
+import com.huynqb.laundrylocker.order.service.DroneWeatherQueryService;
 import com.huynqb.laundrylocker.order.service.DroneMissionProgressService;
 import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
 import com.huynqb.laundrylocker.order.service.DroneDeliveryFailureService;
@@ -39,6 +40,7 @@ public class OrderController {
     private final DroneOrderBookingService droneOrderBookingService;
     private final DronePickupService dronePickupService;
     private final DroneDeliveryFailureService droneDeliveryFailureService;
+    private final DroneWeatherQueryService droneWeatherQueryService;
     private final OrderAccessGuard orderAccess;
     private final OrderService orderService;
     private final PromotionImageService promotionImageService;
@@ -338,6 +340,39 @@ public class OrderController {
     @GetMapping("/api/admin/drone-orders/{orderId}")
     public ApiResponse<DroneDeliveryOrderResponse> adminDroneOrder(@PathVariable Long orderId) {
         return ApiResponse.ok(droneDeliveryQueryService.getForAdmin(orderId));
+    }
+
+    // ---- Thời tiết: khách, KTV, admin cùng xem một kết quả với bước kiểm tra lúc đặt đơn / phóng drone.
+
+    /// Người gửi / người nhận xem thời tiết tuyến bay của đơn mình.
+    @GetMapping("/api/orders/{orderId}/drone-delivery/weather")
+    public ApiResponse<DroneWeatherViews.RouteWeather> droneDeliveryWeather(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        droneDeliveryQueryService.get(orderId, userId);
+        return ApiResponse.ok(droneWeatherQueryService.forOrder(orderId));
+    }
+
+    @GetMapping("/api/drone-technician/drone-orders/{orderId}/weather")
+    public ApiResponse<DroneWeatherViews.RouteWeather> technicianDroneOrderWeather(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        droneDeliveryQueryService.getForTechnician(orderId, userId);
+        return ApiResponse.ok(droneWeatherQueryService.forOrder(orderId));
+    }
+
+    @GetMapping("/api/admin/drone-orders/{orderId}/weather")
+    public ApiResponse<DroneWeatherViews.RouteWeather> adminDroneOrderWeather(@PathVariable Long orderId) {
+        return ApiResponse.ok(droneWeatherQueryService.forOrder(orderId));
+    }
+
+    /// Thời tiết tại từng tủ có bãi đáp — KTV và admin điều phối trước khi nhận / phóng đơn.
+    @GetMapping("/api/drone-technician/drone-orders/weather/lockers")
+    public ApiResponse<List<DroneWeatherViews.LockerWeather>> technicianLockerWeather() {
+        return ApiResponse.ok(droneWeatherQueryService.droneLockers());
+    }
+
+    @GetMapping("/api/admin/drone-orders/weather/lockers")
+    public ApiResponse<List<DroneWeatherViews.LockerWeather>> adminLockerWeather() {
+        return ApiResponse.ok(droneWeatherQueryService.droneLockers());
     }
 
     @PostMapping("/api/drone-technician/drone-orders/{orderId}/accept")

@@ -68,7 +68,8 @@ class DroneOrderBookingBenefitsTest {
                 orderRepository, historyRepository, userClient, lockerClient, lockerCellClient, notificationClient,
                 rabbitTemplate, TestOrderRules.of(Map.of()), sourceLockerSelector, queryService, weatherService,
                 benefits, paidEffects);
-        when(weatherService.assessRoute(any(), any())).thenReturn(new DroneWeatherAssessment(
+        // Thời tiết xét cả chặng từ nơi gửi (điểm lấy hàng) tới tủ nhận.
+        when(weatherService.assessJourney(org.mockito.ArgumentMatchers.eq(10.77), org.mockito.ArgumentMatchers.eq(106.70), any(), any())).thenReturn(new DroneWeatherAssessment(
                 true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",
                 java.time.OffsetDateTime.now(), 30, 3, 10, 15, 0, 0));
         when(sourceLockerSelector.select(10.77, 106.70, 5L, null)).thenReturn(new DroneSourceLockerSelector.Selection(
@@ -130,7 +131,7 @@ class DroneOrderBookingBenefitsTest {
 
     @Test
     void unsafeWeatherBlocksBookingBeforeDestinationCellIsReserved() {
-        when(weatherService.assessRoute(any(), any())).thenReturn(new DroneWeatherAssessment(
+        when(weatherService.assessJourney(any(), any(), any(), any())).thenReturn(new DroneWeatherAssessment(
                 false, "UNSAFE", "Không thể đặt chuyến bay: có mưa hoặc dông trên tuyến trong 30 phút tới.",
                 java.time.OffsetDateTime.now(), 30, 3, 12, 18, 0.4, 95));
 
