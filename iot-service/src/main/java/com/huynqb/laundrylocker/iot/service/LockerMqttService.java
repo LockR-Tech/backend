@@ -379,6 +379,49 @@ public class LockerMqttService {
         return sendCommandAsync(lockerId, "restart", commandId, restartCommandPayload(commandId));
     }
 
+    // ─── Điều khiển nắp/thanh trượt từ admin web (ADMIN + KTV tủ) — mqtt-contract.md § 2.3 ───
+    // Pi trả `…/{lid|lid-jog|lid-tune|panel}/result` {commandId, status, ...}. Lệnh chạy nắp
+    // trả ACCEPTED ngay (không chờ động cơ xong); trang web poll `panel` để xem trạng thái.
+
+    /// action: open | close | home | stop (một trục nắp cụ thể).
+    public CompletableFuture<JsonNode> sendLidCommandAsync(Long lockerId, int axis, String action) {
+        String commandId = UUID.randomUUID().toString();
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("commandId", commandId);
+        payload.put("axis", axis);
+        payload.put("action", action);
+        return sendCommandAsync(lockerId, "lid", commandId, payload);
+    }
+
+    /// Chạy nắp `revolutions` vòng theo `direction` (open/close) — hiệu chỉnh tay.
+    public CompletableFuture<JsonNode> sendLidJogAsync(Long lockerId, int axis, double revolutions, String direction) {
+        String commandId = UUID.randomUUID().toString();
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("commandId", commandId);
+        payload.put("axis", axis);
+        payload.put("revolutions", revolutions);
+        payload.put("direction", direction);
+        return sendCommandAsync(lockerId, "lid-jog", commandId, payload);
+    }
+
+    /// Chỉnh thông số nắp (rps, pulse_us, steps_per_rev…). `changes` chỉ gồm khoá hợp lệ.
+    public CompletableFuture<JsonNode> sendLidTuneAsync(Long lockerId, int axis, java.util.Map<String, Object> changes) {
+        String commandId = UUID.randomUUID().toString();
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("commandId", commandId);
+        payload.put("axis", axis);
+        payload.set("changes", objectMapper.valueToTree(changes == null ? java.util.Map.of() : changes));
+        return sendCommandAsync(lockerId, "lid-tune", commandId, payload);
+    }
+
+    /// Truy vấn trạng thái các trục nắp của tủ (để trang điều khiển hiển thị).
+    public CompletableFuture<JsonNode> sendPanelQueryAsync(Long lockerId) {
+        String commandId = UUID.randomUUID().toString();
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("commandId", commandId);
+        return sendCommandAsync(lockerId, "panel", commandId, payload);
+    }
+
     /// Gửi `cabinet/{lockerId}/command/{command}` và chờ `…/{command}/result` cùng `commandId`
     /// (khớp ở {@link #completeCommand}); quá `unlockWaitSeconds` thì future hỏng với TimeoutException.
     private CompletableFuture<JsonNode> sendCommandAsync(

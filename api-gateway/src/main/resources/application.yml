@@ -56,7 +56,7 @@ spring:
             - id: iot-service-locker-technician
               uri: lb://iot-service
               predicates:
-                - Path=/api/locker-technician/devices,/api/locker-technician/devices/**
+                - Path=/api/locker-technician/devices,/api/locker-technician/devices/**,/api/locker-technician/cabinet/**
             - id: locker-service
               uri: lb://locker-service
               predicates:
