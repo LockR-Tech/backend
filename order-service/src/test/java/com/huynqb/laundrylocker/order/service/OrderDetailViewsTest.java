@@ -77,6 +77,28 @@ class OrderDetailViewsTest {
         assertEquals("Tạm dừng: Drone gặp sự cố", milestones.get(1).label());
     }
 
+    /// Ô báo sự cố → KTV chuyển ô → xử lý xong → ô báo lại: mỗi lần là một mốc.
+    @Test
+    void boxIncidentNotesBecomeMilestones() {
+        LockerOrder order = new LockerOrder();
+        order.setType("RENTAL");
+        order.setCreatedAt(T0);
+        List<OrderStatusHistory> history = List.of(
+                history("INITIALIZED", "STORING", T0.plusMinutes(3)),
+                note("STORING", "Customer reported a fault on the assigned box", T0.plusMinutes(5)),
+                note("STORING", OrderDetailViews.NOTE_BOX_INCIDENT_OPENED, T0.plusMinutes(5)),
+                note("STORING", "KTV điều chuyển hàng sang ô #3 do sự cố ô cũ", T0.plusMinutes(20)),
+                note("STORING", "KTV điều chuyển hàng sang ô #3. Đã xử lý sự cố ô: bỏ phí quá giờ", T0.plusMinutes(20)),
+                note("STORING", OrderDetailViews.NOTE_BOX_INCIDENT_OPENED, T0.plusMinutes(40)));
+
+        List<OrderMilestone> milestones = OrderDetailViews.milestones(order, history);
+
+        assertEquals(List.of("CREATED", "STORED", "BOX_INCIDENT_OPENED", "BOX_RELOCATED", "BOX_INCIDENT_RESOLVED",
+                        "BOX_INCIDENT_OPENED"),
+                milestones.stream().map(OrderMilestone::code).toList());
+        assertEquals("KTV chuyển đồ sang ô #3", milestones.get(3).label());
+    }
+
     @Test
     void withoutHistoryOnlyTimestampColumnsAreUsed() {
         LockerOrder order = new LockerOrder();
@@ -85,6 +107,12 @@ class OrderDetailViewsTest {
 
         assertEquals(List.of("CREATED", "DELEGATED"),
                 OrderDetailViews.milestones(order, null).stream().map(OrderMilestone::code).toList());
+    }
+
+    private static OrderStatusHistory note(String status, String note, LocalDateTime at) {
+        OrderStatusHistory h = history(status, status, at);
+        h.setNote(note);
+        return h;
     }
 
     private static OrderStatusHistory history(String from, String to, LocalDateTime at) {

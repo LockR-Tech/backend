@@ -310,6 +310,18 @@ public class LockerController {
                 lockerService.resolveBoxIncident(id, body, userId, roles));
     }
 
+    /// KTV kiểm tra thấy không đúng như mô tả: đóng phiếu (REJECTED) kèm phản hồi cho người báo, ô trở lại hoạt động.
+    @PostMapping("/api/locker-technician/reports/{id}/reject")
+    public ApiResponse<LockerReportResponse> maintenanceRejectReport(
+            @PathVariable Long id,
+            @RequestBody RejectReportRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(
+                "REPORT_REJECTED", "Đã từ chối phiếu và phản hồi người báo",
+                lockerService.rejectReport(id, body.feedback(), body.attachments(), userId, roles));
+    }
+
     @GetMapping("/api/locker-technician/my-rating-average")
     public ApiResponse<Map<String, Object>> maintenanceMyRatingAverage(@RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(lockerService.myRatingAverage(userId));
@@ -1074,6 +1086,17 @@ public class LockerController {
             @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(
                 "LOCKER_REPORT_RESOLVED", "Locker report resolved", lockerService.resolveReport(id, userId, body));
+    }
+
+    /// Admin xác minh không có sự cố (vd. qua camera / KTV báo qua điện thoại): như KTV từ chối phiếu.
+    @PutMapping("/api/admin/lockers/reports/{id}/reject")
+    public ApiResponse<LockerReportResponse> adminRejectReport(
+            @PathVariable Long id,
+            @RequestBody RejectReportRequest body,
+            @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(
+                "REPORT_REJECTED", "Đã từ chối phiếu và phản hồi người báo",
+                lockerService.rejectReport(id, body.feedback(), body.attachments(), userId, "ADMIN"));
     }
 
     @GetMapping("/api/admin/lockers/reports/{id}/attachments")

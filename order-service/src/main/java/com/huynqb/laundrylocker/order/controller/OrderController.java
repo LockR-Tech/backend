@@ -4,6 +4,7 @@ import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.OrderSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
+import com.huynqb.laundrylocker.order.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
 import com.huynqb.laundrylocker.order.service.DroneDeliveryQueryService;
@@ -151,9 +152,13 @@ public class OrderController {
     /// locker-service gọi khi KTV xử lý xong sự cố ô có hàng (sửa tại chỗ, kiểm tra không lỗi, hoàn tất
     /// phiếu): mở lại việc lấy đồ, bù thời gian chờ vào hạn. Gọi lặp an toàn.
     /// locker-service gọi khi ô có hàng của đơn bị báo sự cố qua đường không đi qua order-service.
+    /// Body (tuỳ chọn): lúc báo, đã xác nhận chưa, người báo — xem [BoxIncidentNotice]. Không body ⇒ như bản cũ.
     @PostMapping("/internal/orders/{id}/box-incident-opened")
-    public ApiResponse<OrderResponse> boxIncidentOpened(@PathVariable Long id) {
-        return ApiResponse.ok("ORDER_BOX_INCIDENT_OPENED", "Box incident opened", orderService.boxIncidentOpened(id));
+    public ApiResponse<OrderResponse> boxIncidentOpened(
+            @PathVariable Long id,
+            @RequestBody(required = false) BoxIncidentNotice notice) {
+        return ApiResponse.ok("ORDER_BOX_INCIDENT_OPENED", "Box incident opened",
+                orderService.boxIncidentOpened(id, notice));
     }
 
     @PostMapping("/internal/orders/{id}/box-incident-resolved")

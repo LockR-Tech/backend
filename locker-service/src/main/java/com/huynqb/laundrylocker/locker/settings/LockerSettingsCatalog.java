@@ -28,6 +28,7 @@ public class LockerSettingsCatalog implements SettingsCatalog {
     public static final String REPORT_PHOTOS_PER_REQUEST_STAFF = "app.maintenance.report-photos-per-request-staff";
     public static final String REPORT_PHOTOS_REPORTER_TOTAL = "app.maintenance.report-photos-reporter-total";
     public static final String REPORT_PHOTOS_TOTAL = "app.maintenance.report-photos-total";
+    public static final String PENDING_CHECK_HOLD_HOURS = "app.maintenance.pending-check-hold-hours";
     public static final String RESERVED_TTL_HOURS = "app.locker.reserved-ttl-hours";
     public static final String CELL_DIMENSIONS_STANDARD = "app.locker.cell-dimensions-standard";
     public static final String CELL_DIMENSIONS_XL = "app.locker.cell-dimensions-xl";
@@ -80,6 +81,10 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                         "Tổng số ảnh giai đoạn báo sự cố (REPORT) tối đa trên một phiếu.", 10, 1, 200, "ảnh"),
                 integer(REPORT_PHOTOS_TOTAL, MAINTENANCE, "Tổng ảnh mỗi phiếu",
                         "Tổng số ảnh mọi giai đoạn tối đa trên một phiếu.", 30, 1, 500, "ảnh"),
+                integer(PENDING_CHECK_HOLD_HOURS, MAINTENANCE, "Giữ ô chờ KTV kiểm tra tối đa",
+                        "Khách báo sự cố ⇒ ô tạm ngưng cấp cho đơn mới, chờ KTV kiểm tra (chủ đồ vẫn mở được). Quá số "
+                                + "giờ này chưa có KTV kiểm tra thì ô tự trở lại hoạt động, phiếu vẫn mở. 0 = giữ tới khi KTV xử lý.",
+                        24, 0, 720, "giờ"),
 
                 integer(RESERVED_TTL_HOURS, CELLS, "Thời gian giữ ô RESERVED",
                         "Ô giữ chỗ quá thời gian này sẽ được nhả về AVAILABLE. Nên ≥ thời gian tự huỷ đơn bên order.",

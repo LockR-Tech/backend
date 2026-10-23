@@ -8,6 +8,8 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
+import com.huynqb.laundrylocker.locker.dto.ActiveBoxOrderDto;
+import com.huynqb.laundrylocker.locker.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.locker.dto.LockerReportRequest;
 import com.huynqb.laundrylocker.locker.dto.ReportAttachmentRequest;
 import com.huynqb.laundrylocker.locker.model.AttachmentStage;
@@ -122,7 +124,8 @@ class LockerServiceTicketRoutingTest {
         assertNull(report.getAssignedToUserId());
         assertEquals(TECH, report.getRoutedToUserId());
         assertEquals(ReportCategory.BOX, report.getCategory());
-        assertEquals("FAULT", box.getStatus());
+        // Khách báo ⇒ ô chờ KTV kiểm tra, chưa xác nhận hỏng.
+        assertEquals("PENDING_CHECK", box.getStatus());
         assertEquals("OCCUPIED", box.getPreFaultStatus());
         List<DomainEvent> routed = published(DomainEventNames.LOCKER_REPORT_ROUTED);
         assertEquals(1, routed.size());
@@ -302,20 +305,21 @@ class LockerServiceTicketRoutingTest {
     }
 
     /// Màn "Báo sự cố" của tủ có chọn ô: trước đây chỉ tạo phiếu, ô drone/ô trống vẫn AVAILABLE ⇒ vẫn hiện
-    /// "Sẵn sàng nhận Drone" và vẫn được cấp cho đơn mới.
+    /// "Sẵn sàng nhận Drone" và vẫn được cấp cho đơn mới. Khách báo ⇒ ô tạm ngưng (chờ KTV kiểm tra).
     @Test
     void reportingAnEmptyBoxFromTheLockerScreenTakesItOutOfService() {
         service.report(LOCKER_ID,
                 new LockerReportRequest(null, "Ô #3 lỗi", "Không thể kết nối", List.of(), false, BOX_ID, null, null),
                 CUSTOMER, "CUSTOMER");
 
-        assertEquals("FAULT", box.getStatus());
+        assertEquals("PENDING_CHECK", box.getStatus());
         assertNull(box.getPreFaultStatus());
         assertEquals("Không thể kết nối", box.getFaultReason());
-        verify(orderClient, never()).boxIncidentOpened(any());
+        verify(orderClient, never()).boxIncidentOpened(any(), any());
     }
 
-    /// Ô đang có hàng: nhớ trạng thái để đóng phiếu là trả lại đúng, và báo order-service dừng phí của đơn.
+    /// Ô đang có hàng: nhớ trạng thái để đóng phiếu là trả lại đúng, báo order-service dừng phí của đơn — chưa
+    /// xác nhận hỏng nên không khoá mở ô.
     @Test
     void reportingABoxWithItemsKeepsItsStateAndPausesTheOrder() {
         box.setStatus("OCCUPIED");
@@ -324,9 +328,162 @@ class LockerServiceTicketRoutingTest {
                 new LockerReportRequest(null, "Ô #3 lỗi", "Kẹt cửa", List.of(), false, BOX_ID, 96L, "ORD-96"),
                 CUSTOMER, "CUSTOMER");
 
-        assertEquals("FAULT", box.getStatus());
+        assertEquals("PENDING_CHECK", box.getStatus());
         assertEquals("OCCUPIED", box.getPreFaultStatus());
-        verify(orderClient).boxIncidentOpened(96L);
+        ArgumentCaptor<BoxIncidentNotice> notice = ArgumentCaptor.forClass(BoxIncidentNotice.class);
+        verify(orderClient).boxIncidentOpened(eq(96L), notice.capture());
+        assertEquals(Boolean.FALSE, notice.getValue().confirmed());
+        assertEquals(CUSTOMER, notice.getValue().reporterUserId());
+    }
+
+    /// KTV báo ô (hoặc kiểm tra định kỳ) ⇒ xác nhận hỏng ngay.
+    @Test
+    void technicianReportFaultsTheBoxStraightAway() {
+        box.setStatus("OCCUPIED");
+
+        service.report(LOCKER_ID,
+                new LockerReportRequest(null, "Ô #3 lỗi", "Kẹt cửa", List.of(), false, BOX_ID, 96L, "ORD-96"),
+                TECH, "LOCKER_TECHNICIAN");
+
+        assertEquals("FAULT", box.getStatus());
+        ArgumentCaptor<BoxIncidentNotice> notice = ArgumentCaptor.forClass(BoxIncidentNotice.class);
+        verify(orderClient).boxIncidentOpened(eq(96L), notice.capture());
+        assertEquals(Boolean.TRUE, notice.getValue().confirmed());
+    }
+
+    /// KTV tới kiểm tra thấy không đúng như mô tả: phiếu REJECTED + phản hồi, ô về trạng thái cũ, đơn lấy đồ được.
+    @Test
+    void rejectingATicketReturnsTheBoxAndResumesTheOrder() {
+        box.setStatus("PENDING_CHECK");
+        box.setPreFaultStatus("OCCUPIED");
+        LockerReport open = report(55L, "IN_PROGRESS", TECH);
+        open.setOrderId(96L);
+        when(reportRepository.findById(55L)).thenReturn(Optional.of(open));
+        when(reportRepository.findByOrderIdOrderByCreatedAtDesc(96L)).thenReturn(List.of(open));
+
+        var response = service.rejectReport(55L, "  Cửa ô đóng mở bình thường  ", List.of(), TECH, "LOCKER_TECHNICIAN");
+
+        assertEquals("REJECTED", response.status());
+        assertEquals("OCCUPIED", box.getStatus());
+        assertNull(box.getPreFaultStatus());
+        verify(orderClient).boxIncidentResolved(eq(96L), any());
+        ArgumentCaptor<RepairLog> log = ArgumentCaptor.forClass(RepairLog.class);
+        verify(repairLogRepository).save(log.capture());
+        assertEquals("[KHÔNG XÁC NHẬN SỰ CỐ] Cửa ô đóng mở bình thường", log.getValue().getNote());
+        List<DomainEvent> told = published(DomainEventNames.LOCKER_REPORT_RESOLVED);
+        assertEquals(1, told.size());
+        assertTrue(String.valueOf(told.get(0).payload().get("message")).contains("Cửa ô đóng mở bình thường"));
+    }
+
+    @Test
+    void onlyTheAssigneeRejectsAndFeedbackIsRequired() {
+        LockerReport open = report(55L, "IN_PROGRESS", TECH);
+        when(reportRepository.findById(55L)).thenReturn(Optional.of(open));
+
+        BusinessException notAssigned = assertThrows(BusinessException.class,
+                () -> service.rejectReport(55L, "Không lỗi", List.of(), OTHER_TECH, "LOCKER_TECHNICIAN"));
+        assertEquals("REPORT_NOT_ASSIGNED", notAssigned.getCode());
+        BusinessException noFeedback = assertThrows(BusinessException.class,
+                () -> service.rejectReport(55L, "  ", List.of(), TECH, "LOCKER_TECHNICIAN"));
+        assertEquals("REJECT_FEEDBACK_REQUIRED", noFeedback.getCode());
+        assertEquals("IN_PROGRESS", open.getStatus());
+    }
+
+    /// Ô chờ kiểm tra quá hạn giữ (mặc định 24 giờ) ⇒ trả ô về hoạt động, phiếu vẫn mở.
+    @Test
+    void stalePendingCheckIsReleasedButTheTicketStaysOpen() {
+        box.setStatus("PENDING_CHECK");
+        box.setPreFaultStatus(null);
+        LockerReport open = report(55L, "OPEN", null);
+        open.setCreatedAt(java.time.LocalDateTime.now().minusHours(25));
+        when(boxRepository.findByStatusAndActiveTrueOrderByLockerIdAscBoxNumberAsc("PENDING_CHECK")).thenReturn(List.of(box));
+        when(reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(eq(BOX_ID), anyList()))
+                .thenReturn(Optional.of(open));
+        when(orderClient.getActiveOrderByBox(BOX_ID)).thenReturn(ApiResponse.ok(null));
+
+        assertEquals(1, service.releaseStalePendingChecks());
+        assertEquals("AVAILABLE", box.getStatus());
+        assertEquals("OPEN", open.getStatus());
+    }
+
+    @Test
+    void freshPendingCheckIsKept() {
+        box.setStatus("PENDING_CHECK");
+        LockerReport open = report(55L, "OPEN", null);
+        open.setCreatedAt(java.time.LocalDateTime.now().minusHours(2));
+        when(boxRepository.findByStatusAndActiveTrueOrderByLockerIdAscBoxNumberAsc("PENDING_CHECK")).thenReturn(List.of(box));
+        when(reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(eq(BOX_ID), anyList()))
+                .thenReturn(Optional.of(open));
+
+        assertEquals(0, service.releaseStalePendingChecks());
+        assertEquals("PENDING_CHECK", box.getStatus());
+    }
+
+    /// Khách đã báo ô qua đơn (phiếu mở) rồi báo tiếp ở màn tủ: gộp vào phiếu cũ, không mở phiếu thứ hai.
+    @Test
+    void reportingFromTheLockerScreenMergesIntoTheBoxsOpenTicket() {
+        box.setStatus("FAULT");
+        LockerReport open = report(55L, "IN_PROGRESS", TECH);
+        when(reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(eq(BOX_ID), anyList()))
+                .thenReturn(Optional.of(open));
+
+        var response = service.report(LOCKER_ID,
+                new LockerReportRequest(null, "Ô #3 kẹt", "Cửa ô 3 kẹt", List.of(), false, BOX_ID, 96L, "ORD-96"),
+                CUSTOMER, "CUSTOMER");
+
+        assertEquals(55L, response.id());
+        // Không mở phiếu mới; chỉ gắn đơn vào phiếu cũ (phiếu cũ chưa có đơn).
+        verify(reportRepository, times(1)).save(any(LockerReport.class));
+        assertEquals(96L, open.getOrderId());
+        ArgumentCaptor<RepairLog> log = ArgumentCaptor.forClass(RepairLog.class);
+        verify(repairLogRepository).save(log.capture());
+        assertEquals(55L, log.getValue().getReportId());
+        assertTrue(log.getValue().getNote().contains("Cửa ô 3 kẹt"));
+        assertTrue(published(DomainEventNames.LOCKER_REPORT_ROUTED).isEmpty());
+    }
+
+    /// KTV đã chuyển hàng sang ô khác, phiếu vẫn mở để sửa ô cũ: lần quét không được dừng phí / khoá mở ô
+    /// của đơn nữa (đơn đã rời ô).
+    @Test
+    void incidentSyncSkipsAnOrderThatWasRelocatedOutOfTheBox() {
+        box.setStatus("FAULT");
+        LockerReport open = report(55L, "IN_PROGRESS", TECH);
+        open.setOrderId(96L);
+        when(reportRepository.findByStatusInOrderByCreatedAtDesc(anyList())).thenReturn(List.of(open));
+        when(orderClient.getActiveOrderByBox(BOX_ID)).thenReturn(ApiResponse.ok(null));
+
+        assertEquals(0, service.syncOpenBoxIncidentsToOrders());
+        verify(orderClient, never()).boxIncidentOpened(any(), any());
+    }
+
+    /// KTV sửa tại chỗ (ô về hoạt động) nhưng phiếu còn chờ nghiệm thu: không khoá đơn lại.
+    @Test
+    void incidentSyncSkipsABoxBackInService() {
+        box.setStatus("OCCUPIED");
+        LockerReport open = report(55L, "IN_PROGRESS", TECH);
+        open.setOrderId(96L);
+        when(reportRepository.findByStatusInOrderByCreatedAtDesc(anyList())).thenReturn(List.of(open));
+        when(orderClient.getActiveOrderByBox(BOX_ID)).thenReturn(ApiResponse.ok(
+                new ActiveBoxOrderDto(96L, "ORD-96", CUSTOMER, null, null, "RENTAL", "STORING", null, BOX_ID)));
+
+        assertEquals(0, service.syncOpenBoxIncidentsToOrders());
+        verify(orderClient, never()).boxIncidentOpened(any(), any());
+    }
+
+    /// Đơn còn trong ô hỏng: báo lại với mốc là lúc tạo phiếu (đơn bị bỏ sót được trả phần phí tính lố).
+    @Test
+    void incidentSyncPausesTheOrderStillInTheBox() {
+        box.setStatus("FAULT");
+        LockerReport open = report(55L, "OPEN", null);
+        open.setOrderId(96L);
+        java.time.LocalDateTime reportedAt = java.time.LocalDateTime.of(2026, 10, 16, 15, 46);
+        open.setCreatedAt(reportedAt);
+        when(reportRepository.findByStatusInOrderByCreatedAtDesc(anyList())).thenReturn(List.of(open));
+        when(orderClient.getActiveOrderByBox(BOX_ID)).thenReturn(ApiResponse.ok(
+                new ActiveBoxOrderDto(96L, "ORD-96", CUSTOMER, null, null, "RENTAL", "STORING", null, BOX_ID)));
+
+        assertEquals(1, service.syncOpenBoxIncidentsToOrders());
+        verify(orderClient).boxIncidentOpened(96L, new BoxIncidentNotice(reportedAt, true, CUSTOMER));
     }
 
     @Test

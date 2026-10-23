@@ -6,6 +6,8 @@ import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
+import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.order.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.order.dto.OrderResponse;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.*;
@@ -25,6 +27,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -95,17 +98,68 @@ class OrderServiceBoxIncidentTest {
         return order;
     }
 
+    /// Khách tự báo ô của đơn mình: phí dừng ngay, nhưng ô mới chờ KTV kiểm tra nên khách vẫn mở ô được.
     @Test
-    void reportingAFaultOnAStoredOrderOpensAnIncidentAndBlocksAccess() {
+    void reportingAFaultOnAStoredOrderPausesFeesButKeepsAccess() {
         LockerOrder order = storingRental(LocalDateTime.now().plusHours(3));
+        when(lockerClient.reportFault(any(), any(), any())).thenReturn(ApiResponse.ok(Map.of("status", "PENDING_CHECK")));
 
         OrderResponse response = service.reportBoxFault(96L, 44L, "Ô không mở được");
 
         assertNotNull(order.getBoxIncidentOpenedAt());
+        assertFalse(order.isBoxIncidentBlocksAccess());
         assertEquals("STORING", order.getStatus(), "Đơn có hàng không bị huỷ khi báo hỏng ô");
+        assertNull(response.accessBlockReason());
+        assertEquals("PICKUP", response.nextAction());
+        assertNotNull(response.boxIncidentOpenedAt());
+    }
+
+    /// Ô đã được xác nhận hỏng (FAULT) mà khách báo thêm ⇒ khoá mở ô như cũ.
+    @Test
+    void reportingAnAlreadyConfirmedFaultBlocksAccess() {
+        storingRental(LocalDateTime.now().plusHours(3));
+        when(lockerClient.reportFault(any(), any(), any())).thenReturn(ApiResponse.ok(Map.of("status", "FAULT")));
+
+        OrderResponse response = service.reportBoxFault(96L, 44L, "Ô không mở được");
+
         assertEquals(OrderAccessPolicy.BOX_INCIDENT_OPEN, response.accessBlockReason());
         assertEquals("WAIT_FOR_BOX_INCIDENT", response.nextAction());
-        assertNotNull(response.boxIncidentOpenedAt());
+    }
+
+    /// Người khác báo ô đang chứa đồ của đơn: chưa xác nhận thì không đụng tới đơn; KTV xác nhận thì khoá.
+    @Test
+    void someoneElsesUnconfirmedReportLeavesTheOrderAlone() {
+        LockerOrder order = storingRental(LocalDateTime.now().plusHours(3));
+
+        service.boxIncidentOpened(96L, new BoxIncidentNotice(LocalDateTime.now(), false, 99L));
+        assertNull(order.getBoxIncidentOpenedAt());
+
+        service.boxIncidentOpened(96L, new BoxIncidentNotice(LocalDateTime.now().minusMinutes(5), true, 99L));
+        assertNotNull(order.getBoxIncidentOpenedAt());
+        assertTrue(order.isBoxIncidentBlocksAccess());
+    }
+
+    /// Đơn bị bỏ sót (sự cố chỉ được mở khi quét lại, sau khi đã cộng phí quá giờ nhiều ngày): báo lại với mốc
+    /// là lúc tạo phiếu ⇒ dời mốc về đó và trả phần phí đã cộng sau mốc.
+    @Test
+    void anEarlierReportTimeMovesTheIncidentBackAndRefundsTheOvertime() {
+        LocalDateTime now = LocalDateTime.now();
+        LockerOrder order = storingRental(now.minusDays(6));
+        order.setCreatedAt(now.minusDays(7));
+        order.setBoxIncidentOpenedAt(now.minusHours(1));
+        order.setBoxIncidentBlocksAccess(true);
+        order.setExtraFee(BigDecimal.valueOf(155000));
+        order.setTotalPrice(BigDecimal.valueOf(165000));
+        order.setOriginalPrice(BigDecimal.valueOf(165000));
+        order.setPaymentStatus("UNPAID");
+
+        // Phiếu được tạo trước hạn lấy đồ.
+        service.boxIncidentOpened(96L, new BoxIncidentNotice(now.minusDays(6).minusHours(4), true, 44L));
+
+        assertEquals(now.minusDays(6).minusHours(4), order.getBoxIncidentOpenedAt());
+        assertEquals(0, BigDecimal.ZERO.compareTo(order.getExtraFee()));
+        assertEquals(0, BigDecimal.valueOf(10000).compareTo(order.getTotalPrice()));
+        assertEquals("PAID", order.getPaymentStatus());
     }
 
     /// Báo sự cố qua màn tủ (không qua order-service): locker-service gọi sang; gọi lặp không dời mốc.
@@ -119,6 +173,23 @@ class OrderServiceBoxIncidentTest {
 
         assertNotNull(first);
         assertEquals(first, order.getBoxIncidentOpenedAt());
+    }
+
+    /// Đơn gửi đã bỏ hàng: cả sendBoxId lẫn receiveBoxId là ô hỏng. Chuyển ô phải đổi cả hai, không thì lúc
+    /// lấy hàng vẫn mở ô cũ và đơn vẫn bị tra ra là đang nằm trong ô cũ.
+    @Test
+    void relocatingMovesEveryBoxFieldThatPointsAtTheOldBox() {
+        LockerOrder order = storingRental(LocalDateTime.now().plusHours(3));
+        order.setType("SEND");
+        order.setReceiveBoxId(906L);
+        order.setBoxIncidentOpenedAt(LocalDateTime.now().minusMinutes(10));
+
+        service.relocateBox(96L, 907L, 3);
+
+        assertEquals(907L, order.getSendBoxId());
+        assertEquals(907L, order.getReceiveBoxId());
+        assertNull(order.getReservedBoxId());
+        assertNull(order.getBoxIncidentOpenedAt());
     }
 
     @Test
@@ -216,6 +287,7 @@ class OrderServiceBoxIncidentTest {
     void customerCannotCloseTheOrderWhileItemsAreStuck() {
         LockerOrder order = storingRental(LocalDateTime.now().plusHours(3));
         order.setBoxIncidentOpenedAt(LocalDateTime.now().minusMinutes(30));
+        order.setBoxIncidentBlocksAccess(true);
 
         assertEquals("ORDER_BOX_INCIDENT_OPEN",
                 assertThrows(BusinessException.class, () -> service.complete(96L, 44L)).getCode());

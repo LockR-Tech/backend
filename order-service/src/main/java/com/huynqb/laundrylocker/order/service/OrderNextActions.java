@@ -43,7 +43,7 @@ public final class OrderNextActions {
                 default -> "UNKNOWN";
             };
         }
-        if (OrderAccessPolicy.hasOpenBoxIncident(order)) {
+        if (OrderAccessPolicy.boxIncidentBlocksAccess(order)) {
             return "WAIT_FOR_BOX_INCIDENT";
         }
         return switch (order.getStatus()) {

@@ -10,6 +10,7 @@ import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
+import com.huynqb.laundrylocker.locker.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.locker.dto.*;
 import com.huynqb.laundrylocker.locker.model.*;
 import com.huynqb.laundrylocker.locker.repository.*;
@@ -43,6 +44,21 @@ import java.util.Set;
 public class LockerService {
 
     private static final List<String> OPEN_REPORT_STATUSES = List.of("OPEN", "IN_PROGRESS");
+
+    /// Khách báo ô ⇒ ô "chờ KTV kiểm tra": không cấp cho đơn mới, nhưng chủ đồ vẫn mở bằng mã và phí quá giờ
+    /// của chủ đồ dừng từ lúc báo. KTV xác nhận (khoá ô) ⇒ FAULT; KTV từ chối ⇒ ô về trạng thái trước đó.
+    static final String PENDING_CHECK = "PENDING_CHECK";
+    /// Phiếu KTV kiểm tra không đúng như mô tả: đóng phiếu, phản hồi người báo, trả ô về hoạt động.
+    static final String REPORT_REJECTED = "REJECTED";
+
+    /// Ô đang bị giữ vì sự cố (đã xác nhận hoặc chờ kiểm tra): không cấp cho đơn mới, chỉ về hoạt động qua phiếu.
+    static boolean isFaultHold(String status) {
+        return "FAULT".equalsIgnoreCase(status) || PENDING_CHECK.equalsIgnoreCase(status);
+    }
+
+    private static boolean isClosedReport(String status) {
+        return "RESOLVED".equalsIgnoreCase(status) || REPORT_REJECTED.equalsIgnoreCase(status);
+    }
     private static final List<String> SIZE_ORDER = List.of("SMALL", "MEDIUM", "LARGE", "XL");
     private static final String LOCKER_TECHNICIAN = "LOCKER_TECHNICIAN";
     private static final String DRONE_TECHNICIAN = "DRONE_TECHNICIAN";
@@ -440,7 +456,7 @@ public class LockerService {
     /// RESERVED/OCCUPIED (đơn chưa trả ô — releaseBox sẽ xoá preFaultStatus khi đơn trả).
     private static boolean holdsOrder(LockerBox box) {
         return ORDER_HELD_BOX_STATUSES.contains(String.valueOf(box.getStatus()).toUpperCase(Locale.ROOT))
-                || ("FAULT".equalsIgnoreCase(box.getStatus())
+                || (isFaultHold(box.getStatus())
                         && ORDER_HELD_BOX_STATUSES.contains(String.valueOf(box.getPreFaultStatus()).toUpperCase(Locale.ROOT)));
     }
 
@@ -599,7 +615,7 @@ public class LockerService {
     public LockerBoxSummary releaseBox(Long boxId) {
         LockerBox box = findBox(boxId);
         String status = box.getStatus();
-        if ("FAULT".equalsIgnoreCase(status)
+        if (isFaultHold(status)
                 || "OUT_OF_SERVICE".equalsIgnoreCase(status)
                 || "CLEANING".equalsIgnoreCase(status)) {
             // Ô hỏng/ngưng dùng/đang vệ sinh phải được kỹ thuật khôi phục chủ động;
@@ -651,10 +667,18 @@ public class LockerService {
             Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments, String rolesHeader,
             Long orderId, String orderCode, boolean notifyOrder) {
         LockerBox box = findBox(boxId);
+        List<String> roles = userId == null ? List.of() : actorRoles(userId, rolesHeader);
         // KTV tủ tự báo ⇒ tự nhận phiếu luôn.
-        Long assigneeId = actorRoles(userId, rolesHeader).contains(LOCKER_TECHNICIAN) ? userId : null;
-        reportBoxFault(box, reason, userId, attachments, assigneeId, null, orderId, orderCode, notifyOrder);
+        Long assigneeId = roles.contains(LOCKER_TECHNICIAN) ? userId : null;
+        reportBoxFault(box, reason, userId, attachments, assigneeId, null, orderId, orderCode, notifyOrder,
+                isConfirmedReporter(userId, roles));
         return toCell(box);
+    }
+
+    /// Báo từ KTV tủ / admin / hệ thống (tủ báo kẹt khoá, kiểm tra định kỳ — không có người báo) là xác nhận
+    /// hỏng ngay; khách báo thì ô chỉ chờ KTV kiểm tra.
+    private static boolean isConfirmedReporter(Long userId, List<String> roles) {
+        return userId == null || userId == 0L || roles.contains(LOCKER_TECHNICIAN) || roles.contains("ADMIN");
     }
 
     /// Đưa ô về FAULT và trả về phiếu đang mở của ô: gộp vào phiếu cũ nếu có, không thì mở phiếu
@@ -662,12 +686,14 @@ public class LockerService {
     private LockerReport reportBoxFault(
             LockerBox box, String reason, Long userId, List<ReportAttachmentRequest> attachments,
             Long assigneeId, String title) {
-        return reportBoxFault(box, reason, userId, attachments, assigneeId, title, null, null, true);
+        return reportBoxFault(box, reason, userId, attachments, assigneeId, title, null, null, true, true);
     }
 
+    /// `confirmed` = người báo là KTV/admin/hệ thống ⇒ ô FAULT; khách báo ⇒ ô PENDING_CHECK (chờ KTV kiểm tra).
+    /// Ô đã FAULT thì giữ FAULT.
     private LockerReport reportBoxFault(
             LockerBox box, String reason, Long userId, List<ReportAttachmentRequest> attachments,
-            Long assigneeId, String title, Long orderId, String orderCode, boolean notifyOrder) {
+            Long assigneeId, String title, Long orderId, String orderCode, boolean notifyOrder, boolean confirmed) {
         Long boxId = box.getId();
         if (orderId == null || !StringUtils.hasText(orderCode)) {
             ActiveBoxOrderDto activeOrder = getActiveOrderByBox(boxId);
@@ -680,13 +706,18 @@ public class LockerService {
                 }
             }
         }
-        boolean newlyFaulted = !"FAULT".equalsIgnoreCase(box.getStatus());
-        if (newlyFaulted) {
+        String current = box.getStatus();
+        String target = confirmed || "FAULT".equalsIgnoreCase(current) ? "FAULT" : PENDING_CHECK;
+        boolean newlyHeld = !isFaultHold(current);
+        boolean statusChanged = !target.equalsIgnoreCase(current);
+        if (newlyHeld) {
             // Nhớ trạng thái đơn đang giữ ô để sửa xong trả lại đúng, không để ô chứa hàng về AVAILABLE.
-            box.setPreFaultStatus("AVAILABLE".equalsIgnoreCase(box.getStatus()) ? null : box.getStatus());
-            box.setStatus("FAULT");
+            box.setPreFaultStatus("AVAILABLE".equalsIgnoreCase(current) ? null : current);
         }
-        if (newlyFaulted || StringUtils.hasText(reason)) {
+        if (statusChanged) {
+            box.setStatus(target);
+        }
+        if (newlyHeld || StringUtils.hasText(reason)) {
             box.setFaultReason(reason);
         }
         boxRepository.save(box);
@@ -724,18 +755,34 @@ public class LockerService {
                     rules.reportPhotosPerRequestReporter());
             notifyRouted(report, locker);
         }
-        if (newlyFaulted) {
-            publishBoxFault(box, reason);
-            syncBoxStateQuietly(box, "FAULT");
+        if (statusChanged) {
+            announceBoxHold(box, reason);
         }
         if (notifyOrder && orderId != null) {
-            notifyBoxIncidentOpened(orderId);
+            notifyBoxIncidentOpened(orderId, LocalDateTime.now(), "FAULT".equalsIgnoreCase(box.getStatus()), userId);
         }
         return report;
     }
 
+    /// Ô vừa vào FAULT / PENDING_CHECK: báo tủ, web admin và app (sơ đồ ô) cập nhật.
+    private void announceBoxHold(LockerBox box, String reason) {
+        if ("FAULT".equalsIgnoreCase(box.getStatus())) {
+            publishBoxFault(box, reason);
+        }
+        syncBoxStateQuietly(box, box.getStatus());
+        publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), box.getStatus(),
+                PENDING_CHECK.equalsIgnoreCase(box.getStatus())
+                        ? "Ô #" + box.getBoxNumber() + " được báo sự cố, chờ KTV kiểm tra"
+                        : "Ô #" + box.getBoxNumber() + " hỏng, tạm ngưng sử dụng");
+    }
+
     /// Báo lại order-service mọi đơn có hàng nằm trong ô đang có phiếu sự cố mở (order-service bỏ qua đơn
     /// đã mở sự cố). Trả số đơn đã báo.
+    ///
+    /// Đơn phải **đang** nằm trong ô của phiếu: phiếu nhớ `orderId` lúc báo, nhưng KTV có thể đã chuyển
+    /// hàng sang ô khác (RELOCATE) trong khi phiếu vẫn mở để sửa ô cũ. Báo lại theo `orderId` của phiếu thì
+    /// đơn đang nằm yên trong ô lành bị dừng phí và khoá mở ô lần nữa. Không tra được đơn thì bỏ qua, lần
+    /// quét sau thử lại.
     public int syncOpenBoxIncidentsToOrders() {
         int synced = 0;
         Set<Long> seen = new HashSet<>();
@@ -743,13 +790,20 @@ public class LockerService {
             if (report.getBoxId() == null) {
                 continue;
             }
-            Long orderId = report.getOrderId();
-            if (orderId == null) {
-                ActiveBoxOrderDto active = getActiveOrderByBox(report.getBoxId());
-                orderId = active == null ? null : active.orderId();
+            // Ô đã được KTV sửa tại chỗ / tự gỡ giữ ô (phiếu còn mở chờ nghiệm thu) thì đơn đã lấy đồ được.
+            LockerBox box = boxRepository.findById(report.getBoxId()).orElse(null);
+            if (box == null || !isFaultHold(box.getStatus())) {
+                continue;
+            }
+            ActiveBoxOrderDto active = getActiveOrderByBox(report.getBoxId());
+            Long orderId = active == null ? null : active.orderId();
+            if (orderId != null && report.getOrderId() != null && !orderId.equals(report.getOrderId())) {
+                continue;
             }
             if (orderId != null && seen.add(orderId)) {
-                notifyBoxIncidentOpened(orderId);
+                // Mốc là lúc báo (không phải lúc quét): đơn bị bỏ sót lần trước được trả phần phí tính lố.
+                notifyBoxIncidentOpened(orderId, report.getCreatedAt(),
+                        "FAULT".equalsIgnoreCase(box.getStatus()), report.getUserId());
                 synced++;
             }
         }
@@ -758,9 +812,9 @@ public class LockerService {
 
     /// Ô đang có hàng của một đơn vừa bị báo sự cố ⇒ order-service dừng phí quá giờ, chặn thu tiền / mở ô
     /// bằng mã tới khi KTV xử lý. Best-effort: lỗi chỉ ghi log, không làm hỏng việc báo hỏng.
-    private void notifyBoxIncidentOpened(Long orderId) {
+    private void notifyBoxIncidentOpened(Long orderId, LocalDateTime reportedAt, boolean confirmed, Long reporterUserId) {
         try {
-            orderClient.boxIncidentOpened(orderId);
+            orderClient.boxIncidentOpened(orderId, new BoxIncidentNotice(reportedAt, confirmed, reporterUserId));
         } catch (Exception ex) {
             log.warn("Could not open box incident on order {}: {}", orderId, ex.getMessage());
         }
@@ -770,22 +824,25 @@ public class LockerService {
     /// vẫn được cấp cho đơn mới (ô drone có phiếu mở vẫn hiện "Sẵn sàng nhận Drone") và ô có hàng vẫn hiện
     /// như thường. Đưa ô về FAULT, nhớ trạng thái đơn đang giữ ô để đóng phiếu là trả lại đúng
     /// (restoreAssetsAfterClose), và mở sự cố trên đơn nếu ô đang có hàng.
-    private void faultBoxOfReport(LockerReport report) {
+    private void faultBoxOfReport(LockerReport report, Long reporterUserId, LocalDateTime reportedAt, boolean confirmed) {
         LockerBox box = boxRepository.findById(report.getBoxId()).orElse(null);
         if (box == null || !Objects.equals(box.getLockerId(), report.getLockerId())) {
             return;
         }
-        if (!"FAULT".equalsIgnoreCase(box.getStatus())) {
-            box.setPreFaultStatus("AVAILABLE".equalsIgnoreCase(box.getStatus()) ? null : box.getStatus());
-            box.setStatus("FAULT");
-            String reason = StringUtils.hasText(report.getDescription()) ? report.getDescription() : report.getTitle();
-            box.setFaultReason(reason != null && reason.length() > 500 ? reason.substring(0, 500) : reason);
+        String current = box.getStatus();
+        String target = confirmed || "FAULT".equalsIgnoreCase(current) ? "FAULT" : PENDING_CHECK;
+        if (!target.equalsIgnoreCase(current)) {
+            if (!isFaultHold(current)) {
+                box.setPreFaultStatus("AVAILABLE".equalsIgnoreCase(current) ? null : current);
+                String reason = StringUtils.hasText(report.getDescription()) ? report.getDescription() : report.getTitle();
+                box.setFaultReason(reason != null && reason.length() > 500 ? reason.substring(0, 500) : reason);
+            }
+            box.setStatus(target);
             boxRepository.save(box);
-            publishBoxFault(box, box.getFaultReason());
-            syncBoxStateQuietly(box, "FAULT");
+            announceBoxHold(box, box.getFaultReason());
         }
         if (report.getOrderId() != null) {
-            notifyBoxIncidentOpened(report.getOrderId());
+            notifyBoxIncidentOpened(report.getOrderId(), reportedAt, "FAULT".equalsIgnoreCase(box.getStatus()), reporterUserId);
         }
     }
 
@@ -807,7 +864,7 @@ public class LockerService {
     @Transactional
     public CellResponse clearFault(Long boxId, Long actorUserId, boolean admin) {
         LockerBox box = findBox(boxId);
-        if (!"FAULT".equalsIgnoreCase(box.getStatus())) {
+        if (!isFaultHold(box.getStatus())) {
             throw new BusinessException("BOX_NOT_FAULT", "Ô không ở trạng thái hỏng", HttpStatus.CONFLICT);
         }
         Optional<LockerReport> open =
@@ -839,7 +896,7 @@ public class LockerService {
     public CellResponse returnToService(Long boxId) {
         LockerBox box = findBox(boxId);
         String status = box.getStatus();
-        if ("FAULT".equalsIgnoreCase(status)) {
+        if (isFaultHold(status)) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "BOX_IN_FAULT", "Ô đang hỏng — dùng clear-fault để khôi phục");
         }
@@ -860,7 +917,7 @@ public class LockerService {
                     "BOX_IN_USE", "Ô đang có đơn — không thể " + action);
         }
         // Ô hỏng chỉ về hoạt động qua phiếu/clear-fault; đi đường vệ sinh → khôi phục sẽ lách phiếu.
-        if ("FAULT".equalsIgnoreCase(status)) {
+        if (isFaultHold(status)) {
             throw new BusinessException(
                     "BOX_IN_FAULT", "Ô đang hỏng — hoàn tất phiếu sự cố hoặc dùng clear-fault trước khi " + action,
                     HttpStatus.CONFLICT);
@@ -1061,6 +1118,35 @@ public class LockerService {
                     "BLOCKING_REPORT_FORBIDDEN", "Chỉ KTV tủ hoặc admin được báo sự cố ngưng cả tủ",
                     HttpStatus.FORBIDDEN);
         }
+        boolean confirmed = isConfirmedReporter(userId, roles);
+        if (request.boxId() != null) {
+            // Ô đã có phiếu mở (khách báo qua đơn, báo ở màn tủ, KTV tự báo) ⇒ gộp vào phiếu đó như
+            // reportBoxFault, không mở phiếu thứ hai cho cùng một ô.
+            Optional<LockerReport> open =
+                    reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(request.boxId(), OPEN_REPORT_STATUSES);
+            if (open.isPresent() && Objects.equals(open.get().getLockerId(), lockerId)) {
+                LockerReport existing = open.get();
+                if (existing.getOrderId() == null) {
+                    Long mergeOrderId = request.orderId();
+                    String mergeOrderCode = request.orderCode();
+                    if (mergeOrderId == null) {
+                        ActiveBoxOrderDto active = getActiveOrderByBox(request.boxId());
+                        mergeOrderId = active == null ? null : active.orderId();
+                        mergeOrderCode = active == null ? null : active.orderCode();
+                    }
+                    if (mergeOrderId != null) {
+                        existing.setOrderId(mergeOrderId);
+                        existing.setOrderCode(mergeOrderCode);
+                        reportRepository.save(existing);
+                    }
+                }
+                String reason = StringUtils.hasText(request.description()) ? request.description() : request.title();
+                mergeIntoOpenReport(existing, reason, userId, request.attachments());
+                // Người báo lần này có thể là chủ đồ (dừng phí từ bây giờ) hoặc KTV (xác nhận hỏng).
+                faultBoxOfReport(existing, userId, LocalDateTime.now(), confirmed);
+                return toReport(existing);
+            }
+        }
         LockerReport report = new LockerReport();
         report.setLockerId(lockerId);
         report.setCategory(request.boxId() != null ? ReportCategory.BOX : ReportCategory.LOCKER);
@@ -1092,7 +1178,7 @@ public class LockerService {
                 saved, AttachmentStage.REPORT, request.attachments(), userId, null,
                 rules.reportPhotosPerRequestReporter());
         if (request.boxId() != null) {
-            faultBoxOfReport(saved);
+            faultBoxOfReport(saved, userId, LocalDateTime.now(), confirmed);
         }
         if (blocking && "ACTIVE".equalsIgnoreCase(locker.getStatus())) {
             locker.setStatus("MAINTENANCE");
@@ -1231,7 +1317,9 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<FaultCellResponse> openFaults() {
-        return boxRepository.findByStatusAndActiveTrueOrderByLockerIdAscBoxNumberAsc("FAULT").stream()
+        return java.util.stream.Stream.concat(
+                        boxRepository.findByStatusAndActiveTrueOrderByLockerIdAscBoxNumberAsc("FAULT").stream(),
+                        boxRepository.findByStatusAndActiveTrueOrderByLockerIdAscBoxNumberAsc(PENDING_CHECK).stream())
                 .map(box -> {
                     LockerUnit locker = lockerRepository.findById(box.getLockerId()).orElse(null);
                     Long reportId =
@@ -1591,7 +1679,7 @@ public class LockerService {
         long resolved = allAssigned.stream().filter(r -> "RESOLVED".equalsIgnoreCase(r.getStatus())).count();
         int slaHours = rules.slaHours();
         long overdue = allAssigned.stream()
-                .filter(r -> !"RESOLVED".equalsIgnoreCase(r.getStatus()))
+                .filter(r -> !isClosedReport(r.getStatus()))
                 .filter(r -> {
                     LocalDateTime due = r.getSlaDueAt();
                     if (due == null && r.getCreatedAt() != null) {
@@ -1721,7 +1809,7 @@ public class LockerService {
     }
 
     private void assertNotResolved(LockerReport report) {
-        if ("RESOLVED".equalsIgnoreCase(report.getStatus())) {
+        if (isClosedReport(report.getStatus())) {
             throw new BusinessException("REPORT_ALREADY_RESOLVED", "Phiếu đã được hoàn tất", HttpStatus.CONFLICT);
         }
     }
@@ -1739,7 +1827,7 @@ public class LockerService {
                 && !reportRepository.existsByBoxIdAndStatusInAndIdNot(
                         report.getBoxId(), OPEN_REPORT_STATUSES, report.getId())) {
             boxRepository.findById(report.getBoxId())
-                    .filter(box -> "FAULT".equalsIgnoreCase(box.getStatus()))
+                    .filter(box -> isFaultHold(box.getStatus()))
                     .ifPresent(this::restoreBox);
         }
         if (ReportCategory.LANDING_PAD.equals(report.getCategory())
@@ -3747,7 +3835,7 @@ public class LockerService {
         }
         boolean overdue =
                 slaDueAt != null
-                        && !"RESOLVED".equalsIgnoreCase(report.getStatus())
+                        && !isClosedReport(report.getStatus())
                         && LocalDateTime.now().isAfter(slaDueAt);
         UserSummary reporter = cachedUser(report.getUserId(), users);
         UserSummary assignee = cachedUser(report.getAssignedToUserId(), users);
@@ -4437,6 +4525,11 @@ public class LockerService {
                         syncBoxStateQuietly(box, "AVAILABLE");
                         publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), "AVAILABLE", "Đã xử lý xong ô #" + box.getBoxNumber() + ", ô hoạt động bình thường");
                     } else {
+                        // Sửa xong, không khoá: ô (đang giữ đồ của khách) về hoạt động ngay, không chờ nghiệm thu
+                        // — để lần quét sự cố không dừng phí / khoá đơn lại.
+                        if (isFaultHold(box.getStatus())) {
+                            restoreBox(box);
+                        }
                         publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), box.getStatus(), "Đã sửa chữa tại chỗ ô #" + box.getBoxNumber());
                     }
                 }
@@ -4448,6 +4541,13 @@ public class LockerService {
                 LockerBox targetBox = findBox(request.targetBoxId());
                 if (!"AVAILABLE".equalsIgnoreCase(targetBox.getStatus())) {
                     throw new BusinessException("TARGET_BOX_NOT_AVAILABLE", "Ô đích không còn ở trạng thái trống");
+                }
+                // Ô drone (nóc tủ) chỉ nhận kiện drone: hàng thuê/gửi chuyển vào đó thì khách không mở được
+                // bằng luồng thường và ô bị drone ghi đè.
+                if (CellType.DRONE.equalsIgnoreCase(targetBox.getCellType())
+                        && !CellType.DRONE.equalsIgnoreCase(box.getCellType())) {
+                    throw new BusinessException(
+                            "TARGET_BOX_DRONE", "Ô #" + targetBox.getBoxNumber() + " là ô drone, hãy chọn ô thường hoặc XL");
                 }
                 if (activeOrder != null) {
                     try {
@@ -4587,7 +4687,7 @@ public class LockerService {
                 } else {
                     boolean boxHasGoods = activeOrder != null || holdsOrder(box);
                     if (boxHasGoods) {
-                        String currentStatus = StringUtils.hasText(box.getStatus()) && !"FAULT".equalsIgnoreCase(box.getStatus())
+                        String currentStatus = StringUtils.hasText(box.getStatus()) && !isFaultHold(box.getStatus())
                                 ? box.getStatus()
                                 : (StringUtils.hasText(box.getPreFaultStatus()) ? box.getPreFaultStatus() : "OCCUPIED");
                         box.setStatus(currentStatus);
@@ -4618,7 +4718,92 @@ public class LockerService {
             }
         }
 
+        // KTV xác nhận đúng sự cố và khoá ô trong khi đồ vẫn còn trong ô ⇒ đơn chuyển sang chờ KTV (không mở
+        // bằng mã). Chuyển ô / bàn giao / niêm phong đã đưa đồ ra khỏi ô nên không cần.
+        if (shouldLock && activeOrder != null && ("QUICK_FIX".equals(action) || "LOCK_ONLY".equals(action))) {
+            notifyBoxIncidentOpened(activeOrder.orderId(), report.getCreatedAt(), true, report.getUserId());
+        }
         return toReport(report);
+    }
+
+    /// KTV tới kiểm tra thấy không đúng như người báo mô tả: đóng phiếu ở trạng thái REJECTED kèm phản hồi
+    /// cho người báo, ô về trạng thái trước khi bị giữ (nếu không còn phiếu mở khác), đơn có đồ trong ô lấy đồ
+    /// được và được bù thời gian chờ (phí trong lúc chờ KTV không tính). Chỉ KTV đang được giao phiếu / ADMIN.
+    @Transactional
+    public LockerReportResponse rejectReport(
+            Long reportId, String feedback, List<ReportAttachmentRequest> attachments, Long userId, String rolesHeader) {
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        assertNotResolved(report);
+        boolean admin = UserRoles.isAdmin(rolesHeader);
+        if (!admin && (userId == null || !userId.equals(report.getAssignedToUserId()))) {
+            throw new BusinessException(
+                    "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới từ chối được phiếu",
+                    HttpStatus.FORBIDDEN);
+        }
+        if (!StringUtils.hasText(feedback)) {
+            throw new BusinessException("REJECT_FEEDBACK_REQUIRED", "Cần ghi phản hồi cho người báo (vì sao không xác nhận sự cố)");
+        }
+        String reply = feedback.trim();
+        if (reply.length() > 1000) {
+            reply = reply.substring(0, 1000);
+        }
+        RepairLog logEntry = new RepairLog();
+        logEntry.setReportId(report.getId());
+        logEntry.setActorUserId(userId);
+        logEntry.setNote("[KHÔNG XÁC NHẬN SỰ CỐ] " + reply);
+        Long logId = repairLogRepository.save(logEntry).getId();
+        if (attachments != null && !attachments.isEmpty()) {
+            attachmentService.attach(
+                    report, AttachmentStage.INSPECTION, attachments, userId, logId, rules.reportPhotosPerRequestStaff());
+        }
+        report.setStatus(REPORT_REJECTED);
+        report.setResolvedByUserId(userId);
+        report.setResolvedAt(LocalDateTime.now());
+        LockerReport saved = reportRepository.save(report);
+        restoreAssetsAfterClose(saved);
+        if (saved.getBoxId() != null) {
+            boxRepository.findById(saved.getBoxId()).ifPresent(box -> publishLockerLayoutUpdated(
+                    box.getLockerId(), box.getId(), box.getBoxNumber(), box.getStatus(),
+                    "Ô #" + box.getBoxNumber() + " được KTV kiểm tra: không có sự cố"));
+        }
+        if (saved.getOrderId() != null && !hasOtherOpenReportForOrder(saved)) {
+            notifyBoxIncidentResolved(saved.getOrderId(), "KTV kiểm tra RPT-" + saved.getId() + ": không xác nhận sự cố");
+        }
+        publishReportNotification(saved, DomainEventNames.LOCKER_REPORT_RESOLVED,
+                "đã được KTV kiểm tra nhưng không xác nhận sự cố. Phản hồi: " + reply);
+        return toReport(saved);
+    }
+
+    /// Ô chờ KTV kiểm tra quá [LockerRules#pendingCheckHoldHours] giờ mà chưa ai tới: trả ô về hoạt động để
+    /// không treo ô mãi; phiếu vẫn mở (KTV vẫn phải kiểm tra). 0 giờ = không tự gỡ. Trả số ô đã gỡ.
+    @Transactional
+    public int releaseStalePendingChecks() {
+        int hours = rules.pendingCheckHoldHours();
+        if (hours <= 0) {
+            return 0;
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(hours);
+        int released = 0;
+        for (LockerBox box : boxRepository.findByStatusAndActiveTrueOrderByLockerIdAscBoxNumberAsc(PENDING_CHECK)) {
+            Optional<LockerReport> open =
+                    reportRepository.findFirstByBoxIdAndStatusInOrderByCreatedAtDesc(box.getId(), OPEN_REPORT_STATUSES);
+            if (open.isPresent() && open.get().getCreatedAt() != null && open.get().getCreatedAt().isAfter(cutoff)) {
+                continue;
+            }
+            restoreBox(box);
+            open.ifPresent(report -> {
+                RepairLog logEntry = new RepairLog();
+                logEntry.setReportId(report.getId());
+                logEntry.setNote("[TỰ GỠ GIỮ Ô] Quá " + hours + " giờ chưa có KTV kiểm tra — ô #" + box.getBoxNumber()
+                        + " trở lại hoạt động, phiếu vẫn chờ KTV xử lý");
+                repairLogRepository.save(logEntry);
+            });
+            publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), box.getStatus(),
+                    "Ô #" + box.getBoxNumber() + " chờ kiểm tra quá " + hours + " giờ, đã trở lại hoạt động");
+            released++;
+        }
+        return released;
     }
 
     private void attachIncidentPhotos(

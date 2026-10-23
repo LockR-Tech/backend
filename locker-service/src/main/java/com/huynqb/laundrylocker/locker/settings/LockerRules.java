@@ -64,6 +64,11 @@ public class LockerRules {
         return settings.getInt(REPORT_PHOTOS_TOTAL);
     }
 
+    /// Số giờ giữ ô PENDING_CHECK trước khi tự trả ô về hoạt động (0 = không tự gỡ).
+    public int pendingCheckHoldHours() {
+        return settings.getInt(PENDING_CHECK_HOLD_HOURS);
+    }
+
     public int reservedTtlHours() {
         return settings.getInt(RESERVED_TTL_HOURS);
     }

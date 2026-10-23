@@ -15,8 +15,9 @@ public final class OrderAccessPolicy {
     public static final String RENTAL_EXPIRED = "RENTAL_EXPIRED";
     public static final String RENTAL_UNPAID = "RENTAL_UNPAID";
     public static final String OVERTIME_FEE_UNPAID = "OVERTIME_FEE_UNPAID";
-    /// Ô của đơn đang có hàng bị báo sự cố, chờ KTV: không mở bằng mã (ô có thể không mở được,
-    /// hoặc KTV đang xử lý), cũng không bắt khách trả phí quá giờ.
+    /// Ô của đơn đang có hàng có sự cố đã được xác nhận (KTV khoá ô / tủ báo hỏng): không mở bằng mã
+    /// (ô không mở được, hoặc KTV đang xử lý), cũng không bắt khách trả phí quá giờ. Khách mới báo, ô còn
+    /// chờ KTV kiểm tra thì chủ đồ vẫn mở được — chỉ dừng phí.
     public static final String BOX_INCIDENT_OPEN = "BOX_INCIDENT_OPEN";
 
     private OrderAccessPolicy() {
@@ -29,7 +30,7 @@ public final class OrderAccessPolicy {
     public static String blockReason(LockerOrder order, OrderRules rules, LocalDateTime now, BigDecimal overtimeFee) {
         String status = order.getStatus();
         boolean rental = "RENTAL".equalsIgnoreCase(order.getType());
-        if (hasOpenBoxIncident(order)) {
+        if (boxIncidentBlocksAccess(order)) {
             return BOX_INCIDENT_OPEN;
         }
         if ("INITIALIZED".equalsIgnoreCase(status)
@@ -73,10 +74,15 @@ public final class OrderAccessPolicy {
         return null;
     }
 
-    /// Đơn đang có hàng mà ô đang có sự cố chưa xử lý.
+    /// Đơn đang có hàng mà ô đang có sự cố chưa xử lý (phí quá giờ dừng ở mốc báo sự cố).
     public static boolean hasOpenBoxIncident(LockerOrder order) {
         return order.getBoxIncidentOpenedAt() != null
                 && ("STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus()));
+    }
+
+    /// Sự cố đang mở đã được xác nhận: khách không tự mở ô / kết thúc đơn được, chờ KTV.
+    public static boolean boxIncidentBlocksAccess(LockerOrder order) {
+        return hasOpenBoxIncident(order) && order.isBoxIncidentBlocksAccess();
     }
 
     private static boolean owesPayment(LockerOrder order) {

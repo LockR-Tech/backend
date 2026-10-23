@@ -220,6 +220,28 @@ class LockerServiceForceOpenAndIncidentTest {
         verify(orderClient).hubEscrow(55L, "SEAL-778");
     }
 
+    /// Ô drone chỉ nhận kiện drone: hàng thuê/gửi không được chuyển lên đó.
+    @Test
+    void relocatingAnOrderIntoADroneCellIsRejected() {
+        LockerBox drone = new LockerBox();
+        drone.setId(6L);
+        drone.setLockerId(LOCKER_ID);
+        drone.setBoxNumber(1);
+        drone.setStatus("AVAILABLE");
+        drone.setCellType("DRONE");
+        when(boxRepository.findById(6L)).thenReturn(Optional.of(drone));
+        when(orderClient.getActiveOrderByBox(BOX_ID))
+                .thenReturn(ApiResponse.ok(new ActiveBoxOrderDto(55L, "ORD-55", 7L, "Khách A", "0900", "RENTAL", "STORING", null, BOX_ID)));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.resolveBoxIncident(
+                100L, new BoxIncidentResolutionRequest(BOX_ID, "RELOCATE", 6L, null, null, null, null),
+                TECH, "LOCKER_TECHNICIAN"));
+
+        assertEquals("TARGET_BOX_DRONE", ex.getCode());
+        verify(orderClient, never()).relocateBox(any(), any(), any());
+        assertEquals("AVAILABLE", drone.getStatus());
+    }
+
     @Test
     void unknownIncidentActionIsRejected() {
         BusinessException ex = assertThrows(BusinessException.class, () -> service.resolveBoxIncident(
