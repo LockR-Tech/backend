@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -62,6 +63,16 @@ public class AdminOrderController {
             @RequestHeader("X-User-Id") Long adminId) {
         return ApiResponse.ok(
                 "ORDER_STATUS_UPDATED", "Order status updated", orderService.updateStatus(id, request.status(), adminId));
+    }
+
+    /// Admin gỡ sự cố ô trên đơn bằng tay — dùng cho đơn được đánh dấu từ lịch sử khi nâng cấp mà phiếu
+    /// sự cố đã xử lý từ trước (không còn sự kiện "xử lý xong" nào gửi tới nữa).
+    @PostMapping("/api/admin/orders/{id}/box-incident-resolved")
+    public ApiResponse<OrderResponse> resolveBoxIncident(
+            @PathVariable Long id,
+            @RequestHeader("X-User-Id") Long adminId) {
+        return ApiResponse.ok("ORDER_BOX_INCIDENT_RESOLVED", "Box incident resolved",
+                orderService.resumeAfterBoxIncident(id, adminId, "Admin xác nhận đã xử lý sự cố ô"));
     }
 
     @GetMapping("/internal/orders/batch")

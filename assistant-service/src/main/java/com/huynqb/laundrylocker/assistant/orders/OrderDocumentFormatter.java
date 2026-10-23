@@ -366,6 +366,7 @@ public final class OrderDocumentFormatter {
             case "PAY_FOR_DRONE" -> "Thanh toán để đội bay điều phối giao hàng";
             case "PAY_BEFORE_PICKUP" -> "Thanh toán trước khi mở ô lấy hàng";
             case "INCIDENT_IN_PROGRESS" -> "Lock.R đang xử lý sự cố giao hàng, theo dõi ở mục sự cố của đơn";
+            case "WAIT_FOR_BOX_INCIDENT" -> "Chờ KTV xử lý sự cố ô; đồ vẫn trong ô, chưa cần thanh toán";
             case "CONTACT_STAFF" -> "Liên hệ nhân viên Lock.R để nhận lại hàng";
             default -> null;
         };
@@ -376,6 +377,7 @@ public final class OrderDocumentFormatter {
             case "ORDER_UNPAID" -> "Chưa mở được: đơn chưa thanh toán";
             case "RENTAL_EXPIRED" -> "Chưa mở được: đã hết giờ thuê, cần thanh toán phí quá giờ";
             case "RENTAL_UNPAID" -> "Chưa mở được: phần gia hạn chưa thanh toán";
+            case "BOX_INCIDENT_OPEN" -> "Chưa mở được: ô đang chờ KTV xử lý sự cố, phí quá giờ tạm dừng";
             default -> null;
         };
     }

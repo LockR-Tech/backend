@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.iot.dto.OrderLookupResponse;
 import com.huynqb.laundrylocker.iot.dto.UnlockRequest;
 import com.huynqb.laundrylocker.iot.dto.UnlockWithCodeRequest;
 import com.huynqb.laundrylocker.iot.model.AccessAttempt;
+import com.huynqb.laundrylocker.iot.model.BoxAccessLog;
 import com.huynqb.laundrylocker.iot.repository.AccessAttemptRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxAccessLogRepository;
 import com.huynqb.laundrylocker.iot.repository.BoxHardwareStatusRepository;
@@ -399,6 +400,24 @@ class IotServiceTest {
         verify(orderClient).pickupStorage(51L, 44L);
     }
 
+    /// Ô đang chờ KTV: mã (PIN/QR/ủy quyền) không mở ô, cũng không kết thúc thuê — kết thúc sẽ nhả ô
+    /// trong khi đồ còn kẹt bên trong, dù lần mở thành công gần nhất còn trong cửa sổ cho phép.
+    @Test
+    void stuckBoxCannotBeOpenedOrReleasedWithTheCode() {
+        when(orderClient.getByAccess("PIN-123"))
+                .thenReturn(ApiResponse.ok(lookup("STORING", "RENTAL", "BOX_INCIDENT_OPEN")));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+
+        Map<String, Object> open = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+        Map<String, Object> end = iotService.endRentalWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertFalse(Boolean.TRUE.equals(open.get("accepted")));
+        assertEquals("BOX_INCIDENT_OPEN", open.get("reasonCode"));
+        assertEquals("BOX_INCIDENT_OPEN", end.get("reasonCode"));
+        verify(lockerMqttService, never()).sendUnlockCommandAsync(anyLong(), anyLong());
+        verify(orderClient, never()).pickupStorage(anyLong(), anyLong());
+    }
+
     @Test
     void endRentalWithCodeRejectsNonRentalOrder() {
         when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(lookup("STORING", "SEND", null)));
@@ -426,5 +445,49 @@ class IotServiceTest {
 
         assertTrue(Boolean.TRUE.equals(result.get("accepted")));
         verify(orderClient).complete(51L, 44L);
+    }
+
+    // Trước đây mọi lỗi khi chờ tủ đều ghi "timeout" (cả lỗi gửi lệnh) và nhật ký cũ còn
+    // in thẳng java.util.concurrent.TimeoutException — admin không biết chuyện gì đã xảy ra.
+
+    @Test
+    void unlockWithCodeLogsClearTimeoutWhenCabinetNeverAnswers() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, null, 9002L, "STORING", "PIN-123", null)));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.failedFuture(new java.util.concurrent.TimeoutException()));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertFalse(Boolean.TRUE.equals(result.get("accepted")));
+        assertEquals(IotService.UNLOCK_TIMEOUT_MESSAGE, result.get("message"));
+        BoxAccessLog entry = savedAccessLog();
+        assertEquals("TIMEOUT", entry.getResult());
+        assertTrue(entry.getMessage().startsWith("Tủ không phản hồi lệnh mở sau "), entry.getMessage());
+        assertFalse(entry.getMessage().contains("java."), entry.getMessage());
+        verify(lockerClient, never()).openBox(anyLong());
+    }
+
+    @Test
+    void unlockWithCodeLogsSendFailureSeparatelyFromTimeout() {
+        when(orderClient.getByAccess("PIN-123")).thenReturn(ApiResponse.ok(
+                new OrderLookupResponse(51L, 44L, 7L, null, 9002L, "STORING", "PIN-123", null)));
+        when(accessAttemptRepository.findById(9002L)).thenReturn(Optional.empty());
+        when(lockerMqttService.sendUnlockCommandAsync(7L, 9002L))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker down")));
+
+        Map<String, Object> result = iotService.unlockWithCode(new UnlockWithCodeRequest(7L, "PIN-123"));
+
+        assertEquals(IotService.UNLOCK_SEND_FAILED_MESSAGE, result.get("message"));
+        BoxAccessLog entry = savedAccessLog();
+        assertEquals("FAILED", entry.getResult());
+        assertTrue(entry.getMessage().startsWith("Không gửi được lệnh mở tới bộ điều khiển tủ"), entry.getMessage());
+    }
+
+    private BoxAccessLog savedAccessLog() {
+        ArgumentCaptor<BoxAccessLog> captor = ArgumentCaptor.forClass(BoxAccessLog.class);
+        verify(accessLogRepository).save(captor.capture());
+        return captor.getValue();
     }
 }

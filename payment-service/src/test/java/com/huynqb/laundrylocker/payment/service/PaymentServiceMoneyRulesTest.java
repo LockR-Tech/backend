@@ -282,8 +282,10 @@ class PaymentServiceMoneyRulesTest {
         repository.save(pending);
         when(repository.findById(pending.getId())).thenReturn(Optional.of(pending));
 
-        assertEquals("PAYMENT_SIMULATION_DISABLED", assertThrows(BusinessException.class,
-                () -> simulating.simulateTransfer(45L, "CUSTOMER", pending.getId(), null, null)).getCode());
+        BusinessException notAllowed = assertThrows(BusinessException.class,
+                () -> simulating.simulateTransfer(45L, "CUSTOMER", pending.getId(), null, null));
+        assertEquals("PAYMENT_SIMULATION_NOT_ALLOWED", notAllowed.getCode());
+        assertTrue(notAllowed.getMessage().contains("#45"), notAllowed.getMessage());
         assertEquals("ORDER_FORBIDDEN", assertThrows(BusinessException.class,
                 () -> simulating.simulateTransfer(44L, "CUSTOMER", pending.getId(), null, null)).getCode());
         assertEquals("PENDING", pending.getStatus());

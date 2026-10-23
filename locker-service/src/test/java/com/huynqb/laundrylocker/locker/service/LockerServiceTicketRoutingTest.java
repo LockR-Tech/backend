@@ -301,6 +301,34 @@ class LockerServiceTicketRoutingTest {
         assertNull(box.getPreFaultStatus());
     }
 
+    /// Màn "Báo sự cố" của tủ có chọn ô: trước đây chỉ tạo phiếu, ô drone/ô trống vẫn AVAILABLE ⇒ vẫn hiện
+    /// "Sẵn sàng nhận Drone" và vẫn được cấp cho đơn mới.
+    @Test
+    void reportingAnEmptyBoxFromTheLockerScreenTakesItOutOfService() {
+        service.report(LOCKER_ID,
+                new LockerReportRequest(null, "Ô #3 lỗi", "Không thể kết nối", List.of(), false, BOX_ID, null, null),
+                CUSTOMER, "CUSTOMER");
+
+        assertEquals("FAULT", box.getStatus());
+        assertNull(box.getPreFaultStatus());
+        assertEquals("Không thể kết nối", box.getFaultReason());
+        verify(orderClient, never()).boxIncidentOpened(any());
+    }
+
+    /// Ô đang có hàng: nhớ trạng thái để đóng phiếu là trả lại đúng, và báo order-service dừng phí của đơn.
+    @Test
+    void reportingABoxWithItemsKeepsItsStateAndPausesTheOrder() {
+        box.setStatus("OCCUPIED");
+
+        service.report(LOCKER_ID,
+                new LockerReportRequest(null, "Ô #3 lỗi", "Kẹt cửa", List.of(), false, BOX_ID, 96L, "ORD-96"),
+                CUSTOMER, "CUSTOMER");
+
+        assertEquals("FAULT", box.getStatus());
+        assertEquals("OCCUPIED", box.getPreFaultStatus());
+        verify(orderClient).boxIncidentOpened(96L);
+    }
+
     @Test
     void onlyTechniciansOrAdminsCanTakeAWholeLockerOutOfService() {
         LockerReportRequest blocking = new LockerReportRequest(null, "Mất điện", "Cả tủ tắt", List.of(), true);

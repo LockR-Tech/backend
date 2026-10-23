@@ -93,5 +93,8 @@ public record OrderResponse(
         /// Đơn giá mỗi giờ quá hạn đang áp cho đơn này: đơn thuê = giá thuê loại ô × tỉ lệ admin đặt;
         /// đơn khác = phí quá hạn mỗi giờ. `overtimeCapped` = có áp trần phí quá hạn (chỉ đơn không phải thuê).
         BigDecimal overtimeRatePerHour,
-        boolean overtimeCapped) {
+        boolean overtimeCapped,
+        /// Ô của đơn (đang có hàng) bị báo sự cố, chờ KTV: phí quá giờ dừng từ mốc này, chưa thu tiền /
+        /// chưa mở ô bằng mã. Null = không có sự cố đang mở.
+        LocalDateTime boxIncidentOpenedAt) {
 }

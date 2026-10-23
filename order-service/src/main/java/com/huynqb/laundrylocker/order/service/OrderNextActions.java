@@ -43,6 +43,9 @@ public final class OrderNextActions {
                 default -> "UNKNOWN";
             };
         }
+        if (OrderAccessPolicy.hasOpenBoxIncident(order)) {
+            return "WAIT_FOR_BOX_INCIDENT";
+        }
         return switch (order.getStatus()) {
             case "INITIALIZED" -> "PAY_AND_DROP";
             case "STORING" -> "PICKUP";
@@ -63,6 +66,8 @@ public final class OrderNextActions {
             case "PAY_FOR_DRONE" -> "Pay for the drone delivery so the flight team can dispatch it.";
             case "PAY_BEFORE_PICKUP" -> "Pay for the drone delivery before opening the locker.";
             case "INCIDENT_IN_PROGRESS" -> "A delivery incident is being handled; follow the incident for updates.";
+            case "WAIT_FOR_BOX_INCIDENT" ->
+                    "The box is being handled by a technician; overtime fees are paused until it is fixed.";
             case "PICKUP" -> "Pick up items from locker.";
             case "CONTACT_STAFF" -> "Items moved to storage; contact staff to retrieve them.";
             default -> order.getStatus();

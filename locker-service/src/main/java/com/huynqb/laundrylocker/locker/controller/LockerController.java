@@ -97,7 +97,8 @@ public class LockerController {
             @PathVariable Long id,
             @Valid @RequestBody(required = false) BoxFaultRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        return markFaultFor(id, body, userId, null);
+        // order-service gọi (khách báo qua đơn) và tự mở sự cố trên đơn ⇒ không gọi ngược lại.
+        return markFaultFor(id, body, userId, null, false);
     }
 
     // Nguồn dữ liệu cho job đối soát ô ↔ đơn của order-service (Gap G4).
@@ -133,13 +134,18 @@ public class LockerController {
     }
 
     private ApiResponse<CellResponse> markFaultFor(Long id, BoxFaultRequest body, Long userId, String roles) {
+        return markFaultFor(id, body, userId, roles, true);
+    }
+
+    private ApiResponse<CellResponse> markFaultFor(
+            Long id, BoxFaultRequest body, Long userId, String roles, boolean notifyOrder) {
         String reason = body == null ? null : body.reason();
         List<ReportAttachmentRequest> attachments = body == null ? null : body.attachments();
         Long orderId = body == null ? null : body.orderId();
         String orderCode = body == null ? null : body.orderCode();
         return ApiResponse.ok(
                 "BOX_FAULT_REPORTED", "Box marked as faulty",
-                lockerService.markFault(id, reason, userId, attachments, roles, orderId, orderCode));
+                lockerService.markFault(id, reason, userId, attachments, roles, orderId, orderCode, notifyOrder));
     }
 
     @PostMapping("/api/admin/lockers/boxes/{id}/clear-fault")

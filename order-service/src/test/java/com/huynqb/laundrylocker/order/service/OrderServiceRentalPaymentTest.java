@@ -80,6 +80,8 @@ class OrderServiceRentalPaymentTest {
                 qrTokenService,
                 TestOrderRules.of(java.util.Map.of(
                         "app.order.rental-rate-standard", 5000,
+                        // Giá ngày có test riêng (RentalPriceRulesTest); ở đây giữ giá thuần theo giờ.
+                        "app.order.rental-daily-rate-standard", 0,
                         "app.order.require-payment-before-drop", true)), benefits, promotionViews, paidEffects);
     }
 

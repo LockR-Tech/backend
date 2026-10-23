@@ -99,6 +99,10 @@ public class PaymentRules {
     }
 
     /// Admin bật nút giả lập thanh toán và `userId` nằm trong danh sách được phép (trống = mọi người).
+    public boolean simulationEnabled() {
+        return settings.getBoolean(SIMULATION_ENABLED);
+    }
+
     public boolean simulationAllowedFor(Long userId) {
         if (userId == null || !settings.getBoolean(SIMULATION_ENABLED)) {
             return false;

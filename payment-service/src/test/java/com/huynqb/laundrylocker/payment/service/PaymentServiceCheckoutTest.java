@@ -68,6 +68,20 @@ class PaymentServiceCheckoutTest {
     private static final Map<String, Object> ALL_METHODS =
             Map.of(com.huynqb.laundrylocker.payment.settings.PaymentSettingsCatalog.ENABLED_METHODS, "CASH,WALLET,SEPAY");
 
+    /// Ô của đơn đang chờ KTV xử lý sự cố: khách chưa lấy được đồ thì không tạo mã thu tiền.
+    @Test
+    void checkoutIsRefusedWhileTheOrderBoxIsBeingFixed() {
+        when(orderClient.getOrder(55L)).thenReturn(ApiResponse.ok(
+                new OrderSummary(55L, 44L, "STORING", BigDecimal.valueOf(15000), "RENTAL", "ORD-55", true)));
+
+        com.huynqb.laundrylocker.common.exception.BusinessException error = org.junit.jupiter.api.Assertions.assertThrows(
+                com.huynqb.laundrylocker.common.exception.BusinessException.class,
+                () -> paymentService.checkout(44L, new CheckoutRequest(55L, "SEPAY", null, null)));
+
+        assertEquals("ORDER_BOX_INCIDENT_OPEN", error.getCode());
+        verify(repository, org.mockito.Mockito.never()).save(any(PaymentRecord.class));
+    }
+
     @Test
     void checkoutChargesOnlyOutstandingBalanceAfterRentalExtension() {
         when(orderClient.getOrder(55L)).thenReturn(ApiResponse.ok(new OrderSummary(55L, 44L, "STORING", BigDecimal.valueOf(15000))));
