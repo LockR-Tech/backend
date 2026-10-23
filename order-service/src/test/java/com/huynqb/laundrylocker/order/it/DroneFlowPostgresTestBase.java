@@ -124,6 +124,9 @@ public abstract class DroneFlowPostgresTestBase extends OrderServicePostgresTest
         lenient().when(droneWeatherService.assessRoute(any(), any())).thenReturn(new DroneWeatherAssessment(
                 true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",
                 java.time.OffsetDateTime.now(), 30, 3, 8, 12, 0, 0));
+        lenient().when(droneWeatherService.assessJourney(any(), any(), any(), any())).thenReturn(new DroneWeatherAssessment(
+                true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",
+                java.time.OffsetDateTime.now(), 30, 4, 8, 12, 0, 0));
         for (long locker : List.of(LOCKER_A, LOCKER_B, LOCKER_C)) {
             lockerStatus.put(locker, "ACTIVE");
             landingPadStatus.put(locker, "OK");
