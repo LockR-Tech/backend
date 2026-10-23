@@ -342,10 +342,11 @@ public class DroneWeatherService {
             maximumWind = Math.max(maximumWind, wind);
             maximumGust = Math.max(maximumGust, gust);
             minimumVisibility = Math.min(minimumVisibility, visible);
+            // Mã WMO lớn hơn = thời tiết xấu hơn: giữ mã xấu nhất gặp trên tuyến, kể cả khi vẫn bay được.
+            worstCode = Math.max(worstCode, code);
             if (isRainOrStorm(code) || rain > 0 || wind > maxWindSpeedKmh || gust > maxWindGustKmh
                     || visible < minVisibilityMeters) {
                 unsafe = true;
-                worstCode = Math.max(worstCode, code);
             }
         }
 
@@ -355,9 +356,14 @@ public class DroneWeatherService {
                             maxWindSpeedKmh, maxWindGustKmh, minVisibilityMeters)
                     : "Dự báo tuyến bay an toàn trong 30 phút tới.";
             return new DroneWeatherAssessment(!unsafe, unsafe ? "UNSAFE" : "SAFE", message, checkedAt,
-                    WINDOW_MINUTES, sampledPoints, maximumWind, maximumGust, maximumPrecipitation, worstCode)
+                    WINDOW_MINUTES, sampledPoints, round1(maximumWind), round1(maximumGust),
+                    round1(maximumPrecipitation), worstCode)
                     .withSource(provider, temperature, condition);
         }
+    }
+
+    private static double round1(double value) {
+        return Math.round(value * 10) / 10.0;
     }
 
     private static boolean inWindow(OffsetDateTime forecastAt, OffsetDateTime now, int graceMinutes) {
