@@ -79,7 +79,8 @@ public class DroneOrderBookingService {
         int weight = validateWeight(request.parcelWeightGrams());
         DroneSourceLockerSelector.Selection selection = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
-        DroneWeatherAssessment weather = weatherService.assessRoute(selection.source(), selection.destination());
+        DroneWeatherAssessment weather = weatherService.assessJourney(
+                request.pickupLatitude(), request.pickupLongitude(), selection.source(), selection.destination());
         return new DroneDeliveryQuoteResponse(
                 point(selection.source()),
                 point(selection.destination()),
@@ -117,7 +118,8 @@ public class DroneOrderBookingService {
 
         DroneSourceLockerSelector.Selection route = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
-        DroneWeatherAssessment weather = weatherService.assessRoute(route.source(), route.destination());
+        DroneWeatherAssessment weather = weatherService.assessJourney(
+                request.pickupLatitude(), request.pickupLongitude(), route.source(), route.destination());
         if (!weather.safe()) {
             String code = "UNAVAILABLE".equals(weather.status())
                     ? "DRONE_WEATHER_UNAVAILABLE"
