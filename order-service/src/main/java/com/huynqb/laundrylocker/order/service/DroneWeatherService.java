@@ -34,6 +34,7 @@ public class DroneWeatherService {
     private final double minVisibilityMeters;
     private final String apiKey;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public DroneWeatherService(
             RestClient.Builder builder,
             @Value("${app.drone.weather.api-url:https://api.open-meteo.com/v1/forecast}") String apiUrl,
