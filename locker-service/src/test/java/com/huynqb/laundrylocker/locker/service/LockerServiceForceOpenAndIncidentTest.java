@@ -263,6 +263,32 @@ class LockerServiceForceOpenAndIncidentTest {
         verify(boxRepository).save(box);
     }
 
+    /// Sửa tại chỗ (không khoá ô) hoặc kiểm tra thấy ô vẫn chạy ⇒ khách lấy đồ được: order-service phải
+    /// mở lại đơn (bỏ phí trong thời gian chờ). Khoá ô thì đồ vẫn kẹt, chưa được báo.
+    @Test
+    void fixingTheBoxInPlaceResumesTheStuckOrder() {
+        box.setStatus("OCCUPIED");
+        when(orderClient.getActiveOrderByBox(BOX_ID))
+                .thenReturn(ApiResponse.ok(new ActiveBoxOrderDto(55L, "ORD-55", 7L, "Khách A", "0900", "RENTAL", "STORING", null, BOX_ID)));
+
+        service.resolveBoxIncident(100L, new BoxIncidentResolutionRequest(
+                BOX_ID, "QUICK_FIX", null, null, null, null, null, false), TECH, "LOCKER_TECHNICIAN");
+
+        verify(orderClient).boxIncidentResolved(eq(55L), any());
+    }
+
+    @Test
+    void lockingTheBoxKeepsTheOrderWaiting() {
+        box.setStatus("OCCUPIED");
+        when(orderClient.getActiveOrderByBox(BOX_ID))
+                .thenReturn(ApiResponse.ok(new ActiveBoxOrderDto(55L, "ORD-55", 7L, "Khách A", "0900", "RENTAL", "STORING", null, BOX_ID)));
+
+        service.resolveBoxIncident(100L, new BoxIncidentResolutionRequest(
+                BOX_ID, "LOCK_ONLY", null, null, null, null, null, true), TECH, "LOCKER_TECHNICIAN");
+
+        verify(orderClient, never()).boxIncidentResolved(any(), any());
+    }
+
     /// order-service không trả lời: không được coi ô là trống — ô còn đồ của khách sẽ bị đặt
     /// AVAILABLE và cấp cho đơn khác. Dừng với 503, không đổi ô nào.
     @Test

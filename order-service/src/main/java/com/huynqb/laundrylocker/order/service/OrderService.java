@@ -280,7 +280,7 @@ public class OrderService {
                 throw new BusinessException("DRONE_CELL_RESTRICTED", "Drone cells cannot be rented");
             }
         }
-        BigDecimal price = rules.rentalRate(cellType).multiply(BigDecimal.valueOf(request.hours()));
+        BigDecimal price = rules.rentalPrice(cellType, request.hours());
         OrderResponse created =
                 create(
                         new CreateOrderRequest(
@@ -346,8 +346,10 @@ public class OrderService {
             throw new BusinessException("ORDER_STATUS_INVALID", "Only rental orders can be extended");
         }
         validateStatus(order, Set.of("INITIALIZED", "STORING"));
+        assertNoOpenBoxIncident(order);
         assertRentalHours(hours, 1, rules.extendMaxHours());
-        order.setRentalDurationHours(resolveRentalDurationHours(order) + hours);
+        int previousHours = resolveRentalDurationHours(order);
+        order.setRentalDurationHours(previousHours + hours);
         if (!"INITIALIZED".equalsIgnoreCase(order.getStatus())) {
             LocalDateTime now = LocalDateTime.now();
             LocalDateTime base = order.getPickupDeadline() == null ? now : order.getPickupDeadline();
@@ -356,7 +358,10 @@ public class OrderService {
             }
             order.setPickupDeadline(base.plusHours(hours));
         }
-        BigDecimal extra = rules.rentalRate(cellTypeOfRental(order)).multiply(BigDecimal.valueOf(hours));
+        // Tính theo tổng giờ của cả hợp đồng để giá ngày vẫn áp khi gia hạn nối sang ngày mới.
+        String cellType = cellTypeOfRental(order);
+        BigDecimal extra = rules.rentalPrice(cellType, previousHours + hours)
+                .subtract(rules.rentalPrice(cellType, previousHours));
         order.setTotalPrice(order.getTotalPrice().add(extra));
         order.setOriginalPrice(order.getOriginalPrice().add(extra));
         if (extra.compareTo(BigDecimal.ZERO) > 0) {
@@ -381,6 +386,12 @@ public class OrderService {
     public OrderResponse assessOvertime(Long id, Long userId) {
         LockerOrder order = find(id);
         assertOwner(order, userId);
+        if (OrderAccessPolicy.hasOpenBoxIncident(order)) {
+            if (capOvertimeAtIncident(order)) {
+                orderRepository.save(order);
+            }
+            return toResponse(order);
+        }
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -523,15 +534,7 @@ public class OrderService {
         }
 
         String sms = pickupSms(order.getOrderCode(), place, order.getPinCode(), deadline);
-        String emailBody = "Xin chào" + (StringUtils.hasText(order.getReceiverName())
-                ? " " + order.getReceiverName() : "") + ",\n\n"
-                + "Bạn có một kiện hàng đang chờ trong tủ Lock.R.\n\n"
-                + "Mã đơn: " + order.getOrderCode() + "\n"
-                + "Nơi lấy: " + place.label() + "\n"
-                + "Mã mở tủ: " + order.getPinCode() + "\n"
-                + "Hạn lấy hàng: " + deadline + "\n\n"
-                + "Nhập mã này trên màn hình tủ để mở ô và lấy hàng. "
-                + "Không chia sẻ mã cho người khác.\n";
+        String emailBody = receiverEmailBody(order, senderName(order), place, deadline);
 
         try {
             var response = notificationClient.notifyGuest(
@@ -544,6 +547,43 @@ public class OrderService {
         } catch (Exception ex) {
             log.warn("Could not send pickup code out-of-band for order {}: {}", order.getId(), ex.getMessage());
             return new GuestNotification.Result(false, false, false, false);
+        }
+    }
+
+    /// Email cho người nhận. Khác SMS, email có chỗ cho tên người gửi và lời nhắn: người nhận
+    /// chưa có tài khoản cần biết ai gửi để tin email này không phải lừa đảo.
+    static String receiverEmailBody(LockerOrder order, String senderName, PickupPlace place, String deadline) {
+        boolean hasSender = StringUtils.hasText(senderName);
+        StringBuilder body = new StringBuilder("Xin chào")
+                .append(StringUtils.hasText(order.getReceiverName()) ? " " + order.getReceiverName() : "")
+                .append(",\n\n")
+                .append(hasSender
+                        ? senderName.trim() + " đã gửi cho bạn một kiện hàng trong tủ Lock.R.\n\n"
+                        : "Bạn có một kiện hàng đang chờ trong tủ Lock.R.\n\n")
+                .append("Mã đơn: ").append(order.getOrderCode()).append("\n");
+        if (hasSender) {
+            body.append("Người gửi: ").append(senderName.trim()).append("\n");
+        }
+        body.append("Nơi lấy: ").append(place.label()).append("\n")
+                .append("Mã mở tủ: ").append(order.getPinCode()).append("\n")
+                .append("Hạn lấy hàng: ").append(deadline).append("\n");
+        if (StringUtils.hasText(order.getCustomerNote())) {
+            body.append("Lời nhắn của người gửi: ").append(order.getCustomerNote().trim()).append("\n");
+        }
+        return body.append("\nNhập mã này trên màn hình tủ để mở ô và lấy hàng. ")
+                .append("Không chia sẻ mã cho người khác.\n")
+                .toString();
+    }
+
+    /// Tên người gửi cho email người nhận; tra không được thì email bỏ dòng này.
+    private String senderName(LockerOrder order) {
+        if (order.getUserId() == null) return null;
+        try {
+            var sender = userClient.getUser(order.getUserId());
+            return sender == null || sender.data() == null ? null : sender.data().fullName();
+        } catch (Exception ex) {
+            log.debug("Sender of order {} not resolved for the receiver email: {}", order.getId(), ex.getMessage());
+            return null;
         }
     }
 
@@ -695,6 +735,9 @@ public class OrderService {
         LockerOrder order = find(id);
         assertOwnerOrReceiver(order, userId);
         validateStatus(order, Set.of("STORING", "RETURNED", "EXPIRED"));
+        // Đồ còn kẹt trong ô hỏng: tự bấm "đã lấy đồ" sẽ đóng đơn và nhả ô (cấp cho khách khác)
+        // trong khi đồ vẫn bên trong. KTV kết thúc bằng bàn giao trực tiếp / chuyển ô.
+        assertNoOpenBoxIncident(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -839,6 +882,8 @@ public class OrderService {
                 "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory())
                         ? Set.of("STORING", "RETURNED", "EXPIRED")
                         : Set.of("STORING", "INITIALIZED", "RETURNED", "EXPIRED"));
+        // Như complete: kết thúc thuê lúc đồ còn kẹt sẽ nhả ô có đồ bên trong.
+        assertNoOpenBoxIncident(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
@@ -901,7 +946,114 @@ public class OrderService {
             return transition(order, "CANCELED", userId, null, "Order auto-canceled after reporting reserved box fault");
         }
         addHistory(order.getId(), order.getStatus(), order.getStatus(), userId, "Customer reported a fault on the assigned box");
+        openBoxIncident(order);
         return toResponse(order);
+    }
+
+    /// locker-service báo ô của đơn bị báo sự cố qua đường khác (màn "Báo sự cố" của tủ, KTV, tủ báo kẹt
+    /// khoá). Gọi lặp an toàn.
+    @Transactional
+    public OrderResponse boxIncidentOpened(Long orderId) {
+        LockerOrder order = find(orderId);
+        openBoxIncident(order);
+        return toResponse(order);
+    }
+
+    /// Đơn đang có hàng mà ô bị báo sự cố: dừng phí quá giờ từ bây giờ, chặn thu tiền / mở ô bằng mã tới
+    /// khi KTV xử lý. Đơn chưa có hàng hoặc đã mở sự cố thì thôi.
+    private void openBoxIncident(LockerOrder order) {
+        if (order.getBoxIncidentOpenedAt() != null
+                || !("STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus()))) {
+            return;
+        }
+        order.setBoxIncidentOpenedAt(LocalDateTime.now());
+        capOvertimeAtIncident(order);
+        orderRepository.save(order);
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
+                "Ô của đơn đang có sự cố: tạm dừng phí quá giờ tới khi KTV xử lý");
+        notifyQuietly(order.getUserId(), "Đã ghi nhận sự cố ô",
+                "Lock.R đã nhận báo sự cố ô của đơn " + order.getOrderCode() + ". Đồ của bạn được giữ nguyên "
+                        + "trong ô, phí quá giờ tạm dừng từ bây giờ tới khi KTV xử lý xong — bạn chưa cần "
+                        + "thanh toán. Lock.R sẽ báo khi lấy được đồ.",
+                "ORDER_BOX_INCIDENT_OPENED", order.getId());
+    }
+
+    /// KTV xử lý xong sự cố ô của đơn (sửa tại chỗ, kiểm tra không lỗi, chuyển ô, hoàn tất phiếu):
+    /// cộng bù thời gian bị kẹt vào hạn lấy đồ — phí quá giờ tính tiếp đúng từ mức đã dừng — và
+    /// không để hạn mới sớm hơn [OrderRules#boxIncidentPickupGraceHours] giờ kể từ bây giờ.
+    /// Không có sự cố đang mở thì không làm gì, nên gọi lặp (nhiều phiếu, nhiều đường xử lý) an toàn.
+    @Transactional
+    public OrderResponse resumeAfterBoxIncident(Long orderId, Long actorId, String note) {
+        LockerOrder order = find(orderId);
+        if (order.getBoxIncidentOpenedAt() == null) {
+            return toResponse(order);
+        }
+        closeBoxIncident(order, actorId, note);
+        LockerOrder saved = orderRepository.save(order);
+        notifyQuietly(saved.getUserId(), "Đã xử lý xong sự cố ô",
+                "Sự cố ô của đơn " + saved.getOrderCode() + " đã được xử lý. "
+                        + (saved.getPickupDeadline() != null
+                        ? "Bạn có thể lấy đồ tới " + formatDeadline(saved.getPickupDeadline())
+                                + " — thời gian chờ KTV không bị tính phí."
+                        : "Bạn có thể lấy đồ bằng mã mở tủ như bình thường."),
+                "ORDER_BOX_INCIDENT_RESOLVED", saved.getId());
+        publishStatusChanged(saved, saved.getStatus());
+        return toResponse(saved);
+    }
+
+    /// Đóng sự cố trên đơn (chưa lưu): trả phần phí tính lố, dời hạn lấy đồ, ghi lịch sử.
+    private void closeBoxIncident(LockerOrder order, Long actorId, String note) {
+        LocalDateTime openedAt = order.getBoxIncidentOpenedAt();
+        if (openedAt == null) {
+            return;
+        }
+        capOvertimeAtIncident(order);
+        LocalDateTime now = LocalDateTime.now();
+        order.setBoxIncidentOpenedAt(null);
+        if (order.getPickupDeadline() != null) {
+            java.time.Duration stuck = java.time.Duration.between(openedAt, now);
+            LocalDateTime shifted = order.getPickupDeadline().plus(stuck.isNegative() ? java.time.Duration.ZERO : stuck);
+            LocalDateTime graceUntil = now.plusHours(rules.boxIncidentPickupGraceHours());
+            order.setPickupDeadline(shifted.isBefore(graceUntil) ? graceUntil : shifted);
+        }
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), actorId,
+                (StringUtils.hasText(note) ? note + ". " : "")
+                        + "Đã xử lý sự cố ô: bỏ phí quá giờ trong thời gian chờ KTV"
+                        + (order.getPickupDeadline() != null
+                        ? ", hạn lấy đồ mới " + formatDeadline(order.getPickupDeadline())
+                        : ""));
+    }
+
+    /// Phí quá giờ đã cộng vào giá vượt mức tính tới mốc sự cố (đồng hồ chạy trước khi có cơ chế dừng,
+    /// hoặc app tính lại trong lúc chờ KTV) ⇒ trả phần vượt. Chưa lưu; trả `true` khi có thay đổi.
+    private boolean capOvertimeAtIncident(LockerOrder order) {
+        if (order.getBoxIncidentOpenedAt() == null) {
+            return false;
+        }
+        BigDecimal charged = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+        BigDecimal frozen = calculatePickupOvertimeFee(order);
+        if (charged.compareTo(frozen) <= 0) {
+            return false;
+        }
+        BigDecimal excess = charged.subtract(frozen);
+        order.setExtraFee(frozen);
+        BigDecimal total = order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice();
+        order.setTotalPrice(total.subtract(excess).max(BigDecimal.ZERO));
+        if (order.getOriginalPrice() != null) {
+            order.setOriginalPrice(order.getOriginalPrice().subtract(excess).max(BigDecimal.ZERO));
+        }
+        // Phần còn nợ chỉ là phí tính lố ⇒ đơn trở lại đã trả.
+        if (!"PAID".equalsIgnoreCase(order.getPaymentStatus())
+                && paidAmountOf(order).compareTo(order.getTotalPrice()) >= 0) {
+            order.setPaymentStatus("PAID");
+            if (order.getPaidAt() == null) {
+                order.setPaidAt(LocalDateTime.now());
+            }
+        }
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
+                "Bỏ phí quá giờ tính sau mốc sự cố ô " + formatDeadline(order.getBoxIncidentOpenedAt())
+                        + ": -" + excess.toBigInteger() + " đ");
+        return true;
     }
 
     @Transactional
@@ -1028,6 +1180,13 @@ public class OrderService {
         candidates.addAll(orderRepository.findByStatusOrderByCreatedAtDesc("RETURNED"));
         candidates.addAll(orderRepository.findByStatusOrderByCreatedAtDesc("STORING"));
         for (LockerOrder order : candidates) {
+            if (OrderAccessPolicy.hasOpenBoxIncident(order)) {
+                // Khách không lấy được đồ vì ô hỏng: không nhắc "phí đang tính"; trả phí tính lố nếu có.
+                if (capOvertimeAtIncident(order)) {
+                    orderRepository.save(order);
+                }
+                continue;
+            }
             if (order.getPickupDeadline() == null || now.isBefore(order.getPickupDeadline())) {
                 continue;
             }
@@ -1553,6 +1712,10 @@ public class OrderService {
             if (order.getPickupDeadline() == null || order.getPickupDeadline().isAfter(cutoff)) {
                 continue;
             }
+            if (OrderAccessPolicy.hasOpenBoxIncident(order)) {
+                // Đồ kẹt trong ô hỏng: không dời về kho / tính phí tới khi KTV xử lý.
+                continue;
+            }
             boolean isRental = "RENTAL".equalsIgnoreCase(order.getType())
                     || "RENTAL".equalsIgnoreCase(order.getServiceCategory());
             if (isRental && !rules.rentalAutoReleaseEnabled()) {
@@ -1904,7 +2067,10 @@ public class OrderService {
     }
 
     private BigDecimal calculatePickupOvertimeFee(LockerOrder order) {
-        if (order.getPickupDeadline() == null || !LocalDateTime.now().isAfter(order.getPickupDeadline())) {
+        // Ô đang có sự cố (khách không lấy được đồ): đồng hồ phí dừng ở lúc báo sự cố.
+        LocalDateTime incidentAt = OrderAccessPolicy.hasOpenBoxIncident(order) ? order.getBoxIncidentOpenedAt() : null;
+        LocalDateTime now = incidentAt != null && incidentAt.isBefore(LocalDateTime.now()) ? incidentAt : LocalDateTime.now();
+        if (order.getPickupDeadline() == null || !now.isAfter(order.getPickupDeadline())) {
             return BigDecimal.ZERO;
         }
         // Đơn đã kết thúc: phí quá hạn đã chốt, không tính tiếp theo đồng hồ.
@@ -1914,12 +2080,13 @@ public class OrderService {
         // Nếu đơn đã thanh toán xong và đang trong thời gian ân hạn (grace period) để lấy đồ:
         // đóng băng phí quá giờ tại mức hiện tại, không lũy kế thêm tiền trong lúc khách mở ô.
         int graceMinutes = rules.overtimeGracePeriodMinutes();
-        if (graceMinutes > 0 && order.getPaidAt() != null && "PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+        if (incidentAt == null && graceMinutes > 0 && order.getPaidAt() != null
+                && "PAID".equalsIgnoreCase(order.getPaymentStatus())) {
             if (LocalDateTime.now().isBefore(order.getPaidAt().plusMinutes(graceMinutes))) {
                 return order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
             }
         }
-        long minutes = Math.max(0, ChronoUnit.MINUTES.between(order.getPickupDeadline(), LocalDateTime.now()));
+        long minutes = Math.max(0, ChronoUnit.MINUTES.between(order.getPickupDeadline(), now));
         if (isRentalOrder(order)) {
             return rentalOvertimeFee(order, minutes);
         }
@@ -1955,6 +2122,15 @@ public class OrderService {
 
     private static boolean isRentalOrder(LockerOrder order) {
         return "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory());
+    }
+
+    private static void assertNoOpenBoxIncident(LockerOrder order) {
+        if (OrderAccessPolicy.hasOpenBoxIncident(order)) {
+            throw new BusinessException("ORDER_BOX_INCIDENT_OPEN",
+                    "Ô của đơn đang chờ KTV xử lý sự cố — đồ vẫn được giữ trong ô và phí quá giờ đang tạm dừng. "
+                            + "Lock.R sẽ báo khi lấy được đồ.",
+                    HttpStatus.CONFLICT);
+        }
     }
 
     private void validateStatus(LockerOrder order, Set<String> statuses) {
@@ -2067,7 +2243,8 @@ public class OrderService {
     }
 
     private OrderSummary toSummary(LockerOrder order) {
-        return new OrderSummary(order.getId(), order.getUserId(), order.getStatus(), order.getTotalPrice(), order.getType(), order.getOrderCode());
+        return new OrderSummary(order.getId(), order.getUserId(), order.getStatus(), order.getTotalPrice(), order.getType(),
+                order.getOrderCode(), OrderAccessPolicy.hasOpenBoxIncident(order));
     }
 
     private OrderResponse toResponse(LockerOrder order) {
@@ -2149,7 +2326,8 @@ public class OrderService {
                 order.getPointsUsed() == null ? 0 : order.getPointsUsed(),
                 order.getPointsDiscount() == null ? BigDecimal.ZERO : order.getPointsDiscount(),
                 overtimeRatePerHour(order),
-                !isRentalOrder(order));
+                !isRentalOrder(order),
+                OrderAccessPolicy.hasOpenBoxIncident(order) ? order.getBoxIncidentOpenedAt() : null);
     }
 
     /// Đơn giá mỗi giờ quá hạn hiển thị cho khách. Đơn thuê chỉ tra loại ô khi đơn có hạn (đã bắt đầu thuê).
@@ -2382,6 +2560,7 @@ public class OrderService {
         String boxLabel = newBoxNumber != null ? ("#" + newBoxNumber) : ("#" + newBoxId);
         addHistory(order.getId(), order.getStatus(), order.getStatus(), null,
                 "KTV điều chuyển hàng sang ô " + boxLabel + " do sự cố ô cũ");
+        closeBoxIncident(order, null, "KTV điều chuyển hàng sang ô " + boxLabel);
         LockerOrder saved = orderRepository.save(order);
 
         String where = lockerLabel(saved.getLockerId());
@@ -2415,6 +2594,9 @@ public class OrderService {
     public OrderResponse directHandover(Long orderId, String otp) {
         LockerOrder order = find(orderId);
         assertHandoverVerified(order, otp);
+        // Chốt phí ở mức lúc báo sự cố trước khi đơn hoàn tất (thời gian chờ KTV không tính).
+        capOvertimeAtIncident(order);
+        order.setBoxIncidentOpenedAt(null);
         order.setPinCode(null);
         addHistory(order.getId(), order.getStatus(), "COMPLETED", null,
                 "KTV đã bàn giao hàng trực tiếp cho khách hàng tại Kiosk do sự cố");

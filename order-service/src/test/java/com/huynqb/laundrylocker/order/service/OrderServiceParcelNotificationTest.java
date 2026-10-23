@@ -201,6 +201,32 @@ class OrderServiceParcelNotificationTest {
                 .orElseThrow(() -> new AssertionError("no " + type + " notification in " + sent));
     }
 
+    @Test
+    void receiverEmailNamesTheSenderAndCarriesTheirNote() {
+        LockerOrder order = storedSendOrder();
+        order.setCustomerNote("  Hàng dễ vỡ, nhẹ tay giúp mình  ");
+        var place = new OrderService.PickupPlace("Tủ Thư viện FPTU", "Tầng 1, Thư viện", 4);
+
+        String body = OrderService.receiverEmailBody(order, "Nguyễn Văn Gửi", place, "10:00 25/10/2026");
+
+        assertTrue(body.startsWith("Xin chào Người Nhận,\n\nNguyễn Văn Gửi đã gửi cho bạn một kiện hàng"), body);
+        assertTrue(body.contains("Người gửi: Nguyễn Văn Gửi\n"), body);
+        assertTrue(body.contains("Mã mở tủ: 111111\n"), body);
+        assertTrue(body.contains("Lời nhắn của người gửi: Hàng dễ vỡ, nhẹ tay giúp mình\n"), body);
+    }
+
+    @Test
+    void receiverEmailSkipsSenderAndNoteLinesWhenUnknown() {
+        LockerOrder order = storedSendOrder();
+        var place = new OrderService.PickupPlace("Tủ Thư viện FPTU", null, 4);
+
+        String body = OrderService.receiverEmailBody(order, null, place, "10:00 25/10/2026");
+
+        assertTrue(body.contains("Bạn có một kiện hàng đang chờ trong tủ Lock.R."), body);
+        assertFalse(body.contains("Người gửi:"), body);
+        assertFalse(body.contains("Lời nhắn"), body);
+    }
+
     private static LockerOrder storedSendOrder() {
         LockerOrder order = new LockerOrder();
         order.setId(33L);

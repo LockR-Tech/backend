@@ -186,6 +186,11 @@ public class LockerOrder {
     @Column(name = "pickup_deadline")
     private LocalDateTime pickupDeadline;
 
+    /// Ô của đơn (đang có hàng) bị báo sự cố và chưa được KTV xử lý: phí quá giờ dừng ở mốc này,
+    /// không thu tiền / không mở ô bằng mã tới khi xử lý xong. Null = không có sự cố đang mở.
+    @Column(name = "box_incident_opened_at")
+    private LocalDateTime boxIncidentOpenedAt;
+
     /// Lần đầu ô được mở để BỎ hàng (đơn còn INITIALIZED). Xác nhận bỏ hàng SEND
     /// dựa vào mốc này để không cho xác nhận khi chưa từng mở ô.
     @Column(name = "drop_opened_at")

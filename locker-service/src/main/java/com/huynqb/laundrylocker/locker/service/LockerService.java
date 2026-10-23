@@ -641,10 +641,19 @@ public class LockerService {
     public CellResponse markFault(
             Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments, String rolesHeader,
             Long orderId, String orderCode) {
+        return markFault(boxId, reason, userId, attachments, rolesHeader, orderId, orderCode, true);
+    }
+
+    /// `notifyOrder = false` khi chính order-service gọi (khách báo qua đơn): order-service tự mở sự cố
+    /// trên đơn, không gọi ngược lại.
+    @Transactional
+    public CellResponse markFault(
+            Long boxId, String reason, Long userId, List<ReportAttachmentRequest> attachments, String rolesHeader,
+            Long orderId, String orderCode, boolean notifyOrder) {
         LockerBox box = findBox(boxId);
         // KTV tủ tự báo ⇒ tự nhận phiếu luôn.
         Long assigneeId = actorRoles(userId, rolesHeader).contains(LOCKER_TECHNICIAN) ? userId : null;
-        reportBoxFault(box, reason, userId, attachments, assigneeId, null, orderId, orderCode);
+        reportBoxFault(box, reason, userId, attachments, assigneeId, null, orderId, orderCode, notifyOrder);
         return toCell(box);
     }
 
@@ -653,12 +662,12 @@ public class LockerService {
     private LockerReport reportBoxFault(
             LockerBox box, String reason, Long userId, List<ReportAttachmentRequest> attachments,
             Long assigneeId, String title) {
-        return reportBoxFault(box, reason, userId, attachments, assigneeId, title, null, null);
+        return reportBoxFault(box, reason, userId, attachments, assigneeId, title, null, null, true);
     }
 
     private LockerReport reportBoxFault(
             LockerBox box, String reason, Long userId, List<ReportAttachmentRequest> attachments,
-            Long assigneeId, String title, Long orderId, String orderCode) {
+            Long assigneeId, String title, Long orderId, String orderCode, boolean notifyOrder) {
         Long boxId = box.getId();
         if (orderId == null || !StringUtils.hasText(orderCode)) {
             ActiveBoxOrderDto activeOrder = getActiveOrderByBox(boxId);
@@ -719,7 +728,65 @@ public class LockerService {
             publishBoxFault(box, reason);
             syncBoxStateQuietly(box, "FAULT");
         }
+        if (notifyOrder && orderId != null) {
+            notifyBoxIncidentOpened(orderId);
+        }
         return report;
+    }
+
+    /// Báo lại order-service mọi đơn có hàng nằm trong ô đang có phiếu sự cố mở (order-service bỏ qua đơn
+    /// đã mở sự cố). Trả số đơn đã báo.
+    public int syncOpenBoxIncidentsToOrders() {
+        int synced = 0;
+        Set<Long> seen = new HashSet<>();
+        for (LockerReport report : reportRepository.findByStatusInOrderByCreatedAtDesc(OPEN_REPORT_STATUSES)) {
+            if (report.getBoxId() == null) {
+                continue;
+            }
+            Long orderId = report.getOrderId();
+            if (orderId == null) {
+                ActiveBoxOrderDto active = getActiveOrderByBox(report.getBoxId());
+                orderId = active == null ? null : active.orderId();
+            }
+            if (orderId != null && seen.add(orderId)) {
+                notifyBoxIncidentOpened(orderId);
+                synced++;
+            }
+        }
+        return synced;
+    }
+
+    /// Ô đang có hàng của một đơn vừa bị báo sự cố ⇒ order-service dừng phí quá giờ, chặn thu tiền / mở ô
+    /// bằng mã tới khi KTV xử lý. Best-effort: lỗi chỉ ghi log, không làm hỏng việc báo hỏng.
+    private void notifyBoxIncidentOpened(Long orderId) {
+        try {
+            orderClient.boxIncidentOpened(orderId);
+        } catch (Exception ex) {
+            log.warn("Could not open box incident on order {}: {}", orderId, ex.getMessage());
+        }
+    }
+
+    /// Phiếu báo sự cố có chọn ô (màn "Báo sự cố" của tủ): trước đây chỉ tạo phiếu, ô vẫn AVAILABLE nên
+    /// vẫn được cấp cho đơn mới (ô drone có phiếu mở vẫn hiện "Sẵn sàng nhận Drone") và ô có hàng vẫn hiện
+    /// như thường. Đưa ô về FAULT, nhớ trạng thái đơn đang giữ ô để đóng phiếu là trả lại đúng
+    /// (restoreAssetsAfterClose), và mở sự cố trên đơn nếu ô đang có hàng.
+    private void faultBoxOfReport(LockerReport report) {
+        LockerBox box = boxRepository.findById(report.getBoxId()).orElse(null);
+        if (box == null || !Objects.equals(box.getLockerId(), report.getLockerId())) {
+            return;
+        }
+        if (!"FAULT".equalsIgnoreCase(box.getStatus())) {
+            box.setPreFaultStatus("AVAILABLE".equalsIgnoreCase(box.getStatus()) ? null : box.getStatus());
+            box.setStatus("FAULT");
+            String reason = StringUtils.hasText(report.getDescription()) ? report.getDescription() : report.getTitle();
+            box.setFaultReason(reason != null && reason.length() > 500 ? reason.substring(0, 500) : reason);
+            boxRepository.save(box);
+            publishBoxFault(box, box.getFaultReason());
+            syncBoxStateQuietly(box, "FAULT");
+        }
+        if (report.getOrderId() != null) {
+            notifyBoxIncidentOpened(report.getOrderId());
+        }
     }
 
     /// Báo trùng một ô đang có phiếu mở: thêm một dòng nhật ký + ảnh hiện trường của người báo vào phiếu cũ.
@@ -1024,6 +1091,9 @@ public class LockerService {
         attachmentService.attach(
                 saved, AttachmentStage.REPORT, request.attachments(), userId, null,
                 rules.reportPhotosPerRequestReporter());
+        if (request.boxId() != null) {
+            faultBoxOfReport(saved);
+        }
         if (blocking && "ACTIVE".equalsIgnoreCase(locker.getStatus())) {
             locker.setStatus("MAINTENANCE");
             locker.setMaintenanceSource(MAINTENANCE_SOURCE_TICKET);
@@ -1613,9 +1683,29 @@ public class LockerService {
         report.setResolvedAt(java.time.LocalDateTime.now());
         LockerReport saved = reportRepository.save(report);
         restoreAssetsAfterClose(saved);
+        if (saved.getOrderId() != null && !hasOtherOpenReportForOrder(saved)) {
+            notifyBoxIncidentResolved(saved.getOrderId(), "Hoàn tất phiếu sự cố RPT-" + saved.getId());
+        }
         publishReportNotification(saved, DomainEventNames.LOCKER_REPORT_RESOLVED,
                 "đã được xử lý xong");
         return saved;
+    }
+
+    private boolean hasOtherOpenReportForOrder(LockerReport report) {
+        return reportRepository.findByOrderIdOrderByCreatedAtDesc(report.getOrderId()).stream()
+                .anyMatch(r -> !r.getId().equals(report.getId())
+                        && OPEN_REPORT_STATUSES.contains(r.getStatus()));
+    }
+
+    /// Đơn có hàng không còn kẹt vì sự cố ô ⇒ order-service mở lại việc lấy đồ và bù thời gian chờ KTV
+    /// vào hạn (phí quá giờ đã dừng từ lúc khách báo). Best-effort: lỗi chỉ ghi log — admin còn gỡ được
+    /// bằng tay trên đơn; không được làm hỏng việc KTV đóng phiếu.
+    private void notifyBoxIncidentResolved(Long orderId, String note) {
+        try {
+            orderClient.boxIncidentResolved(orderId, note);
+        } catch (Exception ex) {
+            log.warn("Could not resume order {} after box incident: {}", orderId, ex.getMessage());
+        }
     }
 
     /// Khôi phục ô/bãi đáp đang có phiếu mở = hoàn tất phiếu đó. Người chưa được giao phiếu nhận
@@ -4322,6 +4412,11 @@ public class LockerService {
                     } catch (Exception ex) {
                         log.warn("Could not record quick fix history on order {}: {}", activeOrder.orderId(), ex.getMessage());
                     }
+                    // Sửa xong mà không khoá ô ⇒ khách lấy đồ được ngay.
+                    if (!shouldLock) {
+                        notifyBoxIncidentResolved(activeOrder.orderId(),
+                                "KTV khắc phục sự cố tại ô #" + box.getBoxNumber());
+                    }
                 }
 
                 if (shouldLock) {
@@ -4500,6 +4595,10 @@ public class LockerService {
                         boxRepository.save(box);
                         syncBoxStateQuietly(box, currentStatus);
                         note = "[KIỂM TRA HIỆN TRƯỜNG] KTV kiểm tra hiện trường: Không khóa ô #" + box.getBoxNumber() + ", giữ nguyên trạng thái ô và hàng của khách (" + currentStatus + ")";
+                        if (activeOrder != null) {
+                            notifyBoxIncidentResolved(activeOrder.orderId(),
+                                    "KTV kiểm tra ô #" + box.getBoxNumber() + ": ô hoạt động, không khoá");
+                        }
                         publishLockerLayoutUpdated(box.getLockerId(), box.getId(), box.getBoxNumber(), currentStatus, "Ô #" + box.getBoxNumber() + " có hàng, giữ trạng thái hoạt động");
                     } else {
                         box.setStatus("AVAILABLE");

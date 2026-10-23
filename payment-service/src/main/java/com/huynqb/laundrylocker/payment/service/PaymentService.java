@@ -116,6 +116,12 @@ public class PaymentService {
         if (order == null) {
             throw new NotFoundException("Order", request.orderId());
         }
+        // Ô của đơn đang chờ KTV xử lý sự cố: khách chưa lấy được đồ nên chưa thu (phí quá giờ đang dừng).
+        if (Boolean.TRUE.equals(order.boxIncidentOpen())) {
+            throw new BusinessException("ORDER_BOX_INCIDENT_OPEN",
+                    "Ô của đơn đang chờ KTV xử lý sự cố — phí quá giờ đang tạm dừng, bạn chưa cần thanh toán",
+                    HttpStatus.CONFLICT);
+        }
         BigDecimal totalAmount = order.totalPrice() == null ? BigDecimal.ZERO : order.totalPrice();
         BigDecimal completedAmount = repository.findByOrderId(request.orderId()).stream()
                 .filter(p -> "COMPLETED".equals(p.getStatus()))
@@ -366,9 +372,18 @@ public class PaymentService {
     /// `app.payment.simulation-enabled` và tài khoản nằm trong danh sách cho phép; chỉ người trả (hoặc ADMIN).
     @Transactional
     public PaymentResponse simulateTransfer(Long userId, String roles, Long paymentId, String referenceId, BigDecimal amount) {
-        if (!rules.simulationAllowedFor(userId)) {
+        // Hai lý do tách riêng: app chỉ biết công tắc bật/tắt (danh sách tài khoản không công khai)
+        // nên vẫn hiện nút cho tài khoản ngoài danh sách — câu báo phải nói đúng phải sửa ở đâu.
+        if (!rules.simulationEnabled()) {
             throw new BusinessException("PAYMENT_SIMULATION_DISABLED",
-                    "Giả lập thanh toán đang tắt hoặc tài khoản này không được dùng", HttpStatus.FORBIDDEN);
+                    "Giả lập thanh toán đang tắt (Admin → Cài đặt → Thanh toán → Giả lập thanh toán)",
+                    HttpStatus.FORBIDDEN);
+        }
+        if (!rules.simulationAllowedFor(userId)) {
+            throw new BusinessException("PAYMENT_SIMULATION_NOT_ALLOWED",
+                    "Tài khoản #" + userId + " chưa có trong danh sách \"Tài khoản được giả lập thanh toán\" "
+                            + "(Admin → Cài đặt → Thanh toán → Giả lập thanh toán)",
+                    HttpStatus.FORBIDDEN);
         }
         PaymentRecord payment = paymentId != null
                 ? find(paymentId)
@@ -380,7 +395,8 @@ public class PaymentService {
         String method = payment.getMethod() == null ? "" : payment.getMethod().toUpperCase(Locale.ROOT);
         if (!method.startsWith("SEPAY") || !"PENDING".equalsIgnoreCase(payment.getStatus())) {
             throw new BusinessException("PAYMENT_SIMULATION_INVALID",
-                    "Chỉ giả lập được giao dịch chuyển khoản đang chờ thanh toán", HttpStatus.CONFLICT);
+                    "Chỉ giả lập được giao dịch chuyển khoản đang chờ thanh toán (giao dịch này đang "
+                            + payment.getStatus() + ")", HttpStatus.CONFLICT);
         }
         BigDecimal received = amount != null && amount.signum() > 0 ? amount : payment.getAmount();
         if (received == null || received.signum() <= 0) {

@@ -21,6 +21,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DELIVERY_FEE = "app.order.drone-delivery-fee";
     public static final String RENTAL_RATE_STANDARD = "app.order.rental-rate-standard";
     public static final String RENTAL_RATE_XL = "app.order.rental-rate-xl";
+    public static final String RENTAL_DAILY_RATE_STANDARD = "app.order.rental-daily-rate-standard";
+    public static final String RENTAL_DAILY_RATE_XL = "app.order.rental-daily-rate-xl";
     public static final String STORAGE_ITEM_FEE = "app.order.storage-item-fee";
     public static final String OVERTIME_FEE_PER_HOUR = "app.order.pickup-overtime-fee-per-hour";
     public static final String MAX_OVERTIME_FEE = "app.order.pickup-max-overtime-fee";
@@ -51,6 +53,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String AUTO_CANCEL_UNPAID_MINUTES = "app.order.auto-cancel-unpaid-minutes";
     public static final String OVERDUE_RELEASE_HOURS = "app.order.overdue-release-hours";
     public static final String OVERTIME_GRACE_PERIOD_MINUTES = "app.order.overtime-grace-period-minutes";
+    public static final String BOX_INCIDENT_PICKUP_GRACE_HOURS = "app.order.box-incident-pickup-grace-hours";
     public static final String RENTAL_AUTO_RELEASE_ENABLED = "app.order.rental-auto-release-enabled";
     public static final String REMINDER_COOLDOWN_MINUTES = "app.order.reminder-cooldown-minutes";
     public static final String RENTAL_MIN_HOURS = "app.order.rental-min-hours";
@@ -111,6 +114,13 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Giá mỗi giờ thuê ô STANDARD (và mọi loại ô không phải XL).", 5000, 0, 10_000_000, "VND/giờ").asPublic(),
                 integer(RENTAL_RATE_XL, PRICING, "Giá thuê ô XL",
                         "Giá mỗi giờ thuê ô cỡ XL.", 10000, 0, 10_000_000, "VND/giờ").asPublic(),
+                integer(RENTAL_DAILY_RATE_STANDARD, PRICING, "Giá thuê ô tiêu chuẩn theo ngày",
+                        "Giá mỗi 24 giờ thuê ô STANDARD, cũng là trần của phần giờ lẻ trong ngày: thuê 30 giờ = "
+                                + "1 ngày + min(6 × giá giờ, giá ngày). 0 = không có giá ngày, chỉ tính theo giờ.",
+                        40000, 0, 100_000_000, "VND/ngày").asPublic(),
+                integer(RENTAL_DAILY_RATE_XL, PRICING, "Giá thuê ô XL theo ngày",
+                        "Như giá ngày ô tiêu chuẩn, cho ô cỡ XL. 0 = chỉ tính theo giờ.",
+                        80000, 0, 100_000_000, "VND/ngày").asPublic(),
                 integer(STORAGE_ITEM_FEE, PRICING, "Phí lưu trữ mỗi món",
                         "Đơn giá mỗi dòng hàng khi tạo đơn lưu trữ có danh sách món.", 5000, 0, 10_000_000, "VND").asPublic(),
                 integer(OVERTIME_FEE_PER_HOUR, PRICING, "Phí quá hạn mỗi giờ",
@@ -156,6 +166,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         15, 1, 180, "phút").asPublic(),
                 integer(OVERDUE_RELEASE_HOURS, DEADLINES, "Nhả ô quá hạn sau",
                         "Số giờ sau hạn lấy hàng thì đơn chuyển EXPIRED và nhả ô. 0 = không tự nhả (tiếp tục lưu giữ tại tủ và tính phí quá hạn).", 72, 0, 720, "giờ").asPublic(),
+                integer(BOX_INCIDENT_PICKUP_GRACE_HOURS, DEADLINES, "Thời gian lấy đồ thêm sau khi xử lý sự cố ô",
+                        "Ô của đơn đang có hàng bị báo sự cố: phí quá giờ dừng trong lúc chờ KTV. Xử lý xong, hạn lấy "
+                                + "đồ được cộng bù đúng thời gian bị kẹt và thêm số giờ này để khách kịp tới lấy.",
+                        2, 0, 72, "giờ").asPublic(),
                 integer(OVERTIME_GRACE_PERIOD_MINUTES, DEADLINES, "Thời gian ân hạn phí quá giờ khi thanh toán",
                         "Sau khi khách nộp phí quá hạn, hệ thống đóng băng phí trong số phút này để khách mở tủ lấy đồ mà không bị phát sinh thêm tiền. 0 = không ân hạn.", 15, 0, 180, "phút").asPublic(),
                 integer(REMINDER_COOLDOWN_MINUTES, DEADLINES, "Khoảng cách nhắc quá hạn",

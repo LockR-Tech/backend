@@ -82,10 +82,9 @@ public class IotService {
                     request.lockerId(), request.boxId(), verification.orderId(),
                     verification.orderType(), verification.orderStatus());
         } catch (Exception e) {
-            log.error("Timeout or error waiting for IoT device", e);
-            logAccess(request.boxId(), request.lockerId(), verification.orderId(), actorUserId, "PIN_OR_QR", "TIMEOUT",
-                    "Lỗi phần cứng tủ: Quá thời gian chờ phản hồi (Timeout " + rules.unlockWaitSeconds() + "s)");
-            return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", "IoT device timeout");
+            String message = logUnlockNotConfirmed(e, request.boxId(), request.lockerId(), verification.orderId(),
+                    actorUserId, "PIN_OR_QR");
+            return Map.of("accepted", false, "lockerId", request.lockerId(), "boxId", request.boxId(), "message", message);
         }
     }
 
@@ -257,10 +256,8 @@ public class IotService {
             afterOpen(order.id(), order.status(), order.type(), order.userId());
             return opened(request.lockerId(), boxId, order.id(), order.type(), order.status());
         } catch (Exception e) {
-            log.error("Timeout or error waiting for IoT device on unlock-with-code", e);
-            logAccess(boxId, request.lockerId(), order.id(), null, "ACCESS_CODE", "TIMEOUT",
-                    "Lỗi phần cứng tủ Kiosk: Quá thời gian chờ phản hồi (Timeout " + rules.unlockWaitSeconds() + "s)");
-            return Map.of("accepted", false, "boxId", boxId, "message", "IoT device timeout");
+            String message = logUnlockNotConfirmed(e, boxId, request.lockerId(), order.id(), null, "ACCESS_CODE");
+            return Map.of("accepted", false, "boxId", boxId, "message", message);
         }
     }
 
@@ -377,6 +374,10 @@ public class IotService {
         }
         if (!"STORING".equalsIgnoreCase(order.status()) && !"RETURNED".equalsIgnoreCase(order.status())) {
             return denied(null, "Đơn thuê này không còn hoạt động.", "ORDER_STATUS_INVALID");
+        }
+        // Ô đang chờ KTV: kết thúc thuê sẽ nhả ô trong khi đồ còn kẹt bên trong.
+        if ("BOX_INCIDENT_OPEN".equals(order.accessBlockReason())) {
+            return denied(null, blockMessage(order.accessBlockReason()), order.accessBlockReason());
         }
         if (!openedRecently(order.id())) {
             return denied(null, "Vui lòng mở ô bằng mã và lấy hết đồ trước khi kết thúc thuê.", "NOT_OPENED_RECENTLY");
@@ -519,6 +520,8 @@ public class IotService {
             case "RENTAL_EXPIRED" -> "Đã hết thời gian thuê. Vui lòng thanh toán phí quá giờ trên ứng dụng để mở ô.";
             case "OVERTIME_FEE_UNPAID" -> "Đơn đã quá hạn lấy hàng. Vui lòng thanh toán phụ phí quá hạn trên ứng dụng để mở ô.";
             case "RENTAL_UNPAID" -> "Còn phí gia hạn chưa thanh toán. Vui lòng thanh toán trên ứng dụng để mở ô.";
+            case "BOX_INCIDENT_OPEN" -> "Ô này đang chờ kỹ thuật viên xử lý sự cố. Đồ của bạn vẫn an toàn trong ô và "
+                    + "phí quá giờ đang tạm dừng — Lock.R sẽ báo khi lấy được đồ.";
             default -> "Mã này tạm thời chưa mở được ô.";
         };
     }
@@ -580,6 +583,40 @@ public class IotService {
     public void logExternalAccess(
             Long boxId, Long lockerId, Long orderId, Long actorUserId, String credentialType, String result, String message) {
         logAccess(boxId, lockerId, orderId, actorUserId, credentialType, result, message);
+    }
+
+    static final String UNLOCK_TIMEOUT_MESSAGE = "Tủ không phản hồi lệnh mở, ô có thể chưa mở. Vui lòng thử lại.";
+    static final String UNLOCK_SEND_FAILED_MESSAGE = "Không gửi được lệnh mở tới tủ, ô chưa mở. Vui lòng thử lại.";
+    static final String UNLOCK_SERVER_ERROR_MESSAGE = "Có lỗi khi xử lý lệnh mở ô. Vui lòng thử lại hoặc liên hệ hỗ trợ.";
+
+    /// Lệnh mở ô bằng mã không được tủ xác nhận: ghi nhật ký đúng nguyên nhân và trả câu cho khách.
+    /// Tách ba trường hợp mà trước đây đều ghi là "timeout": tủ không trả lời trong thời gian chờ,
+    /// không gửi được lệnh (broker/MQTT), và lỗi phía máy chủ sau khi gửi lệnh.
+    String logUnlockNotConfirmed(
+            Exception e, Long boxId, Long lockerId, Long orderId, Long actorUserId, String credentialType) {
+        if (e instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+        int waitSeconds = rules.unlockWaitSeconds();
+        if (e instanceof java.util.concurrent.TimeoutException
+                || e.getCause() instanceof java.util.concurrent.TimeoutException) {
+            log.warn("Unlock of box {} not confirmed by the cabinet after {}s", boxId, waitSeconds);
+            logAccess(boxId, lockerId, orderId, actorUserId, credentialType, "TIMEOUT",
+                    "Tủ không phản hồi lệnh mở sau " + waitSeconds + " giây (Timeout " + waitSeconds
+                            + "s) — bộ điều khiển có thể mất điện hoặc mất mạng; ô có thể chưa mở");
+            return UNLOCK_TIMEOUT_MESSAGE;
+        }
+        if (e instanceof java.util.concurrent.ExecutionException || e instanceof InterruptedException) {
+            log.error("Unlock command for box {} could not be sent", boxId, e);
+            logAccess(boxId, lockerId, orderId, actorUserId, credentialType, "FAILED",
+                    "Không gửi được lệnh mở tới bộ điều khiển tủ (kết nối MQTT lỗi) — ô chưa mở");
+            return UNLOCK_SEND_FAILED_MESSAGE;
+        }
+        log.error("Unlock of box {} failed while processing", boxId, e);
+        logAccess(boxId, lockerId, orderId, actorUserId, credentialType, "FAILED",
+                DeviceManagementService.truncate("Lỗi máy chủ khi xử lý lệnh mở ô (" + e.getClass().getSimpleName()
+                        + (e.getMessage() == null ? "" : ": " + e.getMessage()) + ")", ACCESS_LOG_MESSAGE_MAX));
+        return UNLOCK_SERVER_ERROR_MESSAGE;
     }
 
     private void logAccess(

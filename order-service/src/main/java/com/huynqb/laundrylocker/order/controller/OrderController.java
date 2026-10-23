@@ -146,6 +146,22 @@ public class OrderController {
         return ApiResponse.ok("ORDER_HUB_ESCROWED", "Order escrowed to hub", orderService.hubEscrow(id, sealNumber));
     }
 
+    /// locker-service gọi khi KTV xử lý xong sự cố ô có hàng (sửa tại chỗ, kiểm tra không lỗi, hoàn tất
+    /// phiếu): mở lại việc lấy đồ, bù thời gian chờ vào hạn. Gọi lặp an toàn.
+    /// locker-service gọi khi ô có hàng của đơn bị báo sự cố qua đường không đi qua order-service.
+    @PostMapping("/internal/orders/{id}/box-incident-opened")
+    public ApiResponse<OrderResponse> boxIncidentOpened(@PathVariable Long id) {
+        return ApiResponse.ok("ORDER_BOX_INCIDENT_OPENED", "Box incident opened", orderService.boxIncidentOpened(id));
+    }
+
+    @PostMapping("/internal/orders/{id}/box-incident-resolved")
+    public ApiResponse<OrderResponse> boxIncidentResolved(
+            @PathVariable Long id,
+            @RequestParam(required = false) String note) {
+        return ApiResponse.ok("ORDER_BOX_INCIDENT_RESOLVED", "Box incident resolved",
+                orderService.resumeAfterBoxIncident(id, null, note));
+    }
+
     @PostMapping("/internal/orders/{id}/incident-note")
     public ApiResponse<Void> addIncidentNote(
             @PathVariable Long id,

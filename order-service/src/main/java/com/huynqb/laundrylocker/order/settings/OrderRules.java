@@ -44,6 +44,29 @@ public class OrderRules {
         return BigDecimal.valueOf(settings.getLong("XL".equalsIgnoreCase(cellType) ? RENTAL_RATE_XL : RENTAL_RATE_STANDARD));
     }
 
+    /// Giá mỗi 24 giờ thuê; 0 = loại ô này không có giá ngày.
+    public BigDecimal rentalDailyRate(String cellType) {
+        return BigDecimal.valueOf(settings.getLong(
+                "XL".equalsIgnoreCase(cellType) ? RENTAL_DAILY_RATE_XL : RENTAL_DAILY_RATE_STANDARD));
+    }
+
+    /// Giá thuê [hours] giờ: mỗi 24 giờ trọn tính một giá ngày, giờ lẻ tính theo giờ nhưng
+    /// không vượt giá ngày. Không có giá ngày thì thuần theo giờ. Giá ngày đặt cao hơn 24 giờ
+    /// lẻ thì hạ về 24 × giá giờ, để thuê thêm một giờ không bao giờ đắt vọt lên. Dùng chung
+    /// cho lúc đặt và lúc gia hạn, nên app/kiosk tính lại được đúng số tiền server thu.
+    public BigDecimal rentalPrice(String cellType, long hours) {
+        if (hours <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal hourly = rentalRate(cellType);
+        BigDecimal daily = rentalDailyRate(cellType).min(hourly.multiply(BigDecimal.valueOf(24)));
+        if (daily.signum() <= 0) {
+            return hourly.multiply(BigDecimal.valueOf(hours));
+        }
+        BigDecimal rest = hourly.multiply(BigDecimal.valueOf(hours % 24)).min(daily);
+        return daily.multiply(BigDecimal.valueOf(hours / 24)).add(rest);
+    }
+
     public BigDecimal storageItemFee() {
         return BigDecimal.valueOf(settings.getLong(STORAGE_ITEM_FEE));
     }
@@ -171,6 +194,10 @@ public class OrderRules {
 
     public int overtimeGracePeriodMinutes() {
         return settings.getInt(OVERTIME_GRACE_PERIOD_MINUTES);
+    }
+
+    public int boxIncidentPickupGraceHours() {
+        return settings.getInt(BOX_INCIDENT_PICKUP_GRACE_HOURS);
     }
 
     public boolean rentalAutoReleaseEnabled() {

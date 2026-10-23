@@ -32,6 +32,14 @@ public interface OrderClient {
             @PathVariable("id") Long id,
             @RequestParam("sealNumber") String sealNumber);
 
+    @PostMapping("/{id}/box-incident-opened")
+    ApiResponse<Map<String, Object>> boxIncidentOpened(@PathVariable("id") Long id);
+
+    @PostMapping("/{id}/box-incident-resolved")
+    ApiResponse<Map<String, Object>> boxIncidentResolved(
+            @PathVariable("id") Long id,
+            @RequestParam(value = "note", required = false) String note);
+
     @PostMapping("/{id}/incident-note")
     ApiResponse<Void> addIncidentNote(
             @PathVariable("id") Long id,

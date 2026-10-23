@@ -27,6 +27,20 @@ public class LockerScheduler {
         }
     }
 
+    // Đơn có hàng nằm trong ô đang có phiếu sự cố mở phải được order-service dừng phí. Lần báo lúc tạo
+    // phiếu có thể hỏng (order-service tạm ngừng) hoặc phiếu có từ trước bản này — quét lại định kỳ.
+    @Scheduled(fixedDelayString = "${app.locker.box-incident-sync-ms:600000}", initialDelay = 90000)
+    public void syncOpenBoxIncidents() {
+        try {
+            int synced = lockerService.syncOpenBoxIncidentsToOrders();
+            if (synced > 0) {
+                log.info("Synced {} open box incident(s) to their orders", synced);
+            }
+        } catch (Exception ex) {
+            log.warn("Box incident sync failed: {}", ex.getMessage());
+        }
+    }
+
     // Giờ VN (JVM chạy UTC). Mỗi kỳ hạn chỉ nhắc một lần nên chạy lại cũng không nhắc trùng.
     @Scheduled(cron = "${app.maintenance.schedule-reminder-cron:0 0 7 * * *}", zone = "Asia/Ho_Chi_Minh")
     public void remindDueSchedules() {
