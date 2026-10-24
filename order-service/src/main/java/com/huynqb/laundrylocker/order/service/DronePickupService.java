@@ -321,6 +321,17 @@ public class DronePickupService {
                         pickupPoint, presence.getLatitude(), presence.getLongitude()))))
                 .sorted(Comparator.comparingInt(Candidate::distanceMeters).thenComparing(Candidate::technicianId))
                 .toList();
+        if (candidates.isEmpty()) {
+            // Khi KTV dang trong ca truc nhung chua co toa do moi trong 10 phut (KTV cho lenh tai tram,
+            // thiet bi o che do cho), uu tien dieu phoi cho KTV on-duty san co thay vi de don ket o SEARCHING.
+            candidates = presenceRepository.findByOnDutyTrue().stream()
+                    .filter(presence -> presence.getLatitude() != null && presence.getLongitude() != null)
+                    .filter(presence -> !recentlyPassed.contains(presence.getUserId()))
+                    .map(presence -> new Candidate(presence.getUserId(), (int) Math.round(DroneTelemetryService.distanceM(
+                            pickupPoint, presence.getLatitude(), presence.getLongitude()))))
+                    .sorted(Comparator.comparingInt(Candidate::distanceMeters).thenComparing(Candidate::technicianId))
+                    .toList();
+        }
         for (Candidate candidate : candidates) {
             // Khoá dòng KTV: hai đơn được trả tiền cùng lúc không mời trùng một người.
             DroneTechnicianPresence locked =

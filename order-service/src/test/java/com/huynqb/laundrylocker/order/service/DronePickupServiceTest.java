@@ -90,6 +90,50 @@ class DronePickupServiceTest {
     }
 
     @Test
+    void offerPendingFallsBackToOnDutyTechnicianWhenLocationIsStale() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        when(rules.droneTechnicianLocationMaxAgeMinutes()).thenReturn(10);
+        when(rules.dronePickupOfferSeconds()).thenReturn(180);
+
+        LockerOrder order = order(30L, "AWAITING_DISPATCH", "AWAITING_DISPATCH");
+        order.setType("DRONE_DELIVERY");
+        order.setPickupLatitude(10.7769);
+        order.setPickupLongitude(106.7009);
+        order.setOrderCode("ORD-30");
+        order.setPickupAddress("123 Test St");
+
+        DronePickup waiting = pickup(30L, DronePickup.SEARCHING);
+        waiting.setId(99L);
+        when(pickupRepository.findByStatusInOrderByCreatedAtAsc(List.of(DronePickup.SEARCHING)))
+                .thenReturn(List.of(waiting));
+        when(orderRepository.findByIdForUpdate(30L)).thenReturn(Optional.of(order));
+        when(pickupRepository.findByOrderIdForUpdate(30L)).thenReturn(Optional.of(waiting));
+        when(offerRepository.findByPickupId(99L)).thenReturn(List.of());
+
+        // Location was updated 20 minutes ago (> 10 mins)
+        com.huynqb.laundrylocker.order.model.DroneTechnicianPresence presence =
+                new com.huynqb.laundrylocker.order.model.DroneTechnicianPresence();
+        presence.setUserId(TECHNICIAN_ID);
+        presence.setOnDuty(true);
+        presence.setLatitude(10.7770);
+        presence.setLongitude(106.7010);
+        presence.setLocationAt(now.minusMinutes(20));
+
+        when(presenceRepository.findByOnDutyTrue()).thenReturn(List.of(presence));
+        when(presenceRepository.findByUserIdForUpdate(TECHNICIAN_ID)).thenReturn(Optional.of(presence));
+        when(pickupRepository.findByTechnicianIdAndStatusInOrderByCreatedAtDesc(eq(TECHNICIAN_ID), anyCollection()))
+                .thenReturn(List.of());
+        when(missionRepository.findByAssignedByUserIdAndStatusIn(eq(TECHNICIAN_ID), anyCollection()))
+                .thenReturn(List.of());
+
+        int offered = service.offerPending(now);
+
+        org.junit.jupiter.api.Assertions.assertEquals(1, offered);
+        org.junit.jupiter.api.Assertions.assertEquals(DronePickup.OFFERED, waiting.getStatus());
+        org.junit.jupiter.api.Assertions.assertEquals(TECHNICIAN_ID, waiting.getTechnicianId());
+    }
+
+    @Test
     void staleActiveMissionOfCompletedOrderDoesNotKeepTechnicianBusy() {
         when(pickupRepository.findByTechnicianIdAndStatusInOrderByCreatedAtDesc(
                 eq(TECHNICIAN_ID), anyCollection())).thenReturn(List.of());
