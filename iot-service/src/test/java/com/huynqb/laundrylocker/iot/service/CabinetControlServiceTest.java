@@ -33,11 +33,12 @@ class CabinetControlServiceTest {
     @Mock LockerMqttService mqtt;
     @Mock LockerClient lockerClient;
     @Mock CabinetControlLogService logs;
+    @Mock CabinetLayoutLookup layoutLookup;
     CabinetControlService service;
 
     @BeforeEach
     void setUp() {
-        service = new CabinetControlService(mqtt, lockerClient, TestIotRules.of(Map.of()), logs);
+        service = new CabinetControlService(mqtt, lockerClient, TestIotRules.of(Map.of()), logs, layoutLookup);
         when(lockerClient.lockers(List.of(LOCKER))).thenReturn(
                 ApiResponse.ok(List.of(new LockerView(LOCKER, "CAB-TU01", "Tủ thật", TECH))));
     }
@@ -148,5 +149,59 @@ class CabinetControlServiceTest {
         assertEquals(false, r.get("accepted"));
         assertEquals("FAILED", r.get("status"));
         assertEquals("Trục 2 chưa bật trên Pi", r.get("message"));
+    }
+
+    // ---- Mở thử ô bằng QR, không cần đơn ----
+
+    static final long CUSTOMER = 501L, BOX = 39L, FULL_BOX = 40L;
+
+    private CabinetControlService testOpenService(boolean enabled, String userIds, String lockerIds) {
+        when(layoutLookup.layout(LOCKER)).thenReturn(java.util.Optional.of(new com.huynqb.laundrylocker.iot.dto.LockerLayoutView(
+                LOCKER, "CAB-TU01", "Tủ thật", List.of(
+                        new com.huynqb.laundrylocker.iot.dto.LockerLayoutView.Cell(BOX, 2, 0, 1, "AVAILABLE"),
+                        new com.huynqb.laundrylocker.iot.dto.LockerLayoutView.Cell(FULL_BOX, 3, 0, 2, "OCCUPIED")))));
+        return new CabinetControlService(mqtt, lockerClient, TestIotRules.of(Map.of(
+                com.huynqb.laundrylocker.iot.settings.IotSettingsCatalog.TEST_OPEN_ENABLED, enabled,
+                com.huynqb.laundrylocker.iot.settings.IotSettingsCatalog.TEST_OPEN_USER_IDS, userIds,
+                com.huynqb.laundrylocker.iot.settings.IotSettingsCatalog.TEST_OPEN_LOCKER_IDS, lockerIds)), logs, layoutLookup);
+    }
+
+    private String testOpenError(CabinetControlService s, long lockerId, long boxId, Long userId) {
+        return assertThrows(BusinessException.class, () -> s.testOpenBox(lockerId, boxId, userId)).getCode();
+    }
+
+    @Test
+    void testOpenIsOffByDefault() {
+        assertEquals("TEST_OPEN_DISABLED", testOpenError(service, LOCKER, BOX, CUSTOMER));
+        verify(mqtt, never()).sendUnlockCommandAsync(anyLong(), anyLong());
+    }
+
+    @Test
+    void testOpenNeedsBothTheAccountAndTheLockerOnTheList() {
+        assertEquals("TEST_OPEN_USER_NOT_ALLOWED", testOpenError(testOpenService(true, "0", "7"), LOCKER, BOX, CUSTOMER));
+        assertEquals("TEST_OPEN_USER_NOT_ALLOWED", testOpenError(testOpenService(true, "501", "7"), LOCKER, BOX, null));
+        assertEquals("TEST_OPEN_LOCKER_NOT_ALLOWED", testOpenError(testOpenService(true, "501", "0"), LOCKER, BOX, CUSTOMER));
+        verify(mqtt, never()).sendUnlockCommandAsync(anyLong(), anyLong());
+        verifyNoInteractions(logs);
+    }
+
+    @Test
+    void allowedTesterOpensAnyFreeBoxOfTheLockerAndItIsLogged() {
+        when(mqtt.sendUnlockCommandAsync(LOCKER, BOX)).thenReturn(accepted());
+        Map<String, Object> r = testOpenService(true, "12,501", "7").testOpenBox(LOCKER, BOX, CUSTOMER);
+        assertEquals(true, r.get("accepted"));
+        verify(mqtt).sendUnlockCommandAsync(LOCKER, BOX);
+        verify(logs).recordWeb(eq(LOCKER), eq(CUSTOMER), eq("BOX_OPEN_TEST"), isNull(), eq(BOX), isNull(),
+                eq("ACCEPTED"), startsWith("Mở thử bằng QR"));
+    }
+
+    @Test
+    void testOpenNeverOpensABoxHoldingAnOrderOrABoxOfAnotherLocker() {
+        CabinetControlService s = testOpenService(true, "501", "7");
+        assertEquals("BOX_IN_USE", testOpenError(s, LOCKER, FULL_BOX, CUSTOMER));
+        assertEquals("BOX_NOT_IN_LOCKER", testOpenError(s, LOCKER, 999L, CUSTOMER));
+        when(layoutLookup.layout(LOCKER)).thenReturn(java.util.Optional.empty());
+        assertEquals("LOCKER_LOOKUP_FAILED", testOpenError(s, LOCKER, BOX, CUSTOMER));
+        verify(mqtt, never()).sendUnlockCommandAsync(anyLong(), anyLong());
     }
 }

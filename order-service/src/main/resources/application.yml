@@ -109,6 +109,9 @@ app:
       scheduler-delay-ms: ${APP_DRONE_DEMO_SCHEDULER_DELAY_MS:1000}
       indoor-aruco-enabled: ${APP_DRONE_DEMO_INDOOR_ARUCO_ENABLED:false}
       hold-open-seconds: ${APP_DRONE_DEMO_HOLD_OPEN_SECONDS:7}
+    delivery:
+      # Tủ không phản hồi lệnh mở nắp quá số giây này thì huỷ phiên giao (admin chỉnh được ở trang cấu hình).
+      open-lid-max-wait-seconds: ${APP_DRONE_DELIVERY_OPEN_LID_MAX_WAIT_SECONDS:600}
     # Telemetry drone thật qua MQTT (đơn STANDARD) — docs/01-overview/drone-telemetry-contract.md.
     # Tắt mặc định; bật thì phải có secret ký bản tin hoặc tài khoản broker riêng.
     telemetry:

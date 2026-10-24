@@ -399,6 +399,27 @@ class DroneLockerCommunicationServiceTest {
         assertEquals(DroneDeliverySession.LID_OPEN_FAILED, session.getState());
     }
 
+    @Test
+    void openLidMaxWaitFollowsTheAdminSetting() {
+        OrderRules shortWait = TestOrderRules.of(Map.of(
+                com.huynqb.laundrylocker.order.settings.OrderSettingsCatalog.DRONE_OPEN_LID_MAX_WAIT_SECONDS, 60));
+        DroneMissionProgressService progress = new DroneMissionProgressService(missionRepository, orderRepository,
+                historyRepository, notificationClient, lockerDroneClient, lockerClient, userClient, shortWait, mailer);
+        service = new DroneLockerCommunicationService(commLogRepository, orderRepository, missionRepository, progress,
+                lockerDroneClient, shortWait, new ObjectMapper(), sessionRepository, DIRECT);
+        ReflectionTestUtils.setField(service, "secret", SECRET);
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        session.setCreatedAt(LocalDateTime.now().minusSeconds(30));
+        service.expireStaleOpenRequests();
+        assertEquals(DroneDeliverySession.OPEN_LID_REQUESTED, session.getState());
+
+        session.setCreatedAt(LocalDateTime.now().minusSeconds(61));
+        service.expireStaleOpenRequests();
+        assertEquals(DroneDeliverySession.LID_OPEN_FAILED, session.getState());
+    }
+
     private MqttClient connectedMqtt() {
         MqttClient mqtt = mock(MqttClient.class);
         lenient().when(mqtt.isConnected()).thenReturn(true);

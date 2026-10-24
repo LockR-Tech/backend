@@ -6,7 +6,9 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import static com.huynqb.laundrylocker.common.settings.SettingDefinition.bool;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integer;
+import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integerList;
 
 /// Quy tắc nghiệp vụ của iot-service admin chỉnh được (ADR-0005).
 /// Key giữ nguyên tên property cũ ⇒ biến môi trường đang đặt trên VM vẫn là mặc định.
@@ -18,8 +20,12 @@ public class IotSettingsCatalog implements SettingsCatalog {
     public static final String UNLOCK_WAIT_SECONDS = "app.iot.unlock-wait-seconds";
     public static final String DOOR_OPEN_TIMEOUT_SECONDS = "app.iot.door-open-timeout-seconds";
     public static final String KIOSK_CONFIRM_WINDOW_MINUTES = "app.iot.kiosk-confirm-window-minutes";
+    public static final String TEST_OPEN_ENABLED = "app.iot.test-open.enabled";
+    public static final String TEST_OPEN_USER_IDS = "app.iot.test-open.user-ids";
+    public static final String TEST_OPEN_LOCKER_IDS = "app.iot.test-open.locker-ids";
 
     private static final String UNLOCK = "Mở tủ & chống dò mã";
+    private static final String TEST_OPEN = "Thử tủ bằng QR (không cần đơn)";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -37,6 +43,14 @@ public class IotSettingsCatalog implements SettingsCatalog {
                 integer(KIOSK_CONFIRM_WINDOW_MINUTES, UNLOCK, "Thời hạn xác nhận tại tủ sau khi mở ô",
                         "Xác nhận đã bỏ hàng / kết thúc thuê trên màn hình tủ chỉ được chấp nhận trong "
                                 + "khoảng này kể từ lần mở ô thành công gần nhất của đơn.",
-                        15, 1, 120, "phút"));
+                        15, 1, 120, "phút"),
+                // Danh sách mặc định "0" = chưa cho ai/tủ nào (danh sách số không được rỗng).
+                bool(TEST_OPEN_ENABLED, TEST_OPEN, "Cho tài khoản thử mở ô bằng QR",
+                        "Bật thì tài khoản trong danh sách quét QR mở ô của tủ trong danh sách mà không cần đơn. "
+                                + "Chỉ bật khi đang thử tủ, thử xong tắt ngay.", false),
+                integerList(TEST_OPEN_USER_IDS, TEST_OPEN, "Tài khoản được mở thử",
+                        "Id người dùng được mở thử, cách nhau bởi dấu phẩy. 0 = chưa có ai.", "0", 0, null, null),
+                integerList(TEST_OPEN_LOCKER_IDS, TEST_OPEN, "Tủ được mở thử",
+                        "Id tủ cho phép mở thử, cách nhau bởi dấu phẩy. 0 = chưa có tủ nào.", "0", 0, null, null));
     }
 }

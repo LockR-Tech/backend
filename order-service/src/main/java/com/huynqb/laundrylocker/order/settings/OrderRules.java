@@ -255,6 +255,10 @@ public class OrderRules {
         return settings.getInt(DRONE_DEMO_HOLD_OPEN_SECONDS);
     }
 
+    public int droneOpenLidMaxWaitSeconds() {
+        return settings.getInt(DRONE_OPEN_LID_MAX_WAIT_SECONDS);
+    }
+
     public boolean droneDemoEnabled() {
         return settings.getBoolean(DRONE_DEMO_ENABLED);
     }
