@@ -56,7 +56,7 @@ public interface DroneLockerCommLogRepository
             if (toDate != null) {
                 predicates.add(cb.lessThanOrEqualTo(root.get("timestamp"), toDate));
             }
-            if (query != null && query.getOrderList().isEmpty()) {
+            if (query != null && !Long.class.equals(query.getResultType()) && !long.class.equals(query.getResultType()) && query.getOrderList().isEmpty()) {
                 query.orderBy(cb.desc(root.get("timestamp")), cb.desc(root.get("id")));
             }
             return cb.and(predicates.toArray(new Predicate[0]));

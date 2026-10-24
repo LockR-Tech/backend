@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -38,12 +39,12 @@ public class DroneLockerCommLogController {
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
+            @RequestParam(defaultValue = "10") int size
     ) {
         LocalDateTime from = parseDateTime(fromDate, false);
         LocalDateTime to = parseDateTime(toDate, true);
 
-        Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 100)));
+        Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 100)), Sort.by(Sort.Direction.DESC, "timestamp", "id"));
         Page<DroneLockerCommLog> resultPage = commLogRepository.searchLogs(
                 orderId,
                 StringUtils.hasText(droneId) ? droneId.trim() : null,
