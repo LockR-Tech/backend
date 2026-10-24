@@ -260,8 +260,12 @@ public class DroneDeliveryBlockService {
                     ticket(snapshot, landingPad(sourceId)), "Bãi đáp ở tủ gửi không sẵn sàng");
         }
         if (needDrone) {
+            // Chỉ drone hỏng/bảo trì/ngừng hoạt động mới là sự cố. Drone đang giữ hoặc đang bay cho đơn
+            // khác (RESERVED/IN_FLIGHT), hay đang sạc pin, sẽ rảnh lại — chặn vì nó thì đơn đã trả tiền
+            // không mời được KTV nào đi lấy hàng và tự đóng sau hạn chặn. Kiện lấy về mà drone chưa kịp
+            // rảnh thì hạn "chưa phóng" (LAUNCH_OVERDUE) lo.
             List<DroneUnitDto> stationed = dronesAt(sourceId, snapshot);
-            if (stationed.stream().noneMatch(sourceLockerSelector::ready)) {
+            if (stationed.stream().noneMatch(DroneSourceLockerSelector::usable)) {
                 Set<Long> droneIds = new java.util.HashSet<>();
                 stationed.forEach(drone -> droneIds.add(drone.id()));
                 return new Cause(DroneFailureReasons.NO_DRONE_AVAILABLE,

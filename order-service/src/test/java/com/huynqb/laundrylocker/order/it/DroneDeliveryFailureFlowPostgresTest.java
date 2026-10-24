@@ -73,6 +73,39 @@ class DroneDeliveryFailureFlowPostgresTest extends DroneFlowPostgresTestBase {
         assertEquals("PAID", order(orderId).getPaymentStatus());
     }
 
+    @Test
+    void aDroneBusyWithAnotherOrderDoesNotHoldBackANewPaidOrder() {
+        // Chỉ một KTV trong ca; đơn mới đặt khi drone tủ A còn rảnh, chưa trả tiền.
+        technicianOnDuty(TECH_NEAR, 10.7001, 106.7001);
+        long busyOrder = bookedAndPickedUpBy(TECH_NEAR);
+        boxStatus.put(DEST_BOX, "AVAILABLE");
+        long newOrder = book().orderId();
+        assertEquals(LOCKER_A, order(newOrder).getSourceLockerId());
+
+        // KTV kia gán drone A1 cho đơn của mình, drone A2 đang bay chuyến khác; tủ C không thay được.
+        maintenanceService.accept(busyOrder, TECH_NEAR, "acc-busy", new AcceptDroneOrderRequest(DRONE_A1));
+        setDroneStatus(DRONE_A2, "IN_FLIGHT");
+        landingPadStatus.put(LOCKER_C, "BLOCKED");
+
+        // KTV rảnh vào ca, khách trả tiền ⇒ KTV rảnh được mời; lượt soát sự cố không chặn đơn.
+        technicianOnDuty(TECH_FAR, 10.7050, 106.7000);
+        pay(newOrder);
+        assertEquals(TECH_FAR, pickup(newOrder).getTechnicianId());
+        assertEquals(0, dispatchSweeper.reviewBlocksAt(LocalDateTime.now()));
+        assertNull(order(newOrder).getDeliveryBlockReason());
+        assertEquals(LOCKER_A, order(newOrder).getSourceLockerId());
+        assertTrue(queryService.operations(null, TECH_FAR, false).stream()
+                .anyMatch(o -> o.orderId().equals(newOrder)), "KTV được mời thấy đơn trong danh sách");
+        pickupService.accept(newOrder, TECH_FAR);
+        assertEquals("PICKUP_ASSIGNED", order(newOrder).getDeliveryStage());
+
+        // Drone ở tủ gửi hỏng thật (không còn chiếc nào bay được) thì vẫn chặn như cũ.
+        setDroneStatus(DRONE_A1, "FAULT");
+        setDroneStatus(DRONE_A2, "MAINTENANCE");
+        assertEquals(Verdict.BLOCKED, review(newOrder));
+        assertEquals(DroneFailureReasons.NO_DRONE_AVAILABLE, order(newOrder).getDeliveryBlockReason());
+    }
+
     // ------------------------------------------------------------------ phiếu sự cố trên drone
 
     @Test
