@@ -103,10 +103,6 @@ public class DroneLockerCommunicationService {
     @Value("${app.drone.delivery.lid-command-resend-after-seconds:20}")
     private long lidResendAfterSeconds = 20;
 
-    /// Lệnh mở nắp chờ quá chừng này giây (tủ mất kết nối lâu) thì bỏ phiên thay vì mở nắp muộn.
-    @Value("${app.drone.delivery.open-lid-max-wait-seconds:600}")
-    private long openLidMaxWaitSeconds = 600;
-
     private MqttClient mqttClient;
 
     /// Lần gửi gần nhất của lệnh nắp đang chờ, theo commandId (mất khi restart ⇒ lấy updatedAt của phiên).
@@ -817,13 +813,15 @@ public class DroneLockerCommunicationService {
         }
     }
 
+    /// Lệnh mở nắp chờ quá thời gian admin cấu hình (tủ mất kết nối lâu) thì bỏ phiên thay vì mở nắp muộn.
     private boolean isOpenRequestExpired(DroneDeliverySession session, LocalDateTime now) {
-        return session.getCreatedAt() != null && !session.getCreatedAt().plusSeconds(openLidMaxWaitSeconds).isAfter(now);
+        return session.getCreatedAt() != null
+                && !session.getCreatedAt().plusSeconds(orderRules.droneOpenLidMaxWaitSeconds()).isAfter(now);
     }
 
     private void expireOpenRequest(DroneDeliverySession session) {
         String errorCode = "LOCKER_NO_RESPONSE";
-        String errorMessage = "Tủ không phản hồi lệnh mở nắp sau " + openLidMaxWaitSeconds
+        String errorMessage = "Tủ không phản hồi lệnh mở nắp sau " + orderRules.droneOpenLidMaxWaitSeconds()
                 + " giây (mất kết nối) — huỷ phiên, drone cần nhận diện lại mã ArUco";
         lidCommandAttempts.remove(session.getOpenCommandId());
         session.setState(DroneDeliverySession.LID_OPEN_FAILED);

@@ -48,6 +48,17 @@ public class CabinetControlController {
                 control.openBox(lockerId, boxId, userId, roles));
     }
 
+    /// Mở thử một ô bằng QR, không cần đơn (app khách quét tờ "QR mở ô"). Gateway cho mọi JWT qua
+    /// `/api/iot/**`; service chỉ cho khi admin bật chế độ thử và tài khoản + tủ nằm trong danh sách.
+    @PostMapping("/api/iot/test-open/lockers/{lockerId}/boxes/{boxId}")
+    public ApiResponse<Map<String, Object>> testOpenBox(
+            @PathVariable Long lockerId,
+            @PathVariable Long boxId,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok("CABINET_BOX_TEST_OPEN", "Đã gửi lệnh mở thử ô",
+                control.testOpenBox(lockerId, boxId, userId));
+    }
+
     /// Điều khiển nắp/thanh trượt: action = open | close | home | stop.
     @PostMapping("/api/locker-technician/cabinet/{lockerId}/lid/{axis}/{action}")
     public ApiResponse<Map<String, Object>> lid(

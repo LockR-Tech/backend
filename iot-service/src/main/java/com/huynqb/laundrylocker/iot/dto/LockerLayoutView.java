@@ -6,7 +6,12 @@ import java.util.List;
 /// iot-service cần để đổi ô ↔ vị trí trên bộ điều khiển tủ (ADR-0008).
 public record LockerLayoutView(Long lockerId, String code, String name, List<Cell> cells) {
 
-    public record Cell(Long id, Integer boxNumber, Integer rowIndex, Integer colIndex) {
+    /// `status` (AVAILABLE/RESERVED/OCCUPIED/FAULT…) dùng để không mở thử ô đang giữ hàng của đơn thật.
+    public record Cell(Long id, Integer boxNumber, Integer rowIndex, Integer colIndex, String status) {
+
+        public Cell(Long id, Integer boxNumber, Integer rowIndex, Integer colIndex) {
+            this(id, boxNumber, rowIndex, colIndex, null);
+        }
 
         /// Vị trí ô trên bộ điều khiển, đếm từ 0: luôn là `boxNumber − 1`.
         public Integer slotIndex() {

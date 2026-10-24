@@ -38,6 +38,7 @@ public class CabinetControlService {
     private final LockerClient lockerClient;
     private final IotRules rules;
     private final CabinetControlLogService controlLogs;
+    private final CabinetLayoutLookup layoutLookup;
 
     public Map<String, Object> openBox(Long lockerId, Long boxId, Long userId, String roles) {
         requireLockerInScope(lockerId, userId, roles);
@@ -45,6 +46,40 @@ public class CabinetControlService {
             throw new BusinessException("BOX_REQUIRED", "Thiếu mã ô cần mở");
         }
         return logged(lockerId, userId, "BOX_OPEN", null, boxId, null, null,
+                await("mở ô", () -> lockerMqttService.sendUnlockCommandAsync(lockerId, boxId)));
+    }
+
+    /**
+     * Mở thử một ô bằng QR, không cần đơn — để thử tủ thật bằng app khách. Chỉ chạy khi admin bật
+     * chế độ thử và cả tài khoản lẫn tủ nằm trong danh sách cho phép (Cài đặt › iot). Không mở ô
+     * đang giữ hàng của đơn thật; không tra được sơ đồ tủ thì từ chối.
+     */
+    public Map<String, Object> testOpenBox(Long lockerId, Long boxId, Long userId) {
+        if (!rules.testOpenEnabled()) {
+            throw new BusinessException("TEST_OPEN_DISABLED",
+                    "Chế độ mở thử ô bằng QR đang tắt", HttpStatus.FORBIDDEN);
+        }
+        if (!rules.testOpenAllowedUser(userId)) {
+            throw new BusinessException("TEST_OPEN_USER_NOT_ALLOWED",
+                    "Tài khoản này không nằm trong danh sách được mở thử ô", HttpStatus.FORBIDDEN);
+        }
+        if (!rules.testOpenAllowedLocker(lockerId)) {
+            throw new BusinessException("TEST_OPEN_LOCKER_NOT_ALLOWED",
+                    "Tủ này không nằm trong danh sách được mở thử", HttpStatus.FORBIDDEN);
+        }
+        if (boxId == null) {
+            throw new BusinessException("BOX_REQUIRED", "Thiếu mã ô cần mở");
+        }
+        var layout = layoutLookup.layout(lockerId).orElseThrow(() -> new BusinessException(
+                "LOCKER_LOOKUP_FAILED", "Không tra được sơ đồ tủ, chưa mở thử được", HttpStatus.SERVICE_UNAVAILABLE));
+        var cell = layout.cells().stream().filter(c -> boxId.equals(c.id())).findFirst()
+                .orElseThrow(() -> new BusinessException(
+                        "BOX_NOT_IN_LOCKER", "Ô này không thuộc tủ " + lockerId, HttpStatus.NOT_FOUND));
+        if ("OCCUPIED".equalsIgnoreCase(cell.status())) {
+            throw new BusinessException("BOX_IN_USE",
+                    "Ô " + cell.boxNumber() + " đang giữ hàng của một đơn — không mở thử", HttpStatus.CONFLICT);
+        }
+        return logged(lockerId, userId, "BOX_OPEN_TEST", null, boxId, null, "Mở thử bằng QR (không cần đơn)",
                 await("mở ô", () -> lockerMqttService.sendUnlockCommandAsync(lockerId, boxId)));
     }
 

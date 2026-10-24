@@ -70,6 +70,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DEMO_STAGE_DELAY_MS = "app.drone.demo.stage-delay-ms";
     public static final String DRONE_DEMO_INDOOR_ARUCO_ENABLED = "app.drone.demo.indoor-aruco-enabled";
     public static final String DRONE_DEMO_HOLD_OPEN_SECONDS = "app.drone.demo.hold-open-seconds";
+    public static final String DRONE_OPEN_LID_MAX_WAIT_SECONDS = "app.drone.delivery.open-lid-max-wait-seconds";
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
     public static final String DRONE_DEFAULT_PARCEL_WEIGHT = "app.order.drone-default-parcel-weight-grams";
     public static final String DRONE_MAX_PAYLOAD_WEIGHT = "app.order.drone-max-payload-weight-grams";
@@ -279,6 +280,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Khi bật (Chế độ B): camera ArUco thật nhận diện ô tủ đích, kích hoạt tới nơi và mở nắp trượt, giữ mở theo số giây cấu hình rồi tự động đóng nắp, chỉ khi đóng nắp xong mới chuyển Sẵn sàng lấy hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS.", false),
                 integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giữ mở nắp trượt (giây)",
                         "Số giây nắp trượt giữ mở ở chế độ Indoor Demo trước khi tự động gửi lệnh đóng.", 7, 1, 300, "giây"),
+                integer(DRONE_OPEN_LID_MAX_WAIT_SECONDS, DRONE_DEMO, "Thời gian chờ tủ phản hồi lệnh mở nắp (giây)",
+                        "Tủ mất kết nối thì lệnh mở nắp được gửi lại khi tủ kết nối lại. Quá số giây này mà tủ vẫn chưa "
+                                + "phản hồi thì huỷ phiên giao (không mở nắp muộn khi drone đã rời đi); drone quét lại mã "
+                                + "ArUco sẽ mở phiên mới.", 600, 30, 3600, "giây"),
                 bool(DRONE_DEMO_ENABLED, DRONE_DEMO, "Cho phép chế độ drone DEMO",
                         "Bật bộ giả lập chặng bay cho đơn drone.", true),
                 integer(DRONE_DEMO_STAGE_DELAY_MS, DRONE_DEMO, "Thời gian mỗi chặng bay giả lập",

@@ -33,4 +33,16 @@ public class IotRules {
     public int kioskConfirmWindowMinutes() {
         return settings.getInt(KIOSK_CONFIRM_WINDOW_MINUTES);
     }
+
+    public boolean testOpenEnabled() {
+        return settings.getBoolean(TEST_OPEN_ENABLED);
+    }
+
+    public boolean testOpenAllowedUser(Long userId) {
+        return userId != null && userId > 0 && settings.getIntList(TEST_OPEN_USER_IDS).contains(userId.intValue());
+    }
+
+    public boolean testOpenAllowedLocker(Long lockerId) {
+        return lockerId != null && lockerId > 0 && settings.getIntList(TEST_OPEN_LOCKER_IDS).contains(lockerId.intValue());
+    }
 }
