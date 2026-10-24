@@ -252,6 +252,20 @@ class NotificationServiceTest {
         assertThat(saved.getReferenceType()).isEqualTo("LOCKER_REPORT");
     }
 
+    @Test
+    @DisplayName("tủ đổi số ô trống: đẩy mã tủ lên topic công khai, không tạo thông báo")
+    void lockerAvailabilityChangeIsRelayedWithoutNotification() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.LOCKER_AVAILABILITY_CHANGED, "locker-service",
+                Map.of("lockerId", 7L)));
+
+        org.mockito.ArgumentCaptor<Object> payload = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(webSocketNotificationService).sendToDestination(
+                eq("/topic/public/locker-availability"), payload.capture());
+        @SuppressWarnings("unchecked") Map<String, Object> sent = (Map<String, Object>) payload.getValue();
+        assertThat(sent).containsEntry("lockerId", 7L).containsOnlyKeys("lockerId", "timestamp");
+        verify(notificationRepository, never()).save(any());
+    }
+
     private NotificationMessage savedNotification() {
         org.mockito.ArgumentCaptor<NotificationMessage> captor =
                 org.mockito.ArgumentCaptor.forClass(NotificationMessage.class);

@@ -8,6 +8,8 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+
 /// Quyền với broker đơn giản (`/topic`, `/queue`), kiểm ở frame SUBSCRIBE/SEND sau khi
 /// JwtStompPrincipalChannelInterceptor đã gắn người dùng cho phiên (SEC-05):
 ///
@@ -15,6 +17,8 @@ import org.springframework.stereotype.Component;
 ///   `/topic/lockers/**`...) mang nội dung thông báo của mọi người — kể cả tin "Mã mở tủ" gửi người
 ///   nhận — và vị trí KTV, nên chỉ ADMIN (web quản trị) được nghe. `/topic/deliveries/**` do
 ///   DeliveryTopicSubscriptionInterceptor kiểm theo đơn.
+/// - `/topic/public/locker-availability` chỉ mang mã tủ vừa đổi số ô trống — mọi người dùng đã
+///   đăng nhập được nghe để màn đặt đơn cập nhật ô trống ngay.
 /// - Không ai đăng ký thẳng `/queue/**`: hàng đợi riêng phải đi qua `/user/queue/...` để Spring
 ///   gắn đúng phiên; đăng ký kiểu `/queue/**` sẽ nhận hộp thư của mọi người.
 /// - Chỉ ADMIN được đăng ký theo mẫu (`*`, `?`, `{}`).
@@ -23,6 +27,7 @@ import org.springframework.stereotype.Component;
 public class BrokerDestinationGuardInterceptor implements ChannelInterceptor {
 
     private static final String DELIVERY_PREFIX = "/topic/deliveries/";
+    private static final Set<String> PUBLIC_TOPICS = Set.of("/topic/public/locker-availability");
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -46,7 +51,10 @@ public class BrokerDestinationGuardInterceptor implements ChannelInterceptor {
         if (isPattern(destination) && !admin) {
             throw new MessagingException("Wildcard subscriptions are not allowed: " + destination);
         }
-        if (isUnder(destination, "/topic") && !destination.startsWith(DELIVERY_PREFIX) && !admin) {
+        if (isUnder(destination, "/topic")
+                && !destination.startsWith(DELIVERY_PREFIX)
+                && !PUBLIC_TOPICS.contains(destination)
+                && !admin) {
             throw new MessagingException("Not allowed to subscribe to " + destination);
         }
         return message;

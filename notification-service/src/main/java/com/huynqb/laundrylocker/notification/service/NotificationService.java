@@ -32,6 +32,9 @@ public class NotificationService {
     private final NotificationRepository notificationRepository;
     private final FcmTokenRepository fcmTokenRepository;
     private final RabbitTemplate rabbitTemplate;
+
+    /// Topic công khai (mọi người dùng đã đăng nhập) — xem BrokerDestinationGuardInterceptor.
+    public static final String LOCKER_AVAILABILITY_TOPIC = "/topic/public/locker-availability";
     private final FcmPushNotificationService fcmPushNotificationService;
     private final WebSocketNotificationService webSocketNotificationService;
 
@@ -240,6 +243,15 @@ public class NotificationService {
 
         if (DomainEventNames.TECHNICIAN_PRESENCE_UPDATED.equals(event.type())) {
             broadcastTechnicianPresence(payload);
+        }
+
+        // Số ô trống đổi: chỉ đẩy mã tủ (không có đơn, PIN hay người dùng) cho màn đặt đơn tải lại.
+        if (DomainEventNames.LOCKER_AVAILABILITY_CHANGED.equals(event.type())) {
+            Map<String, Object> wsMsg = new HashMap<>();
+            wsMsg.put("lockerId", payload.get("lockerId"));
+            wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
+            webSocketNotificationService.sendToDestination(LOCKER_AVAILABILITY_TOPIC, wsMsg);
+            return;
         }
 
         Long userId = asLong(payload.get("userId"));
