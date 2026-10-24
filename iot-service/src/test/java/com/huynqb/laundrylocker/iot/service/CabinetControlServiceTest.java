@@ -32,11 +32,12 @@ class CabinetControlServiceTest {
 
     @Mock LockerMqttService mqtt;
     @Mock LockerClient lockerClient;
+    @Mock CabinetControlLogService logs;
     CabinetControlService service;
 
     @BeforeEach
     void setUp() {
-        service = new CabinetControlService(mqtt, lockerClient, TestIotRules.of(Map.of()));
+        service = new CabinetControlService(mqtt, lockerClient, TestIotRules.of(Map.of()), logs);
         when(lockerClient.lockers(List.of(LOCKER))).thenReturn(
                 ApiResponse.ok(List.of(new LockerView(LOCKER, "CAB-TU01", "Tủ thật", TECH))));
     }
@@ -69,6 +70,47 @@ class CabinetControlServiceTest {
                 () -> service.lid(LOCKER, 1, "open", OTHER_TECH, "LOCKER_TECHNICIAN"));
         assertEquals("CABINET_FORBIDDEN", ex.getCode());
         verify(mqtt, never()).sendLidCommandAsync(anyLong(), anyInt(), any());
+        verifyNoInteractions(logs);
+    }
+
+    @Test
+    void webCommandIsLoggedWithItsResult() {
+        when(mqtt.sendLidCommandAsync(LOCKER, 1, "open")).thenReturn(accepted());
+        service.lid(LOCKER, 1, "open", 999L, "ADMIN");
+        verify(logs).recordWeb(LOCKER, 999L, "LID_OPEN", 1, null, null, "ACCEPTED", "Tủ đã nhận lệnh nắp open");
+    }
+
+    @Test
+    void timeoutIsStillLoggedWhenCabinetIsOffline() {
+        when(mqtt.sendUnlockCommandAsync(LOCKER, 44L))
+                .thenReturn(CompletableFuture.failedFuture(new java.util.concurrent.TimeoutException()));
+        Map<String, Object> r = service.openBox(LOCKER, 44L, TECH, "LOCKER_TECHNICIAN");
+        assertEquals("TIMEOUT", r.get("status"));
+        verify(logs).recordWeb(eq(LOCKER), eq(TECH), eq("BOX_OPEN"), isNull(), eq(44L), isNull(),
+                eq("TIMEOUT"), contains("không phản hồi"));
+    }
+
+    @Test
+    void jogLogsRevolutionsAndDirection() {
+        when(mqtt.sendLidJogAsync(LOCKER, 1, 2.5, "close")).thenReturn(accepted());
+        service.lidJog(LOCKER, 1, 2.5, "close", 999L, "ADMIN");
+        verify(logs).recordWeb(eq(LOCKER), eq(999L), eq("LID_JOG"), eq(1), isNull(), eq(2.5),
+                eq("ACCEPTED"), startsWith("Về phía đóng"));
+    }
+
+    @Test
+    void panelPollingIsNotLogged() {
+        when(mqtt.sendPanelQueryAsync(LOCKER)).thenReturn(accepted());
+        service.panel(LOCKER, 999L, "ADMIN");
+        verifyNoInteractions(logs);
+    }
+
+    @Test
+    void logsRespectLockerScope() {
+        assertEquals("CABINET_FORBIDDEN", assertThrows(BusinessException.class,
+                () -> service.logs(LOCKER, 50, OTHER_TECH, "LOCKER_TECHNICIAN")).getCode());
+        service.logs(LOCKER, 50, TECH, "LOCKER_TECHNICIAN");
+        verify(logs).recent(LOCKER, 50);
     }
 
     @Test

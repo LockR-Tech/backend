@@ -67,6 +67,7 @@ render_acl() {
         echo "topic write cabinet/$target/command/+/result"
         echo "topic write cabinet/$target/locker/+/status"
         echo "topic write cabinet/$target/heartbeat"
+        echo "topic write cabinet/$target/event/control"
         if [ -n "${mac:-}" ] && [ "$mac" != "-" ]; then
           echo "topic read iot/$mac/command/#"
           echo "topic read iot/$mac/discovery/start"
