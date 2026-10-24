@@ -379,7 +379,10 @@ public class DroneLockerCommunicationService {
                 // Định danh theo drone đã ký: nhiệm vụ đang bay của chính drone này — không đoán đơn.
                 DroneMission mission = missionRepository
                         .findFirstByDroneCodeAndStatusInOrderByIdDesc(droneId, DroneMissionProgressService.IN_FLIGHT_STAGES)
-                        .orElseThrow(() -> reject("NO_ACTIVE_MISSION", "Drone " + droneId + " không có nhiệm vụ đang bay"));
+                        .orElseGet(() -> indoorDemoMission(droneId, claimedOrderId, claimedLockerId, detectedMarkerId, dict, mode));
+                if (mission == null) {
+                    throw reject("NO_ACTIVE_MISSION", "Drone " + droneId + " không có nhiệm vụ đang bay");
+                }
                 LockerOrder order = orderRepository.findByIdForUpdate(mission.getOrderId())
                         .orElseThrow(() -> reject("ORDER_NOT_FOUND", "Không tìm thấy đơn của nhiệm vụ #" + mission.getId()));
                 if (claimedOrderId != null && !claimedOrderId.equals(order.getId())) {
@@ -477,6 +480,61 @@ public class DroneLockerCommunicationService {
                     "cabinet/" + session.getLockerId() + "/command/open", "OPEN_LID_REQUESTED", "OUTBOUND", null,
                     "SENT", "PENDING", "PENDING", null, "Yêu cầu mở nắp trượt ô tủ", 0, null);
         }
+    }
+
+    /// Đơn đã kết thúc hoặc đã vào ô: không còn ứng viên cho demo.
+    private static final List<String> CLOSED_ORDER_STATUSES =
+            List.of("COMPLETED", "CANCELED", "EXPIRED", "STORING", "DELIVERY_INCOMPLETE");
+
+    /**
+     * Demo ArUco trong nhà: drone cầm tay đưa tới ô mà chưa có KTV phóng (chưa có nhiệm vụ bay). Chỉ khi admin
+     * bật chế độ này, sự kiện đã ký, và có ĐÚNG MỘT đơn DEMO đang giao mà ô nhận mang đúng mã ArUco vừa thấy
+     * (khớp orderId / lockerId nếu bản tin có ghi) — không bao giờ lấy đại đơn đầu tiên. Tạo nhiệm vụ ở chặng
+     * APPROACHING cho chính drone đã ký; phần còn lại đi đúng luồng có kiểm như nhiệm vụ thật.
+     */
+    private DroneMission indoorDemoMission(String droneId, Long claimedOrderId, Long claimedLockerId,
+            Integer detectedMarkerId, String detectedDict, String mode) {
+        if (!"INDOOR_ARUCO_DEMO".equalsIgnoreCase(mode) || !orderRules.droneDemoIndoorArucoEnabled()
+                || detectedMarkerId == null) {
+            return null;
+        }
+        List<LockerOrder> matches = orderRepository
+                .findByTypeAndStatusNotInOrderByUpdatedAtDesc("DRONE_DELIVERY", CLOSED_ORDER_STATUSES).stream()
+                .filter(candidate -> "AWAITING_DISPATCH".equals(candidate.getStatus()))
+                .filter(candidate -> "DEMO".equalsIgnoreCase(candidate.getFulfillmentMode()))
+                .filter(candidate -> claimedOrderId == null || claimedOrderId.equals(candidate.getId()))
+                .filter(candidate -> claimedLockerId == null || claimedLockerId.equals(candidate.getLockerId()))
+                .filter(candidate -> missionRepository.findByOrderId(candidate.getId()).isEmpty())
+                .filter(candidate -> {
+                    Long boxId = candidate.getReservedBoxId() != null ? candidate.getReservedBoxId() : candidate.getSendBoxId();
+                    BoxCellDto cell = fetchCell(boxId);
+                    String dict = cell == null || cell.arucoDictionary() == null ? "DICT_4X4_50" : cell.arucoDictionary();
+                    return cell != null && detectedMarkerId.equals(cell.arucoMarkerId()) && dict.equalsIgnoreCase(detectedDict);
+                })
+                .limit(2)
+                .toList();
+        if (matches.size() != 1) {
+            log.warn("[COMM] Indoor demo marker #{} from {} matches {} DEMO orders — not bound",
+                    detectedMarkerId, droneId, matches.size());
+            return null;
+        }
+        LockerOrder order = orderRepository.findByIdForUpdate(matches.getFirst().getId()).orElse(null);
+        if (order == null || !"AWAITING_DISPATCH".equals(order.getStatus())) {
+            return null;
+        }
+        DroneMission mission = new DroneMission();
+        mission.setOrderId(order.getId());
+        mission.setDroneCode(droneId);
+        mission.setSourceLockerId(order.getSourceLockerId() != null ? order.getSourceLockerId() : order.getLockerId());
+        mission.setDestinationLockerId(order.getDestinationLockerId() != null ? order.getDestinationLockerId() : order.getLockerId());
+        mission.setStatus("APPROACHING");
+        mission.setLaunchingAt(LocalDateTime.now());
+        mission = missionRepository.save(mission);
+        // Chặng của đơn phải khớp nhiệm vụ để các bước sau qua được kiểm tra chuyển chặng.
+        order.setDeliveryStage("APPROACHING");
+        orderRepository.save(order);
+        log.info("[COMM] Indoor demo: created mission #{} for DEMO order #{} on drone {}", mission.getId(), order.getId(), droneId);
+        return mission;
     }
 
     /// Drone báo đã nhả hàng: chỉ chấp nhận cho phiên của chính drone đó đang mở nắp chờ thả.

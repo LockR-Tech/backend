@@ -321,6 +321,78 @@ class DroneLockerCommunicationServiceTest {
         assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
     }
 
+    // ------------------------------------------------------------------ demo ArUco trong nhà
+
+    @Test
+    void indoorDemoBindsOnlyASingleMatchingDemoOrderWhenEnabled() {
+        mission.setStatus("CANCELED"); // drone chưa có nhiệm vụ bay
+        order.setFulfillmentMode("DEMO");
+        order.setDeliveryStage("PICKED_UP");
+        lenient().when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
+        lenient().when(orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc(eq("DRONE_DELIVERY"), any()))
+                .thenReturn(List.of(order));
+        lenient().when(missionRepository.save(any(DroneMission.class))).thenAnswer(call -> {
+            DroneMission created = call.getArgument(0);
+            created.setId(400L);
+            mission = created;
+            lenient().when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(created));
+            return created;
+        });
+        DroneLockerCommunicationService demo = indoorService(true);
+
+        String body = event("MARKER_DETECTED", Map.of("arucoMarkerId", 7, "arucoDictionary", "DICT_4X4_50",
+                "mode", "INDOOR_ARUCO_DEMO"), OffsetDateTime.now());
+        demo.handleIncomingMessage(DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, body, signed(body));
+
+        assertEquals("ARRIVED", order.getDeliveryStage());
+        assertEquals(DRONE, mission.getDroneCode());
+        assertEquals(1, sessions.size());
+    }
+
+    @Test
+    void indoorDemoIsRejectedWhenDisabledOrAmbiguous() {
+        mission.setStatus("CANCELED");
+        order.setFulfillmentMode("DEMO");
+        LockerOrder twin = new LockerOrder();
+        twin.setId(22L);
+        twin.setType("DRONE_DELIVERY");
+        twin.setFulfillmentMode("DEMO");
+        twin.setStatus("AWAITING_DISPATCH");
+        twin.setLockerId(LOCKER);
+        twin.setReservedBoxId(BOX);
+        lenient().when(missionRepository.findByOrderId(anyLong())).thenReturn(Optional.empty());
+        lenient().when(orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc(eq("DRONE_DELIVERY"), any()))
+                .thenReturn(List.of(order, twin));
+
+        String body = event("MARKER_DETECTED", Map.of("arucoMarkerId", 7, "arucoDictionary", "DICT_4X4_50",
+                "mode", "INDOOR_ARUCO_DEMO"), OffsetDateTime.now());
+        indoorService(true).handleIncomingMessage(DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, body, signed(body));
+        assertTrue(sessions.isEmpty(), "hai đơn cùng mã ô mà vẫn gắn bừa một đơn");
+
+        String again = event("MARKER_DETECTED", Map.of("arucoMarkerId", 7, "arucoDictionary", "DICT_4X4_50",
+                "mode", "INDOOR_ARUCO_DEMO"), OffsetDateTime.now());
+        lenient().when(orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc(eq("DRONE_DELIVERY"), any()))
+                .thenReturn(List.of(order));
+        indoorService(false).handleIncomingMessage(DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, again, signed(again));
+        assertTrue(sessions.isEmpty(), "chế độ demo trong nhà đang tắt mà vẫn tạo nhiệm vụ");
+    }
+
+    private DroneLockerCommunicationService indoorService(boolean enabled) {
+        OrderRules demoRules = TestOrderRules.of(Map.of(
+                com.huynqb.laundrylocker.order.settings.OrderSettingsCatalog.DRONE_DEMO_INDOOR_ARUCO_ENABLED, enabled));
+        DroneMissionProgressService progress = new DroneMissionProgressService(missionRepository, orderRepository,
+                historyRepository, notificationClient, lockerDroneClient, lockerClient, userClient, demoRules, mailer);
+        DroneLockerCommunicationService demo = new DroneLockerCommunicationService(commLogRepository, orderRepository,
+                missionRepository, progress, lockerDroneClient, demoRules, new ObjectMapper(), sessionRepository, DIRECT);
+        ReflectionTestUtils.setField(demo, "secret", SECRET);
+        return demo;
+    }
+
+    private static String signed(String body) {
+        return DroneTelemetrySigner.sign(DroneTelemetrySigner.deviceKey(SECRET, DRONE),
+                DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, body);
+    }
+
     // ------------------------------------------------------------------ lệnh gửi drone
 
     @Test
