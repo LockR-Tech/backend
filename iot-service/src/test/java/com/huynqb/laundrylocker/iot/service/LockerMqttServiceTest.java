@@ -211,6 +211,17 @@ class LockerMqttServiceTest {
         verify(provisioning).onSetupResult(MAC, result);
     }
 
+    @Test
+    void controlEventsGoToCabinetLog() throws Exception {
+        CabinetControlLogService logs = mock(CabinetControlLogService.class);
+        when(context.getBean(CabinetControlLogService.class)).thenReturn(logs);
+        JsonNode event = objectMapper.readTree(
+                "{\"eventId\":\"e-1\",\"action\":\"LID_CLOSE\",\"axis\":1,\"revolutions\":12.5,\"status\":\"OK\"}");
+        service.route("cabinet/7/event/control", event);
+        verify(logs).recordFromCabinet(7L, event);
+        assertTrue(java.util.Arrays.asList(LockerMqttService.SUBSCRIPTIONS).contains("cabinet/+/event/control"));
+    }
+
     private static <T> java.util.List<T> iterableToList(java.util.Iterator<T> iterator) {
         java.util.List<T> list = new java.util.ArrayList<>();
         iterator.forEachRemaining(list::add);

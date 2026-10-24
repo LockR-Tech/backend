@@ -42,6 +42,7 @@ public class LockerMqttService {
             "cabinet/+/command/+/result",
             "cabinet/+/heartbeat",
             "cabinet/+/locker/+/status",
+            "cabinet/+/event/control",
             "iot/+/discovery/result",
             "iot/+/setup/progress",
             "iot/+/setup/result",
@@ -253,6 +254,10 @@ public class LockerMqttService {
             } else if (segments.length == 5 && "cabinet".equals(segments[0])
                     && "locker".equals(segments[2]) && "status".equals(segments[4])) {
                 onBoxStatus(parseLongOrNull(segments[1]), data);
+            } else if (segments.length == 4 && "cabinet".equals(segments[0])
+                    && "event".equals(segments[2]) && "control".equals(segments[3])) {
+                applicationContext.getBean(CabinetControlLogService.class)
+                        .recordFromCabinet(parseLongOrNull(segments[1]), data);
             } else if (segments.length == 4 && "iot".equals(segments[0])) {
                 GatewayProvisioningService provisioning = applicationContext.getBean(GatewayProvisioningService.class);
                 String kind = segments[2] + "/" + segments[3];

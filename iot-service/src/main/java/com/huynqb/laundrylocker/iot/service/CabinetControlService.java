@@ -5,6 +5,7 @@ import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.iot.client.LockerClient;
+import com.huynqb.laundrylocker.iot.dto.CabinetControlLogResponse;
 import com.huynqb.laundrylocker.iot.dto.LockerView;
 import com.huynqb.laundrylocker.iot.settings.IotRules;
 import lombok.RequiredArgsConstructor;
@@ -36,13 +37,15 @@ public class CabinetControlService {
     private final LockerMqttService lockerMqttService;
     private final LockerClient lockerClient;
     private final IotRules rules;
+    private final CabinetControlLogService controlLogs;
 
     public Map<String, Object> openBox(Long lockerId, Long boxId, Long userId, String roles) {
         requireLockerInScope(lockerId, userId, roles);
         if (boxId == null) {
             throw new BusinessException("BOX_REQUIRED", "Thiếu mã ô cần mở");
         }
-        return await("mở ô", () -> lockerMqttService.sendUnlockCommandAsync(lockerId, boxId));
+        return logged(lockerId, userId, "BOX_OPEN", null, boxId, null, null,
+                await("mở ô", () -> lockerMqttService.sendUnlockCommandAsync(lockerId, boxId)));
     }
 
     public Map<String, Object> lid(Long lockerId, int axis, String action, Long userId, String roles) {
@@ -51,7 +54,8 @@ public class CabinetControlService {
         if (!LID_ACTIONS.contains(act)) {
             throw new BusinessException("LID_ACTION_INVALID", "Lệnh nắp phải là open, close, home hoặc stop");
         }
-        return await("nắp " + act, () -> lockerMqttService.sendLidCommandAsync(lockerId, axis, act));
+        return logged(lockerId, userId, "LID_" + act.toUpperCase(java.util.Locale.ROOT), axis, null, null, null,
+                await("nắp " + act, () -> lockerMqttService.sendLidCommandAsync(lockerId, axis, act)));
     }
 
     public Map<String, Object> lidJog(Long lockerId, int axis, double revolutions, String direction,
@@ -64,18 +68,36 @@ public class CabinetControlService {
         if (revolutions <= 0) {
             throw new BusinessException("JOG_REVS_INVALID", "Số vòng phải lớn hơn 0");
         }
-        return await("chạy nắp", () -> lockerMqttService.sendLidJogAsync(lockerId, axis, revolutions, dir));
+        return logged(lockerId, userId, "LID_JOG", axis, null, revolutions,
+                dir.equals("open") ? "Về phía mở" : "Về phía đóng",
+                await("chạy nắp", () -> lockerMqttService.sendLidJogAsync(lockerId, axis, revolutions, dir)));
     }
 
     public Map<String, Object> lidTune(Long lockerId, int axis, Map<String, Object> changes,
                                        Long userId, String roles) {
         requireLockerInScope(lockerId, userId, roles);
-        return await("chỉnh nắp", () -> lockerMqttService.sendLidTuneAsync(lockerId, axis, changes));
+        return logged(lockerId, userId, "LID_TUNE", axis, null, null, "Thông số " + changes,
+                await("chỉnh nắp", () -> lockerMqttService.sendLidTuneAsync(lockerId, axis, changes)));
     }
 
+    /// Không ghi nhật ký: trang web hỏi trạng thái mỗi 4 giây.
     public Map<String, Object> panel(Long lockerId, Long userId, String roles) {
         requireLockerInScope(lockerId, userId, roles);
         return await("trạng thái tủ", () -> lockerMqttService.sendPanelQueryAsync(lockerId));
+    }
+
+    /// Nhật ký điều khiển của tủ, mới nhất trước — đọc từ database nên vẫn xem được khi tủ mất mạng.
+    public List<CabinetControlLogResponse> logs(Long lockerId, Integer limit, Long userId, String roles) {
+        requireLockerInScope(lockerId, userId, roles);
+        return controlLogs.recent(lockerId, limit);
+    }
+
+    private Map<String, Object> logged(Long lockerId, Long userId, String action, Integer axis, Long boxId,
+                                       Double revolutions, String detail, Map<String, Object> response) {
+        String message = String.valueOf(response.get("message"));
+        controlLogs.recordWeb(lockerId, userId, action, axis, boxId, revolutions,
+                String.valueOf(response.get("status")), detail == null ? message : detail + " — " + message);
+        return response;
     }
 
     /// ADMIN: mọi tủ. LOCKER_TECHNICIAN: chỉ tủ mình phụ trách. Tủ không tồn tại ⇒ 404.

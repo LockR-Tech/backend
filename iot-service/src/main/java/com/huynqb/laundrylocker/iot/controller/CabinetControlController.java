@@ -1,10 +1,12 @@
 package com.huynqb.laundrylocker.iot.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.iot.dto.CabinetControlLogResponse;
 import com.huynqb.laundrylocker.iot.service.CabinetControlService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /// Bảng điều khiển tủ trên admin web: mở ô, điều khiển nắp/thanh trượt, xem trạng thái.
@@ -23,6 +25,16 @@ public class CabinetControlController {
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return ApiResponse.ok(control.panel(lockerId, userId, roles));
+    }
+
+    /// Nhật ký điều khiển (mở ô, chạy nắp) của tủ, mới nhất trước; `limit` tối đa 200.
+    @GetMapping("/api/locker-technician/cabinet/{lockerId}/logs")
+    public ApiResponse<List<CabinetControlLogResponse>> logs(
+            @PathVariable Long lockerId,
+            @RequestParam(required = false) Integer limit,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(control.logs(lockerId, limit, userId, roles));
     }
 
     /// Mở một ô của tủ.
