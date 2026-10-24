@@ -150,7 +150,8 @@ public class DroneOrderBookingService {
             order.setLockerId(request.destinationLockerId());
             order.setSourceLockerId(route.source().id());
             order.setDestinationLockerId(request.destinationLockerId());
-            order.setSendBoxId(reservedBoxId);
+            // Drone chỉ giao VÀO tủ: ô khách chọn là ô NHẬN, đơn drone không có ô gửi.
+            order.setReceiveBoxId(reservedBoxId);
             order.setReservedBoxId(reservedBoxId);
             order.setRouteDistanceMeters(route.routeDistanceMeters());
             order.setType("DRONE_DELIVERY");

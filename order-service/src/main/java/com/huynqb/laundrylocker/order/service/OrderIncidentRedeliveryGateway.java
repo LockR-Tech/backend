@@ -70,7 +70,7 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             newOrder.setDestinationLockerId(oldOrder.getDestinationLockerId());
             newOrder.setLockerId(oldOrder.getDestinationLockerId());
             newOrder.setReservedBoxId(oldOrder.getReservedBoxId());
-            newOrder.setSendBoxId(oldOrder.getReservedBoxId());
+            newOrder.setReceiveBoxId(oldOrder.getReservedBoxId());
 
             // Vì hàng đã được KTV thu hồi về Hub nên đơn mới BỎ QUA LUÔN bước lấy hàng
             newOrder.setPickupAddress(null);
