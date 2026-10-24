@@ -348,6 +348,7 @@ class DroneLockerCommunicationServiceTest {
         session.setCreatedAt(LocalDateTime.now().minusSeconds(90));
         session.setUpdatedAt(LocalDateTime.now().minusSeconds(90));
         forgetLidAttempts();   // 90 s đã trôi qua kể từ lần gửi
+        lockerLastSeen(LOCKER, LocalDateTime.now().minusMinutes(5));   // tủ mất kết nối lúc lệnh được gửi
 
         heartbeat(LOCKER);   // Pi kết nối lại broker, gửi heartbeat ngay
         heartbeat(LOCKER);   // heartbeat kế tiếp ngay sau: lệnh vừa gửi lại, chưa gửi nữa
@@ -598,6 +599,7 @@ class DroneLockerCommunicationServiceTest {
         ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
         ReflectionTestUtils.setField(service, "lidMaxRetries", 2);
         heartbeat(LOCKER);
+        markLockerAckCapable();
         deliverSigned(marker(null, null));
         DroneDeliverySession session = sessions.values().iterator().next();
 
@@ -686,6 +688,43 @@ class DroneLockerCommunicationServiceTest {
                 && log.getErrorMessage() != null && log.getErrorMessage().contains("chưa có công tắc hành trình")));
     }
 
+    /// "Đã mở" không kèm xác nhận phần cứng (trình giả lập tủ trên broker chung, Pi chưa cập nhật) không được
+    /// coi là nắp đã mở; phiên vẫn chờ kết quả thật của Pi tủ.
+    @Test
+    void openResultWithoutHardwareConfirmationIsIgnoredUntilTheRealLockerAnswers() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "SUCCESS", "OPEN", "");   // giả lập trả lời trong 1 s
+
+        assertEquals(DroneDeliverySession.OPEN_LID_REQUESTED, session.getState());
+        assertNull(session.getLidOpenedAt());
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "ACCEPTED", "MOVING", "");
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "SUCCESS", "OPEN", ",\"lidConfirmation\":\"STEP_COUNT\"");
+        assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+    }
+
+    /// Pi tủ còn code cũ (không chống chạy trùng): sau một kết quả không xác nhận thì không gửi lại lệnh mở nữa
+    /// — gửi lại là motor chạy lại. Hết thời gian chạy nắp thì báo LID_UNVERIFIED.
+    @Test
+    void unverifiedOpenIsNeverResentSoALegacyLockerDoesNotRunTheMotorAgain() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
+        ReflectionTestUtils.setField(service, "lidMotionTimeoutSeconds", 0L);
+        heartbeat(LOCKER);
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "SUCCESS", "OPEN", "");
+        service.retryStalledLidCommands();
+        service.retryStalledLidCommands();
+
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+        assertEquals(DroneDeliverySession.LID_OPEN_FAILED, session.getState());
+        assertEquals("LID_UNVERIFIED", session.getErrorCode());
+    }
+
     /// Demo trong nhà: lệnh LID_OPENED gửi drone mang số giây giả lập nhả hàng theo cấu hình admin.
     @Test
     void demoLidOpenedCarriesTheDropSimulationSeconds() {
@@ -715,6 +754,31 @@ class DroneLockerCommunicationServiceTest {
         assertEquals(301L, target.get("missionId").asLong());
         var none = new ObjectMapper().readTree(new String(sent.getAllValues().get(1).getPayload()));
         assertEquals("NO_TARGET", none.get("eventType").asText());
+    }
+
+    /// Tủ đã từng trả ACCEPTED (chạy code nắp drone mới) ⇒ backend được gửi lại nhanh khi mất ACK.
+    @SuppressWarnings("unchecked")
+    private void markLockerAckCapable() {
+        ((java.util.Set<Long>) ReflectionTestUtils.getField(service, "ackCapableLockers")).add(LOCKER);
+    }
+
+    /// Tủ chưa từng gửi ACK (có thể là code cũ, chạy motor lại mỗi lần nhận lệnh) ⇒ không gửi lại theo hạn ACK.
+    @Test
+    void lockerNeverSeenAcknowledgingIsNotRetriedBeforeAFullLidRun() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
+        heartbeat(LOCKER);
+        deliverSigned(marker(null, null));
+
+        service.retryStalledLidCommands();
+        service.retryStalledLidCommands();
+
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void lockerLastSeen(long lockerId, LocalDateTime at) {
+        ((Map<Long, LocalDateTime>) ReflectionTestUtils.getField(service, "lockerSeenAt")).put(lockerId, at);
     }
 
     private void forgetLidAttempts() {
@@ -772,9 +836,11 @@ class DroneLockerCommunicationServiceTest {
         service.handleIncomingMessage(DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, body, signature);
     }
 
+    /// Kết quả của Pi tủ chạy code nắp drone: lệnh mở kèm xác nhận phần cứng (ở đây: chạy hết số bước).
     private void lockerResult(long lockerId, String action, String commandId, String hwState) {
         String body = "{\"commandId\":\"" + commandId + "\",\"boxId\":" + BOX
-                + ",\"status\":\"SUCCESS\",\"hwState\":\"" + hwState + "\"}";
+                + ",\"status\":\"SUCCESS\",\"hwState\":\"" + hwState + "\""
+                + ("open".equals(action) ? ",\"lidConfirmation\":\"STEP_COUNT\"" : "") + "}";
         service.handleIncomingMessage("cabinet/" + lockerId + "/command/" + action + "/result", body, null);
     }
 }
