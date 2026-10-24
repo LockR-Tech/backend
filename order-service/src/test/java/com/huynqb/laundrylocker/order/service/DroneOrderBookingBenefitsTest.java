@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -98,6 +99,10 @@ class DroneOrderBookingBenefitsTest {
         steps.verify(paidEffects).settleIfFree(any(LockerOrder.class));
         assertEquals(5L, order.getValue().getLockerId());
         assertEquals(7L, order.getValue().getSourceLockerId());
+        // Drone chỉ giao vào tủ: ô 9001 khách chọn là ô NHẬN, đơn không có ô gửi.
+        assertEquals(9001L, order.getValue().getReceiveBoxId());
+        assertEquals(9001L, order.getValue().getReservedBoxId());
+        assertNull(order.getValue().getSendBoxId());
         assertEquals(0, new BigDecimal("15000").compareTo(order.getValue().getOriginalPrice()));
     }
 
