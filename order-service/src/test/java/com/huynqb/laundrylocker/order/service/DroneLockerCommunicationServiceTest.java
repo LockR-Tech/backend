@@ -19,6 +19,8 @@ import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
 import com.huynqb.laundrylocker.order.settings.TestOrderRules;
+import org.eclipse.paho.mqttv5.client.MqttClient;
+import org.eclipse.paho.mqttv5.common.MqttMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -27,6 +29,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -46,6 +49,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /// Kênh MQTT drone ↔ tủ: chữ ký, độ mới, chống phát lại, định danh theo drone, kết quả nắp khớp mã lệnh,
 /// phiên lưu database, và không bao giờ mở lại đơn đã kết thúc.
@@ -157,6 +163,15 @@ class DroneLockerCommunicationServiceTest {
                 .thenAnswer(call -> sessions.values().stream()
                         .filter(s -> s.getDroneId().equals(call.getArgument(0)) && s.getState().equals(call.getArgument(1)))
                         .reduce((first, second) -> second));
+        lenient().when(sessionRepository.findByLockerIdAndStateIn(anyLong(), anyCollection()))
+                .thenAnswer(call -> sessions.values().stream()
+                        .filter(s -> s.getLockerId().equals(call.getArgument(0))
+                                && call.<java.util.Collection<String>>getArgument(1).contains(s.getState()))
+                        .toList());
+        lenient().when(sessionRepository.findByStateInOrderByCreatedAtDesc(anyCollection()))
+                .thenAnswer(call -> sessions.values().stream()
+                        .filter(s -> call.<java.util.Collection<String>>getArgument(0).contains(s.getState()))
+                        .toList());
     }
 
     // ------------------------------------------------------------------ chữ ký, độ mới, phát lại
@@ -319,6 +334,80 @@ class DroneLockerCommunicationServiceTest {
                         DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, other));
 
         assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+    }
+
+    // ------------------------------------------------------------------ tủ mất kết nối giữa chừng
+
+    @Test
+    void openCommandLostWhileLockerWasOfflineIsResentWhenItReconnects() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        session.setCreatedAt(LocalDateTime.now().minusSeconds(90));
+        session.setUpdatedAt(LocalDateTime.now().minusSeconds(90));
+
+        heartbeat(LOCKER);   // Pi kết nối lại broker, gửi heartbeat ngay
+        heartbeat(LOCKER);   // heartbeat kế tiếp ngay sau: lệnh vừa gửi lại, chưa gửi nữa
+        heartbeat(6L);       // tủ khác: không liên quan
+
+        verify(mqtt, times(2)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+        verify(mqtt, never()).publish(eq("cabinet/6/command/open"), any(MqttMessage.class));
+
+        lockerResult(LOCKER, "open", session.getOpenCommandId(), "OPEN");
+        assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+    }
+
+    @Test
+    void lidCommandIsNotResentWhileTheLockerMayStillBeMovingTheLid() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        session.setCreatedAt(LocalDateTime.now());
+        session.setUpdatedAt(LocalDateTime.now());
+
+        heartbeat(LOCKER);
+
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+    }
+
+    @Test
+    void openRequestUnansweredTooLongEndsTheSessionSoANewDetectionCanRetry() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        deliverSigned(marker(null, null));
+        DroneDeliverySession stale = sessions.values().iterator().next();
+        stale.setCreatedAt(LocalDateTime.now().minusMinutes(11));
+        stale.setUpdatedAt(LocalDateTime.now().minusMinutes(11));
+
+        heartbeat(LOCKER);   // tủ quay lại quá muộn: không mở nắp cho drone đã đi
+
+        assertEquals(DroneDeliverySession.LID_OPEN_FAILED, stale.getState());
+        assertEquals("LOCKER_NO_RESPONSE", stale.getErrorCode());
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+
+        deliverSigned(marker(null, null));
+        assertEquals(2, sessions.size(), "phiên hết hạn vẫn chặn lần nhận diện mới");
+    }
+
+    @Test
+    void sweepExpiresOpenRequestsEvenIfTheLockerNeverComesBack() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        session.setCreatedAt(LocalDateTime.now().minusMinutes(11));
+
+        service.expireStaleOpenRequests();
+
+        assertEquals(DroneDeliverySession.LID_OPEN_FAILED, session.getState());
+    }
+
+    private MqttClient connectedMqtt() {
+        MqttClient mqtt = mock(MqttClient.class);
+        lenient().when(mqtt.isConnected()).thenReturn(true);
+        ReflectionTestUtils.setField(service, "mqttClient", mqtt);
+        return mqtt;
+    }
+
+    private void heartbeat(long lockerId) {
+        service.handleIncomingMessage("cabinet/" + lockerId + "/heartbeat", "{\"status\":\"online\"}", null);
     }
 
     // ------------------------------------------------------------------ demo ArUco trong nhà
