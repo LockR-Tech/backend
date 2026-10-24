@@ -277,9 +277,14 @@ public class OrderSettingsCatalog implements SettingsCatalog {
 
                 // === MÔ PHỎNG & THỬ NGHIỆM DRONE (DEMO) ===
                 bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE_DEMO, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng (Indoor Demo)",
-                        "Khi bật (Chế độ B): camera ArUco thật nhận diện ô tủ đích, kích hoạt tới nơi và mở nắp trượt, giữ mở theo số giây cấu hình rồi tự động đóng nắp, chỉ khi đóng nắp xong mới chuyển Sẵn sàng lấy hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS.", false),
-                integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giữ mở nắp trượt (giây)",
-                        "Số giây nắp trượt giữ mở ở chế độ Indoor Demo trước khi tự động gửi lệnh đóng.", 7, 1, 300, "giây"),
+                        "Khi bật (Chế độ B): camera ArUco thật nhận diện đúng mã ô tủ đích thì tủ trượt mở nắp THẬT; "
+                                + "việc drone nhả hàng được giả lập theo số giây cấu hình rồi tủ đóng nắp thật, chỉ khi đóng nắp "
+                                + "xong mới chuyển Sẵn sàng lấy hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS, "
+                                + "drone tự báo đã nhả hàng.", false),
+                integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giả lập drone nhả hàng (giây)",
+                        "Chế độ Indoor Demo: sau khi tủ báo nắp trượt đã mở THẬT, hệ thống giả lập drone nhả hàng "
+                                + "trong chừng này giây rồi gửi lệnh đóng nắp thật. Không ảnh hưởng việc mở nắp — nắp luôn "
+                                + "được tủ trượt mở thật khi camera nhận đúng mã ArUco.", 7, 1, 300, "giây"),
                 integer(DRONE_OPEN_LID_MAX_WAIT_SECONDS, DRONE_DEMO, "Thời gian chờ tủ phản hồi lệnh mở nắp (giây)",
                         "Tủ mất kết nối thì lệnh mở nắp được gửi lại khi tủ kết nối lại. Quá số giây này mà tủ vẫn chưa "
                                 + "phản hồi thì huỷ phiên giao (không mở nắp muộn khi drone đã rời đi); drone quét lại mã "

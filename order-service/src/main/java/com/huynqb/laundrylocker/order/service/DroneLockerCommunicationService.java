@@ -103,13 +103,37 @@ public class DroneLockerCommunicationService {
     @Value("${app.drone.delivery.lid-command-resend-after-seconds:20}")
     private long lidResendAfterSeconds = 20;
 
+    /// Tủ chưa xác nhận đã nhận lệnh nắp (ACCEPTED) sau chừng này giây ⇒ gửi lại ĐÚNG commandId cũ.
+    @Value("${app.drone.delivery.lid-ack-timeout-seconds:10}")
+    private long lidAckTimeoutSeconds = 10;
+
+    /// Tủ đã nhận lệnh nhưng chưa báo xong sau chừng này giây (nắp chạy tối đa ~100 s) ⇒ hỏi lại cùng commandId.
+    @Value("${app.drone.delivery.lid-motion-timeout-seconds:150}")
+    private long lidMotionTimeoutSeconds = 150;
+
+    /// Số lần gửi lại tối đa một lệnh nắp khi tủ đang online; hết lượt thì báo lỗi phiên.
+    @Value("${app.drone.delivery.lid-max-retries:5}")
+    private int lidMaxRetries = 5;
+
+    /// Pi gửi heartbeat mỗi 60 s: quá chừng này giây không thấy ⇒ coi tủ mất kết nối, chờ tủ quay lại thay vì
+    /// đốt lượt gửi lại (lệnh gửi lúc tủ offline bị broker bỏ vì Pi dùng clean session).
+    @Value("${app.drone.delivery.locker-offline-after-seconds:90}")
+    private long lockerOfflineAfterSeconds = 90;
+
+    /// Chặng bay được phép mở nắp: đang tới / đang tiếp cận / đã tới tủ nhận. Lúc cất cánh ở tủ gửi thì không.
+    static final List<String> LID_ALLOWED_STAGES = List.of("EN_ROUTE", "APPROACHING", "ARRIVED");
+
     private MqttClient mqttClient;
 
     /// Lần gửi gần nhất của lệnh nắp đang chờ, theo commandId (mất khi restart ⇒ lấy updatedAt của phiên).
-    private record LidCommandAttempt(LocalDateTime sentAt, int retry) {
+    /// `acked`: tủ đã trả ACCEPTED cho lệnh này (đang chạy nắp).
+    private record LidCommandAttempt(LocalDateTime sentAt, int retry, boolean acked) {
     }
 
     private final Map<String, LidCommandAttempt> lidCommandAttempts = new ConcurrentHashMap<>();
+
+    /// Lần gần nhất thấy tủ còn sống (heartbeat hoặc kết quả lệnh), theo lockerId.
+    private final Map<Long, LocalDateTime> lockerSeenAt = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, runnable -> {
         Thread t = new Thread(runnable, "drone-locker-scheduler");
@@ -222,6 +246,8 @@ public class DroneLockerCommunicationService {
         // Chạy trên luồng sự kiện để không đua với kết quả nắp đang tới.
         scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::expireStaleOpenRequests),
                 30, 30, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::retryStalledLidCommands),
+                5, 5, TimeUnit.SECONDS);
     }
 
     private void connectOrRetry(MqttConnectionOptions options) {
@@ -283,8 +309,12 @@ public class DroneLockerCommunicationService {
     public void handleIncomingMessage(String topic, String payload, String signature) {
         if (topic.startsWith("cabinet/") && topic.endsWith("/heartbeat")) {
             String[] parts = topic.split("/");
+            Long lockerId = parts.length == 3 ? parseLongOrNull(parts[1]) : null;
+            if (lockerId != null) {
+                lockerSeenAt.put(lockerId, LocalDateTime.now());
+            }
             try {
-                resendPendingLidCommands(parts.length == 3 ? parseLongOrNull(parts[1]) : null);
+                resendPendingLidCommands(lockerId);
             } catch (Exception e) {
                 log.error("[COMM] Error resending lid commands on {}: {}", topic, e.getMessage(), e);
             }
@@ -344,6 +374,8 @@ public class DroneLockerCommunicationService {
             processDropPhaseCompleted(inLog, droneId, sessionId);
         } else if ("SAFETY_ABORT".equalsIgnoreCase(eventType)) {
             processSafetyAbort(inLog, droneId);
+        } else if ("TARGET_REQUEST".equalsIgnoreCase(eventType)) {
+            processTargetRequest(inLog, droneId);
         } else {
             finish(inLog, "REJECTED", "UNKNOWN_EVENT", "Loại sự kiện không hỗ trợ: " + eventType);
         }
@@ -406,6 +438,10 @@ public class DroneLockerCommunicationService {
                 if (mission == null) {
                     throw reject("NO_ACTIVE_MISSION", "Drone " + droneId + " không có nhiệm vụ đang bay");
                 }
+                if (!LID_ALLOWED_STAGES.contains(mission.getStatus())) {
+                    throw reject("STAGE_NOT_ALLOWED", "Nhiệm vụ #" + mission.getId() + " đang ở chặng "
+                            + mission.getStatus() + " — chỉ mở nắp khi drone đang tới hoặc đã tới tủ nhận");
+                }
                 LockerOrder order = orderRepository.findByIdForUpdate(mission.getOrderId())
                         .orElseThrow(() -> reject("ORDER_NOT_FOUND", "Không tìm thấy đơn của nhiệm vụ #" + mission.getId()));
                 if (claimedOrderId != null && !claimedOrderId.equals(order.getId())) {
@@ -461,6 +497,8 @@ public class DroneLockerCommunicationService {
                 session.setTargetDictionary(expectedDict);
                 session.setMode(mode);
                 session.setOpenCommandId(UUID.randomUUID().toString());
+                // Gán ngay: hạn lệnh mở tính từ đây và phải giữ nguyên qua mọi lần gửi lại.
+                session.setCreatedAt(LocalDateTime.now());
                 session.setState(DroneDeliverySession.OPEN_LID_REQUESTED);
                 sessionRepository.save(session);
 
@@ -496,13 +534,109 @@ public class DroneLockerCommunicationService {
         publishCommand(outbound.droneCommand(), session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
                 droneId, session.getLockerId(), session.getCompartmentId(), null, null);
         if (outbound.openLid()) {
-            sendLockerLidCommand(session.getLockerId(), session.getCompartmentId(), "OPEN", session.getOpenCommandId());
+            sendLockerLidCommand(session.getLockerId(), session.getCompartmentId(), "OPEN", session.getOpenCommandId(),
+                    openCommandExpiresAt(session));
+            lidCommandAttempts.put(session.getOpenCommandId(), new LidCommandAttempt(LocalDateTime.now(), 0, false));
             saveLog(session.getOpenCommandId(), session.getCorrelationId(), session.getSessionId(),
                     session.getOrderId(), session.getMissionId(), droneId, session.getLockerId(), session.getCompartmentId(),
                     session.getTargetMarkerId(), session.getTargetDictionary(), "BACKEND", "LOCKER",
                     "cabinet/" + session.getLockerId() + "/command/open", "OPEN_LID_REQUESTED", "OUTBOUND", null,
-                    "SENT", "PENDING", "PENDING", null, "Yêu cầu mở nắp trượt ô tủ", 0, null);
+                    "SENT", "PENDING", "PENDING", null, "Đã gửi lệnh mở nắp trượt ô tủ (mã ArUco #"
+                            + session.getTargetMarkerId() + ", hạn " + openCommandExpiresAt(session) + ")", 0, null);
+            log.info("[COMM] OPEN_LID sent: mission={} order={} locker={} box={} aruco={} commandId={} expiresAt={}",
+                    session.getMissionId(), session.getOrderId(), session.getLockerId(), session.getCompartmentId(),
+                    session.getTargetMarkerId(), session.getOpenCommandId(), openCommandExpiresAt(session));
         }
+    }
+
+    // =========================================================================
+    // 1b. MỤC TIÊU GIAO HÀNG CHO PI DRONE (Pi hỏi → Backend trả)
+    // =========================================================================
+
+    /// Mục tiêu Pi drone cần biết để chỉ nhận đúng mã ArUco của ô đích.
+    record DeliveryTarget(Long missionId, Long orderId, Long lockerId, Long boxId, Integer markerId,
+            String dictionary, String mode, String stage, String sessionState) {
+    }
+
+    /// Pi drone hỏi "đang giao tới ô nào" (lúc khởi động, kết nối lại và định kỳ). Chỉ trả mục tiêu khi drone có
+    /// nhiệm vụ ở chặng được phép mở nắp, hoặc demo trong nhà có ĐÚNG MỘT đơn DEMO chờ giao. Mã ArUco lấy từ cấu
+    /// hình ô đích ở locker-service — Pi không tự đoán, không có mã cứng trong code.
+    void processTargetRequest(DroneLockerCommLog inLog, String droneId) {
+        String[] reason = {null};
+        DeliveryTarget target;
+        try {
+            target = transactions().execute(status -> resolveTarget(droneId, reason));
+        } catch (RuntimeException ex) {
+            target = null;
+            reason[0] = "Không tra được nhiệm vụ: " + ex.getMessage();
+        }
+        if (target == null) {
+            finish(inLog, "SUCCESS", "NO_TARGET", reason[0]);
+            publishCommand("NO_TARGET", null, null, null, droneId, null, null, "NO_TARGET", reason[0], Map.of());
+            return;
+        }
+        inLog.setOrderId(target.orderId());
+        inLog.setJourneyId(target.missionId());
+        inLog.setLockerId(target.lockerId());
+        finish(inLog, "SUCCESS", null, "Gửi mục tiêu: tủ #" + target.lockerId() + ", ô #" + target.boxId()
+                + ", mã ArUco #" + target.markerId());
+        Map<String, Object> extra = new LinkedHashMap<>();
+        if (target.missionId() != null) extra.put("missionId", target.missionId());
+        extra.put("arucoMarkerId", target.markerId());
+        extra.put("arucoDictionary", target.dictionary());
+        extra.put("mode", target.mode());
+        extra.put("stage", target.stage());
+        if (target.sessionState() != null) extra.put("sessionState", target.sessionState());
+        publishCommand("DELIVERY_TARGET", null, null, target.orderId(), droneId, target.lockerId(), target.boxId(),
+                null, null, extra);
+    }
+
+    private DeliveryTarget resolveTarget(String droneId, String[] reason) {
+        DroneMission mission = missionRepository
+                .findFirstByDroneCodeAndStatusInOrderByIdDesc(droneId, LID_ALLOWED_STAGES)
+                .filter(found -> LID_ALLOWED_STAGES.contains(found.getStatus()))
+                .orElse(null);
+        LockerOrder order = null;
+        String mode;
+        if (mission != null) {
+            order = orderRepository.findById(mission.getOrderId()).orElse(null);
+            mode = order != null && "DEMO".equalsIgnoreCase(order.getFulfillmentMode())
+                    && orderRules.droneDemoIndoorArucoEnabled() ? "INDOOR_ARUCO_DEMO" : "REAL_OUTDOOR";
+        } else if (orderRules.droneDemoIndoorArucoEnabled()) {
+            List<LockerOrder> demo = orderRepository
+                    .findByTypeAndStatusNotInOrderByUpdatedAtDesc("DRONE_DELIVERY", CLOSED_ORDER_STATUSES).stream()
+                    .filter(candidate -> "AWAITING_DISPATCH".equals(candidate.getStatus()))
+                    .filter(candidate -> "DEMO".equalsIgnoreCase(candidate.getFulfillmentMode()))
+                    .filter(candidate -> missionRepository.findByOrderId(candidate.getId()).isEmpty())
+                    .limit(2)
+                    .toList();
+            if (demo.size() != 1) {
+                reason[0] = demo.isEmpty() ? "Drone " + droneId + " chưa có nhiệm vụ và không có đơn DEMO chờ giao"
+                        : "Có nhiều đơn DEMO chờ giao — không tự chọn, cần KTV phóng đúng nhiệm vụ";
+                return null;
+            }
+            order = demo.getFirst();
+            mode = "INDOOR_ARUCO_DEMO";
+        } else {
+            reason[0] = "Drone " + droneId + " chưa có nhiệm vụ ở chặng được phép mở nắp (" + LID_ALLOWED_STAGES + ")";
+            return null;
+        }
+        if (order == null || !"AWAITING_DISPATCH".equals(order.getStatus())) {
+            reason[0] = "Đơn của nhiệm vụ không còn đang giao";
+            return null;
+        }
+        Long boxId = order.getReservedBoxId() != null ? order.getReservedBoxId()
+                : order.getReceiveBoxId() != null ? order.getReceiveBoxId() : order.getSendBoxId();
+        BoxCellDto cell = fetchCell(boxId);
+        if (cell == null || cell.arucoMarkerId() == null) {
+            reason[0] = "Ô nhận #" + boxId + " chưa được gán mã ArUco";
+            return null;
+        }
+        String sessionState = sessionRepository.findFirstByOrderIdAndStateInOrderByCreatedAtDesc(order.getId(),
+                DroneDeliverySession.ACTIVE_STATES).map(DroneDeliverySession::getState).orElse(null);
+        return new DeliveryTarget(mission != null ? mission.getId() : null, order.getId(), order.getLockerId(), boxId,
+                cell.arucoMarkerId(), cell.arucoDictionary() != null ? cell.arucoDictionary() : "DICT_4X4_50", mode,
+                mission != null ? mission.getStatus() : order.getDeliveryStage(), sessionState);
     }
 
     /// Đơn đã kết thúc hoặc đã vào ô: không còn ứng viên cho demo.
@@ -590,7 +724,8 @@ public class DroneLockerCommunicationService {
         session.setCloseCommandId(UUID.randomUUID().toString());
         session.setState(DroneDeliverySession.CLOSE_LID_REQUESTED);
         sessionRepository.save(session);
-        sendLockerLidCommand(session.getLockerId(), session.getCompartmentId(), "CLOSE", session.getCloseCommandId());
+        sendLockerLidCommand(session.getLockerId(), session.getCompartmentId(), "CLOSE", session.getCloseCommandId(), null);
+        lidCommandAttempts.put(session.getCloseCommandId(), new LidCommandAttempt(LocalDateTime.now(), 0, false));
         saveLog(session.getCloseCommandId(), session.getCorrelationId(), session.getSessionId(),
                 session.getOrderId(), session.getMissionId(), session.getDroneId(), session.getLockerId(),
                 session.getCompartmentId(), session.getTargetMarkerId(), session.getTargetDictionary(),
@@ -621,17 +756,20 @@ public class DroneLockerCommunicationService {
             return;
         }
         DroneDeliverySession session = found.get();
-        lidCommandAttempts.remove(commandId);
+        if (lockerId != null) {
+            lockerSeenAt.put(lockerId, LocalDateTime.now());
+        }
         Long boxId = longOrNull(data, "boxId");
         String status = text(data, "status");
+        boolean accepted = "ACCEPTED".equalsIgnoreCase(status);
         String hwState = text(data, "hwState");
         String errorCode = text(data, "errorCode");
         String errorMessage = text(data, "errorMessage");
 
         String mismatch = !Objects.equals(lockerId, session.getLockerId()) ? "LOCKER_MISMATCH"
                 : boxId != null && !boxId.equals(session.getCompartmentId()) ? "BOX_MISMATCH"
-                : !(open ? DroneDeliverySession.OPEN_LID_REQUESTED : DroneDeliverySession.CLOSE_LID_REQUESTED)
-                        .equals(session.getState()) ? "UNEXPECTED_STATE"
+                : !(open ? Set.of(DroneDeliverySession.OPEN_LID_REQUESTED, DroneDeliverySession.LID_OPENING)
+                        : Set.of(DroneDeliverySession.CLOSE_LID_REQUESTED)).contains(session.getState()) ? "UNEXPECTED_STATE"
                 : null;
         String eventType = open ? "LID_OPEN_RESULT" : "LID_CLOSE_RESULT";
         if (mismatch != null) {
@@ -643,21 +781,71 @@ public class DroneLockerCommunicationService {
             log.warn("[COMM] Locker result {} for session {} ignored: {}", commandId, session.getSessionId(), mismatch);
             return;
         }
+        if (accepted) {
+            handleLidAccepted(session, open, commandId, topic, rawPayload, data.has("duplicate")
+                    && data.get("duplicate").asBoolean(false));
+            return;
+        }
+        lidCommandAttempts.remove(commandId);
         if (open) {
-            handleOpenResult(session, status, hwState, errorCode, errorMessage, topic, rawPayload);
+            handleOpenResult(session, status, hwState, errorCode, errorMessage, topic, rawPayload,
+                    text(data, "lidConfirmation"));
         } else {
             handleCloseResult(session, status, hwState, errorCode, errorMessage, topic, rawPayload);
         }
     }
 
+    /// Tủ báo ĐÃ NHẬN lệnh (ACCEPTED) và bắt đầu chạy nắp — chưa phải nắp đã mở/đóng xong. Từ đây không gửi lại
+    /// theo hạn ACK nữa mà chờ theo thời gian chạy nắp.
+    private void handleLidAccepted(DroneDeliverySession session, boolean open, String commandId, String topic,
+            String rawPayload, boolean duplicate) {
+        LidCommandAttempt last = lidCommandAttempts.get(commandId);
+        lidCommandAttempts.put(commandId, new LidCommandAttempt(LocalDateTime.now(), last != null ? last.retry() : 0, true));
+        if (open && DroneDeliverySession.LID_OPENING.equals(session.getState())) {
+            log.debug("[COMM] Duplicate ACCEPTED for open command {} — lid already moving", commandId);
+            return;
+        }
+        saveLog(commandId, session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
+                session.getMissionId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(),
+                session.getTargetMarkerId(), session.getTargetDictionary(), "LOCKER", "BACKEND", topic,
+                open ? "LID_OPEN_ACCEPTED" : "LID_CLOSE_ACCEPTED", "INBOUND", rawPayload, "RECEIVED", "ACKNOWLEDGED",
+                "PENDING", null, (open ? "Tủ đã nhận lệnh mở, nắp trượt đang chạy" : "Tủ đã nhận lệnh đóng, nắp trượt đang chạy")
+                        + (duplicate ? " (lệnh gửi lại — tủ không chạy motor lần nữa)" : ""), 0, null);
+        if (!open) {
+            return;
+        }
+        session.setState(DroneDeliverySession.LID_OPENING);
+        sessionRepository.save(session);
+        publishCommand("LID_OPENING", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
+                session.getDroneId(), session.getLockerId(), session.getCompartmentId(), null,
+                "Tủ đã nhận lệnh, nắp trượt đang mở");
+        log.info("[COMM] Locker {} accepted OPEN {} (session {}, order {}) — lid moving",
+                session.getLockerId(), commandId, session.getSessionId(), session.getOrderId());
+    }
+
     private void handleOpenResult(DroneDeliverySession session, String status, String hwState, String errorCode,
-            String errorMessage, String topic, String rawPayload) {
+            String errorMessage, String topic, String rawPayload, String lidConfirmation) {
         boolean isSuccess = "SUCCESS".equalsIgnoreCase(status) && "OPEN".equalsIgnoreCase(hwState);
+        // Luồng drone luôn mở nắp THẬT: Pi tủ bật LID_BYPASS_PHYSICAL_MOTION (chỉ báo, không trượt nắp) thì
+        // không được coi là đã mở, kẻo hệ thống cho drone thả hàng vào ô còn đậy nắp.
+        if (isSuccess && "BYPASS".equalsIgnoreCase(lidConfirmation)) {
+            isSuccess = false;
+            errorCode = "LID_SIMULATED";
+            errorMessage = "Tủ đang bật LID_BYPASS_PHYSICAL_MOTION (giả lập, nắp không trượt) — tắt cờ này trên Pi tủ "
+                    + "để mở nắp thật";
+        }
+        // Không có công tắc hành trình xác nhận: nắp đã chạy hết số bước nhưng không chắc đã mở hoàn toàn.
+        boolean confirmedByLimit = !"STEP_COUNT".equalsIgnoreCase(lidConfirmation);
+        String openedMessage = confirmedByLimit ? "Nắp ô tủ đã mở hoàn toàn"
+                : "Nắp đã chạy hết hành trình theo số bước — tủ chưa có công tắc hành trình xác nhận mở hoàn toàn";
         saveLog(session.getOpenCommandId(), session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
                 session.getMissionId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(),
                 session.getTargetMarkerId(), session.getTargetDictionary(), "LOCKER", "BACKEND", topic,
                 isSuccess ? "LID_OPENED" : "LID_OPEN_FAILED", "INBOUND", rawPayload, "RECEIVED", "CONFIRMED",
-                isSuccess ? "SUCCESS" : "FAILED", errorCode, errorMessage, 0, null);
+                isSuccess ? "SUCCESS" : "FAILED", errorCode, isSuccess ? openedMessage : errorMessage, 0, null);
+        log.info("[COMM] OPEN_LID result: mission={} order={} locker={} aruco={} commandId={} status={} hwState={} "
+                        + "confirmation={} error={}", session.getMissionId(), session.getOrderId(), session.getLockerId(),
+                session.getTargetMarkerId(), session.getOpenCommandId(), status, hwState, lidConfirmation, errorCode);
         if (!isSuccess) {
             session.setState(DroneDeliverySession.LID_OPEN_FAILED);
             session.setErrorCode(errorCode);
@@ -670,21 +858,28 @@ public class DroneLockerCommunicationService {
         session.setState(DroneDeliverySession.LID_OPENED);
         session.setLidOpenedAt(LocalDateTime.now());
         sessionRepository.save(session);
+        boolean demo = "INDOOR_ARUCO_DEMO".equalsIgnoreCase(session.getMode());
+        int holdSeconds = orderRules.droneDemoHoldOpenSeconds() > 0 ? orderRules.droneDemoHoldOpenSeconds() : 7;
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("lidConfirmation", lidConfirmation != null ? lidConfirmation : "LIMIT_SWITCH");
+        if (demo) {
+            extra.put("dropSimulationSeconds", holdSeconds);
+        }
         publishCommand("LID_OPENED", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
-                session.getDroneId(), session.getLockerId(), session.getCompartmentId(), null, "Nắp ô tủ đã mở hoàn toàn");
+                session.getDroneId(), session.getLockerId(), session.getCompartmentId(), null, openedMessage, extra);
         recordDroneIotLog(session.getDroneUnitId(), session.getDroneId(), "CARGO_HOOK", "HOOK_ATTACH", "SUCCESS",
-                session.getOrderId(), "Nắp ô tủ đã mở hoàn toàn. Sẵn sàng thả kiện hàng");
+                session.getOrderId(), openedMessage + ". Sẵn sàng thả kiện hàng");
 
-        if ("INDOOR_ARUCO_DEMO".equalsIgnoreCase(session.getMode())) {
-            // Demo trong nhà: giữ nắp mở vài giây rồi tự đóng. Đọc lại phiên lúc hẹn giờ chạy (có thể đã đổi).
-            int holdSeconds = orderRules.droneDemoHoldOpenSeconds() > 0 ? orderRules.droneDemoHoldOpenSeconds() : 7;
+        if (demo) {
+            // Demo trong nhà: nắp đã mở thật; giả lập drone nhả hàng trong `holdSeconds` giây rồi đóng nắp thật.
+            // Đọc lại phiên lúc hẹn giờ chạy (có thể đã đổi).
             String sessionId = session.getSessionId();
             saveLog(UUID.randomUUID().toString(), session.getCorrelationId(), session.getSessionId(),
                     session.getOrderId(), session.getMissionId(), session.getDroneId(), session.getLockerId(),
                     session.getCompartmentId(), session.getTargetMarkerId(), session.getTargetDictionary(),
                     "BACKEND", "LOCKER", "cabinet/" + session.getLockerId() + "/command/open",
                     "DROP_PHASE_STARTED", "INTERNAL", null, "PROCESSED", "CONFIRMED", "SUCCESS", null,
-                    "Bắt đầu giai đoạn nhả hàng (giữ mở nắp trượt trong " + holdSeconds + " giây)", 0, null);
+                    "Bắt đầu giả lập drone nhả hàng (" + holdSeconds + " giây) — nắp đã mở thật", 0, null);
             scheduler.schedule(() -> {
                 try {
                     sessionRepository.findById(sessionId)
@@ -695,7 +890,7 @@ public class DroneLockerCommunicationService {
                                         current.getCompartmentId(), current.getTargetMarkerId(), current.getTargetDictionary(),
                                         "BACKEND", "LOCKER", "cabinet/" + current.getLockerId() + "/command/close",
                                         "DROP_PHASE_COMPLETED", "INTERNAL", null, "PROCESSED", "CONFIRMED", "SUCCESS", null,
-                                        "Hoàn tất giai đoạn nhả hàng", 0, null);
+                                        "Hoàn tất giả lập drone nhả hàng", 0, null);
                                 requestCloseLid(current, "Gửi lệnh yêu cầu đóng nắp trượt ô tủ");
                             });
                 } catch (Exception ex) {
@@ -772,32 +967,88 @@ public class DroneLockerCommunicationService {
         LocalDateTime now = LocalDateTime.now();
         for (DroneDeliverySession session : sessionRepository.findByLockerIdAndStateIn(lockerId,
                 DroneDeliverySession.LID_COMMAND_PENDING_STATES)) {
-            boolean open = DroneDeliverySession.OPEN_LID_REQUESTED.equals(session.getState());
-            if (open && isOpenRequestExpired(session, now)) {
-                expireOpenRequest(session);
-                continue;
-            }
-            String commandId = open ? session.getOpenCommandId() : session.getCloseCommandId();
-            LidCommandAttempt last = lidCommandAttempts.get(commandId);
-            LocalDateTime lastSentAt = last != null ? last.sentAt() : session.getUpdatedAt();
-            if (lastSentAt != null && lastSentAt.plusSeconds(lidResendAfterSeconds).isAfter(now)) {
-                continue; // lệnh vừa gửi, tủ có thể đang chạy nắp
-            }
-            if (!sendLockerLidCommand(session.getLockerId(), session.getCompartmentId(), open ? "OPEN" : "CLOSE", commandId)) {
-                continue;
-            }
-            int retry = last != null ? last.retry() + 1 : 1;
-            lidCommandAttempts.put(commandId, new LidCommandAttempt(now, retry));
-            saveLog(commandId, session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
-                    session.getMissionId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(),
-                    session.getTargetMarkerId(), session.getTargetDictionary(), "BACKEND", "LOCKER",
-                    "cabinet/" + session.getLockerId() + "/command/" + (open ? "open" : "close"),
-                    open ? "OPEN_LID_REQUESTED" : "CLOSE_LID_REQUESTED", "OUTBOUND", null, "SENT", "PENDING", "PENDING",
-                    null, "Gửi lại lệnh " + (open ? "mở" : "đóng") + " nắp trượt ô tủ (tủ đã kết nối lại, lần " + retry + ")",
-                    retry, null);
-            log.info("[COMM] Resent {} command {} to locker {} (retry {})", open ? "OPEN" : "CLOSE", commandId,
-                    lockerId, retry);
+            retryLidCommand(session, now, true);
         }
+    }
+
+    /// Quét định kỳ: lệnh nắp chưa được tủ xác nhận (hoặc nắp chạy quá lâu chưa báo xong) thì gửi lại đúng
+    /// commandId cũ — Pi tủ nhớ commandId đã chạy nên không chạy motor lần hai. Tủ mất kết nối thì chờ tủ quay lại.
+    void retryStalledLidCommands() {
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            sessionRepository.findByStateInOrderByCreatedAtDesc(DroneDeliverySession.LID_COMMAND_PENDING_STATES)
+                    .forEach(session -> retryLidCommand(session, now, false));
+        } catch (Exception e) {
+            log.error("[COMM] Error retrying lid commands: {}", e.getMessage(), e);
+        }
+    }
+
+    private void retryLidCommand(DroneDeliverySession session, LocalDateTime now, boolean lockerJustSeen) {
+        boolean open = !DroneDeliverySession.CLOSE_LID_REQUESTED.equals(session.getState());
+        if (DroneDeliverySession.OPEN_LID_REQUESTED.equals(session.getState()) && isOpenRequestExpired(session, now)) {
+            expireOpenRequest(session);
+            return;
+        }
+        String commandId = open ? session.getOpenCommandId() : session.getCloseCommandId();
+        LidCommandAttempt last = lidCommandAttempts.get(commandId);
+        boolean acked = DroneDeliverySession.LID_OPENING.equals(session.getState()) || (last != null && last.acked());
+        LocalDateTime lastSentAt = last != null ? last.sentAt() : session.getUpdatedAt();
+        long waitSeconds = acked ? lidMotionTimeoutSeconds : lidAckTimeoutSeconds;
+        if (lastSentAt != null && lastSentAt.plusSeconds(waitSeconds).isAfter(now)) {
+            return; // tủ có thể đang nhận / đang chạy nắp
+        }
+        if (!lockerJustSeen && !isLockerOnline(session.getLockerId(), now)) {
+            return; // tủ offline: heartbeat lúc kết nối lại sẽ gửi lại, hạn lệnh mở vẫn được kiểm
+        }
+        int retry = last != null ? last.retry() : 0;
+        if (retry >= lidMaxRetries) {
+            failLidCommand(session, open, acked ? "LID_MOTION_TIMEOUT" : "LOCKER_NO_ACK",
+                    acked ? "Tủ đã nhận lệnh nhưng không báo nắp chạy xong sau " + (retry + 1) + " lần hỏi"
+                            : "Tủ không xác nhận nhận lệnh sau " + (retry + 1) + " lần gửi");
+            return;
+        }
+        String expiresAt = open ? openCommandExpiresAt(session) : null;
+        if (!sendLockerLidCommand(session.getLockerId(), session.getCompartmentId(), open ? "OPEN" : "CLOSE", commandId,
+                expiresAt)) {
+            return;
+        }
+        lidCommandAttempts.put(commandId, new LidCommandAttempt(now, retry + 1, acked));
+        saveLog(commandId, session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
+                session.getMissionId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(),
+                session.getTargetMarkerId(), session.getTargetDictionary(), "BACKEND", "LOCKER",
+                "cabinet/" + session.getLockerId() + "/command/" + (open ? "open" : "close"),
+                open ? "OPEN_LID_REQUESTED" : "CLOSE_LID_REQUESTED", "OUTBOUND", null, "SENT", "PENDING", "PENDING",
+                null, "Gửi lại lệnh " + (open ? "mở" : "đóng") + " nắp trượt cùng mã lệnh (lần " + (retry + 1) + ", "
+                        + (lockerJustSeen ? "tủ vừa kết nối lại" : acked ? "nắp chạy quá lâu chưa báo xong"
+                        : "tủ chưa xác nhận nhận lệnh") + ")", retry + 1, null);
+        log.info("[COMM] Resent {} command {} to locker {} (retry {}, acked={})", open ? "OPEN" : "CLOSE", commandId,
+                session.getLockerId(), retry + 1, acked);
+    }
+
+    private boolean isLockerOnline(Long lockerId, LocalDateTime now) {
+        LocalDateTime seen = lockerId == null ? null : lockerSeenAt.get(lockerId);
+        return seen != null && seen.plusSeconds(lockerOfflineAfterSeconds).isAfter(now);
+    }
+
+    /// Hết lượt gửi lại khi tủ vẫn online: dừng phiên, báo drone (không thả hàng) và để lại dấu vết cho admin.
+    private void failLidCommand(DroneDeliverySession session, boolean open, String errorCode, String errorMessage) {
+        String commandId = open ? session.getOpenCommandId() : session.getCloseCommandId();
+        lidCommandAttempts.remove(commandId);
+        session.setState(open ? DroneDeliverySession.LID_OPEN_FAILED : DroneDeliverySession.LID_CLOSE_FAILED);
+        session.setErrorCode(errorCode);
+        session.setErrorMessage(errorMessage);
+        sessionRepository.save(session);
+        saveLog(commandId, session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
+                session.getMissionId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(),
+                session.getTargetMarkerId(), session.getTargetDictionary(), "BACKEND", "DRONE",
+                "cabinet/" + session.getLockerId() + "/command/" + (open ? "open" : "close"),
+                open ? "LID_OPEN_FAILED" : "LID_CLOSE_FAILED", "INTERNAL", null, "PROCESSED", "TIMEOUT", "FAILED",
+                errorCode, errorMessage, 0, null);
+        publishCommand(open ? "LID_OPEN_FAILED" : "LID_CLOSE_FAILED", session.getSessionId(), session.getCorrelationId(),
+                session.getOrderId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(), errorCode,
+                errorMessage);
+        log.warn("[COMM] {} command {} of session {} failed: {} {}", open ? "OPEN" : "CLOSE", commandId,
+                session.getSessionId(), errorCode, errorMessage);
     }
 
     /// Lệnh mở nắp chờ quá lâu mà tủ không trả lời: drone hẳn đã rời đi, mở muộn chỉ để ô hở ⇒ kết thúc phiên
@@ -888,16 +1139,27 @@ public class DroneLockerCommunicationService {
         }
     }
 
-    private boolean sendLockerLidCommand(Long lockerId, Long boxId, String action, String commandId) {
+    /// Hạn của lệnh mở nắp: quá thời điểm này Pi tủ bỏ lệnh (tránh mở muộn do lệnh cũ khi tủ kết nối lại).
+    /// Tính từ lúc tạo phiên theo thời gian chờ admin cấu hình — gửi lại vẫn giữ nguyên hạn.
+    String openCommandExpiresAt(DroneDeliverySession session) {
+        LocalDateTime created = session.getCreatedAt() != null ? session.getCreatedAt() : LocalDateTime.now();
+        // Cắt về mili giây: Pi đọc bằng datetime.fromisoformat (Python 3.11+), không cần 9 chữ số lẻ.
+        return created.atZone(java.time.ZoneId.systemDefault()).toInstant()
+                .plusSeconds(orderRules.droneOpenLidMaxWaitSeconds())
+                .truncatedTo(java.time.temporal.ChronoUnit.MILLIS).toString();
+    }
+
+    private boolean sendLockerLidCommand(Long lockerId, Long boxId, String action, String commandId, String expiresAt) {
         if (mqttClient == null || !mqttClient.isConnected()) {
             log.error("[COMM] Cannot send {} command: MQTT not connected", action);
             return false;
         }
         try {
-            ObjectNode payload = lidCommandPayload(boxId, action, commandId);
+            ObjectNode payload = lidCommandPayload(boxId, action, commandId, expiresAt);
             String topic = "cabinet/" + lockerId + "/command/" + action.toLowerCase(Locale.ROOT);
             MqttMessage msg = new MqttMessage(payload.toString().getBytes(StandardCharsets.UTF_8));
             msg.setQos(1);
+            msg.setRetained(false); // lệnh nắp không bao giờ giữ lại trên broker
             mqttClient.publish(topic, msg);
             log.info("[COMM] Published {} to {}: {}", action, topic, payload);
             return true;
@@ -910,6 +1172,10 @@ public class DroneLockerCommunicationService {
     /// `lid: true` bảo Pi trượt nắp trên nóc tủ thay vì kích relay cửa trước của ô
     /// (mqtt-contract § 2.1). Lệnh mở ô của khách/KTV/admin không có cờ này.
     ObjectNode lidCommandPayload(Long boxId, String action, String commandId) {
+        return lidCommandPayload(boxId, action, commandId, null);
+    }
+
+    ObjectNode lidCommandPayload(Long boxId, String action, String commandId, String expiresAt) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("commandId", commandId);
         payload.put("boxId", boxId);
@@ -917,18 +1183,30 @@ public class DroneLockerCommunicationService {
         payload.put("action", action.toUpperCase(Locale.ROOT));
         payload.put("lid", true);
         payload.put("timeout", 15);
+        payload.put("source", "DRONE_DELIVERY");
+        payload.put("issuedAt", Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS).toString());
+        if (expiresAt != null) {
+            payload.put("expiresAt", expiresAt);
+        }
         return payload;
     }
 
     /// Lệnh gửi drone được ký bằng khoá của chính drone đó: Pi chỉ làm theo lệnh có chữ ký đúng.
     void publishCommand(String eventType, String sessionId, String correlationId, Long orderId,
                         String droneId, Long lockerId, Long compartmentId, String errorCode, String errorMessage) {
+        publishCommand(eventType, sessionId, correlationId, orderId, droneId, lockerId, compartmentId, errorCode,
+                errorMessage, Map.of());
+    }
+
+    void publishCommand(String eventType, String sessionId, String correlationId, Long orderId, String droneId,
+                        Long lockerId, Long compartmentId, String errorCode, String errorMessage,
+                        Map<String, Object> extra) {
         if (mqttClient == null || !mqttClient.isConnected()) {
             return;
         }
         try {
             String body = commandPayload(eventType, sessionId, correlationId, orderId, droneId, lockerId,
-                    compartmentId, errorCode, errorMessage);
+                    compartmentId, errorCode, errorMessage, extra);
             MqttMessage msg = new MqttMessage(body.getBytes(StandardCharsets.UTF_8));
             msg.setQos(1);
             String signature = signCommand(droneId, body);
@@ -946,6 +1224,12 @@ public class DroneLockerCommunicationService {
 
     String commandPayload(String eventType, String sessionId, String correlationId, Long orderId, String droneId,
             Long lockerId, Long compartmentId, String errorCode, String errorMessage) {
+        return commandPayload(eventType, sessionId, correlationId, orderId, droneId, lockerId, compartmentId, errorCode,
+                errorMessage, Map.of());
+    }
+
+    String commandPayload(String eventType, String sessionId, String correlationId, Long orderId, String droneId,
+            Long lockerId, Long compartmentId, String errorCode, String errorMessage, Map<String, Object> extra) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("messageId", UUID.randomUUID().toString());
         payload.put("correlationId", correlationId != null ? correlationId : UUID.randomUUID().toString());
@@ -959,6 +1243,7 @@ public class DroneLockerCommunicationService {
         if (compartmentId != null) payload.put("compartmentId", compartmentId);
         if (errorCode != null) payload.put("errorCode", errorCode);
         if (errorMessage != null) payload.put("errorMessage", errorMessage);
+        extra.forEach((key, value) -> payload.set(key, objectMapper.valueToTree(value)));
         return payload.toString();
     }
 

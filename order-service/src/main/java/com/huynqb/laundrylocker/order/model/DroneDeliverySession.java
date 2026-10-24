@@ -22,6 +22,8 @@ public class DroneDeliverySession {
 
     public static final String MARKER_VALIDATED = "MARKER_VALIDATED";
     public static final String OPEN_LID_REQUESTED = "OPEN_LID_REQUESTED";
+    /// Tủ đã xác nhận nhận lệnh mở (ACCEPTED) và đang chạy nắp — chưa phải "đã mở hoàn toàn".
+    public static final String LID_OPENING = "LID_OPENING";
     public static final String LID_OPENED = "LID_OPENED";
     public static final String CLOSE_LID_REQUESTED = "CLOSE_LID_REQUESTED";
     public static final String READY_FOR_PICKUP = "READY_FOR_PICKUP";
@@ -31,10 +33,11 @@ public class DroneDeliverySession {
 
     /// Phiên còn chạy: chỉ một phiên như vậy cho mỗi đơn.
     public static final Set<String> ACTIVE_STATES =
-            Set.of(MARKER_VALIDATED, OPEN_LID_REQUESTED, LID_OPENED, CLOSE_LID_REQUESTED);
+            Set.of(MARKER_VALIDATED, OPEN_LID_REQUESTED, LID_OPENING, LID_OPENED, CLOSE_LID_REQUESTED);
 
     /// Đã gửi lệnh nắp cho tủ, đang chờ kết quả.
-    public static final Set<String> LID_COMMAND_PENDING_STATES = Set.of(OPEN_LID_REQUESTED, CLOSE_LID_REQUESTED);
+    public static final Set<String> LID_COMMAND_PENDING_STATES =
+            Set.of(OPEN_LID_REQUESTED, LID_OPENING, CLOSE_LID_REQUESTED);
 
     @Id
     @Column(name = "session_id", length = 64)

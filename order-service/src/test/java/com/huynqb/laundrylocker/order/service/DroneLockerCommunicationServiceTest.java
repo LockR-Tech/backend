@@ -21,6 +21,7 @@ import com.huynqb.laundrylocker.order.settings.OrderRules;
 import com.huynqb.laundrylocker.order.settings.TestOrderRules;
 import org.eclipse.paho.mqttv5.client.MqttClient;
 import org.eclipse.paho.mqttv5.common.MqttMessage;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -39,6 +40,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -345,6 +347,7 @@ class DroneLockerCommunicationServiceTest {
         DroneDeliverySession session = sessions.values().iterator().next();
         session.setCreatedAt(LocalDateTime.now().minusSeconds(90));
         session.setUpdatedAt(LocalDateTime.now().minusSeconds(90));
+        forgetLidAttempts();   // 90 s đã trôi qua kể từ lần gửi
 
         heartbeat(LOCKER);   // Pi kết nối lại broker, gửi heartbeat ngay
         heartbeat(LOCKER);   // heartbeat kế tiếp ngay sau: lệnh vừa gửi lại, chưa gửi nữa
@@ -377,6 +380,7 @@ class DroneLockerCommunicationServiceTest {
         DroneDeliverySession stale = sessions.values().iterator().next();
         stale.setCreatedAt(LocalDateTime.now().minusMinutes(11));
         stale.setUpdatedAt(LocalDateTime.now().minusMinutes(11));
+        forgetLidAttempts();
 
         heartbeat(LOCKER);   // tủ quay lại quá muộn: không mở nắp cho drone đã đi
 
@@ -514,6 +518,214 @@ class DroneLockerCommunicationServiceTest {
         assertTrue(DroneTelemetrySigner.verify(SECRET, DRONE, DroneLockerCommunicationService.DRONE_COMMANDS_TOPIC,
                 body, signature));
         assertNull(service.signCommand(null, body));
+    }
+
+    // ------------------------------------------------------------------ mở nắp thật theo ArUco
+
+    /// Đúng mã, đúng nhiệm vụ ⇒ đúng một lệnh mở NẮP TRƯỢT (lid:true) tới đúng tủ, có commandId, có hạn, không retained.
+    @Test
+    void rightMarkerForTheMissionSendsExactlyOneExpiringSlidingLidOpen() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+
+        deliverSigned(marker(null, null));
+        deliverSigned(marker(null, null));   // drone gửi lặp: không mở lần hai
+
+        ArgumentCaptor<MqttMessage> sent = ArgumentCaptor.forClass(MqttMessage.class);
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), sent.capture());
+        verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+        var payload = new ObjectMapper().readTree(new String(sent.getValue().getPayload()));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        assertEquals(session.getOpenCommandId(), payload.get("commandId").asText());
+        assertTrue(payload.get("lid").asBoolean(), "phải là nắp trượt, không phải relay cửa ô");
+        assertEquals(BOX, payload.get("boxId").asLong());
+        assertEquals("DRONE_DELIVERY", payload.get("source").asText());
+        assertEquals(service.openCommandExpiresAt(session), payload.get("expiresAt").asText());
+        assertFalse(sent.getValue().isRetained());
+    }
+
+    /// Camera thấy mã của ô khác ⇒ không gửi gì tới tủ.
+    @Test
+    void wrongMarkerSendsNothingToTheLocker() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("arucoMarkerId", 8);
+        fields.put("arucoDictionary", "DICT_4X4_50");
+        fields.put("mode", "REAL_OUTDOOR");
+
+        deliverSigned(event("MARKER_DETECTED", fields, OffsetDateTime.now()));
+
+        verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+        assertTrue(sessions.isEmpty());
+    }
+
+    /// Đang cất cánh ở tủ gửi (chưa tới chặng tiếp cận) ⇒ không mở nắp dù mã đúng.
+    @Test
+    void markerBeforeTheApproachStagesIsNotAllowedToOpenTheLid() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        mission.setStatus("DEPARTED");
+        order.setDeliveryStage("DEPARTED");
+
+        deliverSigned(marker(null, null));
+
+        verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+        assertTrue(sessions.isEmpty());
+    }
+
+    /// "Đã gửi lệnh" → "tủ đã nhận lệnh" (ACCEPTED, nắp đang chạy) → "nắp đã mở" là ba trạng thái khác nhau.
+    @Test
+    void acceptedIsOnlyAcknowledgedUntilTheLockerReportsTheLidOpen() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        assertEquals(DroneDeliverySession.OPEN_LID_REQUESTED, session.getState());
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "ACCEPTED", "MOVING", "");
+        assertEquals(DroneDeliverySession.LID_OPENING, session.getState());
+        assertNull(session.getLidOpenedAt(), "tủ mới nhận lệnh, nắp chưa mở");
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "ACCEPTED", "MOVING", ",\"duplicate\":true");
+        assertEquals(DroneDeliverySession.LID_OPENING, session.getState());
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "SUCCESS", "OPEN",
+                ",\"lidConfirmation\":\"LIMIT_SWITCH\"");
+        assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+        assertNotNull(session.getLidOpenedAt());
+    }
+
+    /// Chưa có ACK: gửi lại ĐÚNG commandId cũ, có giới hạn; hết lượt thì báo lỗi, không treo phiên.
+    @Test
+    void unacknowledgedOpenIsRetriedWithTheSameCommandIdThenFails() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
+        ReflectionTestUtils.setField(service, "lidMaxRetries", 2);
+        heartbeat(LOCKER);
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        service.retryStalledLidCommands();
+        service.retryStalledLidCommands();
+        assertEquals(DroneDeliverySession.OPEN_LID_REQUESTED, session.getState());
+        service.retryStalledLidCommands();   // hết 2 lượt gửi lại
+
+        ArgumentCaptor<MqttMessage> sent = ArgumentCaptor.forClass(MqttMessage.class);
+        verify(mqtt, times(3)).publish(eq("cabinet/" + LOCKER + "/command/open"), sent.capture());
+        for (MqttMessage message : sent.getAllValues()) {
+            assertEquals(session.getOpenCommandId(),
+                    new ObjectMapper().readTree(new String(message.getPayload())).get("commandId").asText());
+        }
+        assertEquals(DroneDeliverySession.LID_OPEN_FAILED, session.getState());
+        assertEquals("LOCKER_NO_ACK", session.getErrorCode());
+    }
+
+    /// Tủ mất kết nối: không đốt lượt gửi lại, chờ heartbeat lúc tủ quay lại.
+    @Test
+    void offlineLockerDoesNotBurnRetries() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
+        ReflectionTestUtils.setField(service, "lidMaxRetries", 1);
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        service.retryStalledLidCommands();
+        service.retryStalledLidCommands();
+
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+        assertEquals(DroneDeliverySession.OPEN_LID_REQUESTED, session.getState());
+    }
+
+    /// Tủ đã nhận lệnh và đang chạy nắp: không gửi lại theo hạn ACK (chờ theo thời gian chạy nắp).
+    @Test
+    void lidThatIsMovingIsNotNaggedWithRetries() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
+        heartbeat(LOCKER);
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "ACCEPTED", "MOVING", "");
+
+        service.retryStalledLidCommands();
+
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+    }
+
+    /// Tủ bỏ lệnh quá hạn / báo lỗi ⇒ phiên ghi đúng lỗi; drone được báo để không thả hàng.
+    @Test
+    void lockerErrorsAndExpiredCommandsEndTheSessionWithTheirCode() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "FAILED", "CLOSED", ",\"errorCode\":\"COMMAND_EXPIRED\"");
+
+        assertEquals(DroneDeliverySession.LID_OPEN_FAILED, session.getState());
+        assertEquals("COMMAND_EXPIRED", session.getErrorCode());
+    }
+
+    /// Pi tủ bật chế độ giả lập (không trượt nắp) ⇒ không được coi là đã mở.
+    @Test
+    void simulatedLidOpenIsNotAcceptedAsARealOpen() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "SUCCESS", "OPEN", ",\"lidConfirmation\":\"BYPASS\"");
+
+        assertEquals(DroneDeliverySession.LID_OPEN_FAILED, session.getState());
+        assertEquals("LID_SIMULATED", session.getErrorCode());
+    }
+
+    /// Tủ chưa có công tắc hành trình: vẫn mở được nhưng ghi rõ "chưa xác nhận mở hoàn toàn".
+    @Test
+    void openWithoutLimitSwitchIsReportedAsUnconfirmed() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        ArgumentCaptor<DroneLockerCommLog> logs = ArgumentCaptor.forClass(DroneLockerCommLog.class);
+
+        lockerReply(LOCKER, "open", session.getOpenCommandId(), "SUCCESS", "OPEN", ",\"lidConfirmation\":\"STEP_COUNT\"");
+
+        assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+        verify(commLogRepository, org.mockito.Mockito.atLeastOnce()).save(logs.capture());
+        assertTrue(logs.getAllValues().stream().anyMatch(log -> "LID_OPENED".equals(log.getEventType())
+                && log.getErrorMessage() != null && log.getErrorMessage().contains("chưa có công tắc hành trình")));
+    }
+
+    /// Demo trong nhà: lệnh LID_OPENED gửi drone mang số giây giả lập nhả hàng theo cấu hình admin.
+    @Test
+    void demoLidOpenedCarriesTheDropSimulationSeconds() {
+        String body = service.commandPayload("LID_OPENED", "S1", "C1", 21L, DRONE, LOCKER, BOX, null, "ok",
+                Map.of("dropSimulationSeconds", 9, "lidConfirmation", "STEP_COUNT"));
+        assertTrue(body.contains("\"dropSimulationSeconds\":9"));
+        assertTrue(body.contains("\"lidConfirmation\":\"STEP_COUNT\""));
+    }
+
+    /// Pi hỏi mục tiêu: chỉ trả mã ArUco của ô đích khi nhiệm vụ ở chặng được phép mở nắp.
+    @Test
+    void targetRequestReturnsTheDestinationMarkerOnlyInAllowedStages() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        lenient().when(orderRepository.findById(21L)).thenAnswer(call -> Optional.of(order));
+        ArgumentCaptor<MqttMessage> sent = ArgumentCaptor.forClass(MqttMessage.class);
+
+        deliverSigned(event("TARGET_REQUEST", Map.of(), OffsetDateTime.now()));
+        mission.setStatus("DEPARTED");
+        deliverSigned(event("TARGET_REQUEST", Map.of(), OffsetDateTime.now()));
+
+        verify(mqtt, times(2)).publish(eq(DroneLockerCommunicationService.DRONE_COMMANDS_TOPIC), sent.capture());
+        var target = new ObjectMapper().readTree(new String(sent.getAllValues().get(0).getPayload()));
+        assertEquals("DELIVERY_TARGET", target.get("eventType").asText());
+        assertEquals(7, target.get("arucoMarkerId").asInt());
+        assertEquals(LOCKER, target.get("lockerId").asLong());
+        assertEquals(BOX, target.get("compartmentId").asLong());
+        assertEquals(301L, target.get("missionId").asLong());
+        var none = new ObjectMapper().readTree(new String(sent.getAllValues().get(1).getPayload()));
+        assertEquals("NO_TARGET", none.get("eventType").asText());
+    }
+
+    private void forgetLidAttempts() {
+        ((Map<?, ?>) ReflectionTestUtils.getField(service, "lidCommandAttempts")).clear();
+    }
+
+    private void lockerReply(long lockerId, String action, String commandId, String status, String hwState,
+            String extraJson) {
+        String body = "{\"commandId\":\"" + commandId + "\",\"boxId\":" + BOX + ",\"status\":\"" + status
+                + "\",\"hwState\":\"" + hwState + "\"" + extraJson + "}";
+        service.handleIncomingMessage("cabinet/" + lockerId + "/command/" + action + "/result", body, null);
     }
 
     // ------------------------------------------------------------------ helpers
