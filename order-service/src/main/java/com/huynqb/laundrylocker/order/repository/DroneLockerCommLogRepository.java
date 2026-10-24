@@ -14,6 +14,9 @@ public interface DroneLockerCommLogRepository extends JpaRepository<DroneLockerC
 
     List<DroneLockerCommLog> findBySessionIdOrderByTimestampAsc(String sessionId);
 
+    /// Chống phát lại: sự kiện drone cùng messageId đã được nhận rồi.
+    boolean existsByMessageIdAndDirection(String messageId, String direction);
+
     List<DroneLockerCommLog> findByOrderIdOrderByTimestampAsc(Long orderId);
 
     @Query("""
