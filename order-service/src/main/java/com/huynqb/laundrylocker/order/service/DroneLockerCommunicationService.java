@@ -249,24 +249,78 @@ public class DroneLockerCommunicationService {
         String detectedDict = inLog.getMarkerDictionary() != null ? inLog.getMarkerDictionary() : "DICT_4X4_50";
         Integer detectedMarkerId = inLog.getMarkerId();
 
-        // 1. Resolve order
+        // 1. Resolve order (use findById instead of findByIdForUpdate to avoid TransactionRequiredException on self-invocation)
         LockerOrder order = null;
         if (orderId != null) {
-            order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+            order = orderRepository.findById(orderId).orElse(null);
         }
         if (order == null) {
-            // Find active drone order for this locker/compartment or in flight
-            List<DroneMission> inFlights = missionRepository.findByStatusIn(DroneMissionProgressService.IN_FLIGHT_STAGES);
+            // Find active drone order in flight (prefer newest & matching marker or droneCode)
+            List<DroneMission> inFlights = new ArrayList<>(
+                    missionRepository.findByStatusIn(DroneMissionProgressService.IN_FLIGHT_STAGES));
+            inFlights.sort(Comparator.comparing(DroneMission::getId, Comparator.nullsLast(Comparator.reverseOrder())));
+
+            LockerOrder fallbackCandidate = null;
             for (DroneMission m : inFlights) {
-                LockerOrder candidate = orderRepository.findByIdForUpdate(m.getOrderId()).orElse(null);
-                if (candidate != null && "DRONE_DELIVERY".equalsIgnoreCase(candidate.getType())) {
-                    if (lockerId != null && !lockerId.equals(candidate.getLockerId())) {
-                        continue;
-                    }
-                    order = candidate;
-                    orderId = order.getId();
-                    break;
+                LockerOrder candidate = orderRepository.findById(m.getOrderId()).orElse(null);
+                if (candidate == null || !"DRONE_DELIVERY".equalsIgnoreCase(candidate.getType())) {
+                    continue;
                 }
+                if (lockerId != null && !lockerId.equals(candidate.getLockerId())) {
+                    continue;
+                }
+                if (fallbackCandidate == null) {
+                    fallbackCandidate = candidate;
+                }
+                Long candBoxId = candidate.getReservedBoxId() != null ? candidate.getReservedBoxId() : candidate.getSendBoxId();
+                if (candBoxId != null && detectedMarkerId != null) {
+                    try {
+                        var resp = lockerDroneClient.getBoxCell(candBoxId);
+                        if (resp != null && resp.data() != null && detectedMarkerId.equals(resp.data().arucoMarkerId())) {
+                            order = candidate;
+                            orderId = order.getId();
+                            break;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            if (order == null && fallbackCandidate != null) {
+                order = fallbackCandidate;
+                orderId = order.getId();
+            }
+        }
+
+        // In INDOOR_ARUCO_DEMO mode, also allow matching newly created DRONE_DELIVERY orders
+        // that have not yet been manually launched by a technician.
+        if (order == null && "INDOOR_ARUCO_DEMO".equalsIgnoreCase(mode)) {
+            List<LockerOrder> openOrders = orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc(
+                    "DRONE_DELIVERY",
+                    List.of("COMPLETED", "CANCELED", "EXPIRED", "STORING", "DELIVERY_INCOMPLETE"));
+            LockerOrder fallbackOpen = null;
+            for (LockerOrder candidate : openOrders) {
+                if (lockerId != null && !lockerId.equals(candidate.getLockerId())) {
+                    continue;
+                }
+                if (fallbackOpen == null) {
+                    fallbackOpen = candidate;
+                }
+                Long candBoxId = candidate.getReservedBoxId() != null ? candidate.getReservedBoxId() : candidate.getSendBoxId();
+                if (candBoxId != null && detectedMarkerId != null) {
+                    try {
+                        var resp = lockerDroneClient.getBoxCell(candBoxId);
+                        if (resp != null && resp.data() != null && detectedMarkerId.equals(resp.data().arucoMarkerId())) {
+                            order = candidate;
+                            orderId = order.getId();
+                            break;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            if (order == null && fallbackOpen != null) {
+                order = fallbackOpen;
+                orderId = order.getId();
             }
         }
 
@@ -281,6 +335,16 @@ public class DroneLockerCommunicationService {
         }
 
         DroneMission mission = missionRepository.findByOrderId(order.getId()).orElse(null);
+        if (mission == null && "INDOOR_ARUCO_DEMO".equalsIgnoreCase(mode)) {
+            mission = new DroneMission();
+            mission.setOrderId(order.getId());
+            mission.setDroneCode(droneId != null ? droneId : "DRONE-DEMO");
+            mission.setSourceLockerId(order.getSourceLockerId() != null ? order.getSourceLockerId() : order.getLockerId());
+            mission.setDestinationLockerId(order.getDestinationLockerId() != null ? order.getDestinationLockerId() : order.getLockerId());
+            mission.setStatus("APPROACHING");
+            mission.setLaunchingAt(LocalDateTime.now());
+            mission = missionRepository.save(mission);
+        }
         if (mission == null) {
             inLog.setProcessingStatus("REJECTED");
             inLog.setErrorCode("MISSION_NOT_FOUND");
@@ -331,6 +395,9 @@ public class DroneLockerCommunicationService {
                     detectedMarkerId, detectedDict, "BACKEND", "DRONE", DRONE_COMMANDS_TOPIC,
                     "MARKER_REJECTED", "OUTBOUND", null, "SENT", "N/A", "REJECTED",
                     "WRONG_MARKER", errMsg, 0, null);
+
+            publishCommand("MARKER_REJECTED", inLog.getSessionId(), inLog.getCorrelationId(), orderId, droneId,
+                    lockerId, compartmentId, "WRONG_MARKER", errMsg);
 
             log.warn("[COMM] WRONG_MARKER rejected: {}", errMsg);
             recordDroneIotLog(mission.getDroneUnitId(), droneId, "VISION_CAMERA", "MARKER_MISMATCH", "FAILED", orderId, errMsg);
@@ -593,7 +660,7 @@ public class DroneLockerCommunicationService {
 
         // ONLY NOW THAT LID IS CONFIRMED CLOSED: ADVANCE ORDER TO READY_FOR_PICKUP!
         if (orderId != null) {
-            LockerOrder order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+            LockerOrder order = orderRepository.findById(orderId).orElse(null);
             DroneMission mission = missionRepository.findByOrderId(orderId).orElse(null);
             if (order != null && mission != null) {
                 try {
@@ -773,4 +840,3 @@ public class DroneLockerCommunicationService {
         }
     }
 }
-
