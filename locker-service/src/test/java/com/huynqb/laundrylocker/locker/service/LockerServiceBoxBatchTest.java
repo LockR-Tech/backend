@@ -67,6 +67,70 @@ class LockerServiceBoxBatchTest {
     }
 
     @Test
+    void createDroneBox_EnablesTheLandingPadOfALockerThatHadNone() {
+        BoxRequest request = new BoxRequest(LOCKER_ID, 4, "MEDIUM", "AVAILABLE", "DRONE", 0, 3);
+        when(boxRepository.existsByLockerIdAndBoxNumber(LOCKER_ID, 4)).thenReturn(false);
+        LockerBox savedBox = new LockerBox();
+        savedBox.setId(104L);
+        savedBox.setLockerId(LOCKER_ID);
+        savedBox.setBoxNumber(4);
+        savedBox.setStatus("AVAILABLE");
+        savedBox.setCellType(CellType.DRONE);
+        when(boxRepository.save(any(LockerBox.class))).thenReturn(savedBox);
+        com.huynqb.laundrylocker.locker.model.LockerUnit locker = new com.huynqb.laundrylocker.locker.model.LockerUnit();
+        locker.setId(LOCKER_ID);
+        locker.setLandingPad(false);
+        when(lockerRepository.findById(LOCKER_ID)).thenReturn(Optional.of(locker));
+
+        lockerService.createBox(request);
+
+        // Tủ có ô nhận drone thì có bãi đáp: app đặt đơn và bộ chọn tủ bay mới thấy tủ này.
+        assertTrue(locker.getLandingPad());
+        assertEquals("OK", locker.getLandingPadStatus());
+        verify(lockerRepository).save(locker);
+    }
+
+    @Test
+    void createStandardBox_LeavesTheLandingPadAlone() {
+        BoxRequest request = new BoxRequest(LOCKER_ID, 5, "MEDIUM", "AVAILABLE", "STANDARD", 1, 0);
+        when(boxRepository.existsByLockerIdAndBoxNumber(LOCKER_ID, 5)).thenReturn(false);
+        LockerBox savedBox = new LockerBox();
+        savedBox.setId(105L);
+        savedBox.setLockerId(LOCKER_ID);
+        savedBox.setBoxNumber(5);
+        savedBox.setStatus("AVAILABLE");
+        savedBox.setCellType(CellType.STANDARD);
+        when(boxRepository.save(any(LockerBox.class))).thenReturn(savedBox);
+
+        lockerService.createBox(request);
+
+        verify(lockerRepository, never()).save(any());
+    }
+
+    @Test
+    void createBoxesBatch_WithDroneCells_EnablesTheLandingPadOnce() {
+        when(lockerRepository.existsById(LOCKER_ID)).thenReturn(true);
+        when(boxRepository.existsByLockerIdAndBoxNumber(eq(LOCKER_ID), anyInt())).thenReturn(false);
+        BatchCreateBoxesRequest request = new BatchCreateBoxesRequest(List.of(
+                new BoxItemRequest(1, "MEDIUM", "AVAILABLE", "DRONE", 0, 1),
+                new BoxItemRequest(2, "MEDIUM", "AVAILABLE", "DRONE", 0, 2)), null, null, null, null, null, null, null);
+        LockerBox b1 = new LockerBox();
+        b1.setId(1L); b1.setLockerId(LOCKER_ID); b1.setBoxNumber(1); b1.setStatus("AVAILABLE"); b1.setCellType("DRONE");
+        LockerBox b2 = new LockerBox();
+        b2.setId(2L); b2.setLockerId(LOCKER_ID); b2.setBoxNumber(2); b2.setStatus("AVAILABLE"); b2.setCellType("DRONE");
+        when(boxRepository.saveAll(anyList())).thenReturn(List.of(b1, b2));
+        com.huynqb.laundrylocker.locker.model.LockerUnit locker = new com.huynqb.laundrylocker.locker.model.LockerUnit();
+        locker.setId(LOCKER_ID);
+        locker.setLandingPad(false);
+        when(lockerRepository.findById(LOCKER_ID)).thenReturn(Optional.of(locker));
+
+        lockerService.createBoxesBatch(LOCKER_ID, request);
+
+        assertTrue(locker.getLandingPad());
+        verify(lockerRepository, times(1)).save(locker);
+    }
+
+    @Test
     void createBox_DuplicateNumber_ThrowsBusinessException() {
         BoxRequest request = new BoxRequest(LOCKER_ID, 10, "MEDIUM", "AVAILABLE", "STANDARD", 2, 3);
         when(boxRepository.existsByLockerIdAndBoxNumber(LOCKER_ID, 10)).thenReturn(true);

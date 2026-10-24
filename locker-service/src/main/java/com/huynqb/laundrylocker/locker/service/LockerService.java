@@ -138,6 +138,7 @@ public class LockerService {
         box.setRowIndex(request.rowIndex());
         box.setColIndex(request.colIndex());
         LockerBox saved = boxRepository.save(box);
+        ensureLandingPadForDroneCell(saved.getLockerId(), saved.getCellType());
         publishLockerLayoutUpdated(
                 saved.getLockerId(),
                 saved.getId(),
@@ -209,6 +210,8 @@ public class LockerService {
         }).toList();
 
         List<LockerBox> saved = boxRepository.saveAll(toSave);
+        saved.stream().map(LockerBox::getCellType).filter(CellType.DRONE::equalsIgnoreCase).findAny()
+                .ifPresent(drone -> ensureLandingPadForDroneCell(lockerId, drone));
 
         for (LockerBox box : saved) {
             publishLockerLayoutUpdated(
@@ -429,6 +432,7 @@ public class LockerService {
         }
         if (StringUtils.hasText(request.cellType())) {
             box.setCellType(request.cellType().toUpperCase());
+            ensureLandingPadForDroneCell(box.getLockerId(), box.getCellType());
         }
         if (request.rowIndex() != null) {
             box.setRowIndex(request.rowIndex());
@@ -2581,6 +2585,24 @@ public class LockerService {
         unit.setLockerId(request.lockerId());
         unit.setCode(request.code());
         return toDroneUnit(droneUnitRepository.save(unit));
+    }
+
+    /// Tủ có ô DRONE (ô nhận hàng drone thả xuống) thì có bãi đáp: thêm / đổi ô sang DRONE tự bật
+    /// bãi đáp cho tủ, để app đặt đơn, bộ chọn tủ bay và trang admin không thấy dữ liệu lệch nhau.
+    private void ensureLandingPadForDroneCell(Long lockerId, String cellType) {
+        if (lockerId == null || !CellType.DRONE.equalsIgnoreCase(cellType)) {
+            return;
+        }
+        lockerRepository.findById(lockerId)
+                .filter(locker -> !Boolean.TRUE.equals(locker.getLandingPad()))
+                .ifPresent(locker -> {
+                    locker.setLandingPad(true);
+                    if (!StringUtils.hasText(locker.getLandingPadStatus())) {
+                        locker.setLandingPadStatus("OK");
+                    }
+                    lockerRepository.save(locker);
+                    log.info("Locker {} now has DRONE cells: landing pad enabled", lockerId);
+                });
     }
 
     /// Drone chỉ đóng trạm ở tủ có bãi đáp (cùng mã lỗi với cập nhật trạng thái bãi đáp).
