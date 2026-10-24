@@ -655,11 +655,25 @@ public class DroneLockerCommunicationService {
             // Demo trong nhà: giữ nắp mở vài giây rồi tự đóng. Đọc lại phiên lúc hẹn giờ chạy (có thể đã đổi).
             int holdSeconds = orderRules.droneDemoHoldOpenSeconds() > 0 ? orderRules.droneDemoHoldOpenSeconds() : 7;
             String sessionId = session.getSessionId();
+            saveLog(UUID.randomUUID().toString(), session.getCorrelationId(), session.getSessionId(),
+                    session.getOrderId(), session.getMissionId(), session.getDroneId(), session.getLockerId(),
+                    session.getCompartmentId(), session.getTargetMarkerId(), session.getTargetDictionary(),
+                    "BACKEND", "LOCKER", "cabinet/" + session.getLockerId() + "/command/open",
+                    "DROP_PHASE_STARTED", "INTERNAL", null, "PROCESSED", "CONFIRMED", "SUCCESS", null,
+                    "Bắt đầu giai đoạn nhả hàng (giữ mở nắp trượt trong " + holdSeconds + " giây)", 0, null);
             scheduler.schedule(() -> {
                 try {
                     sessionRepository.findById(sessionId)
                             .filter(current -> DroneDeliverySession.LID_OPENED.equals(current.getState()))
-                            .ifPresent(current -> requestCloseLid(current, "Hết " + holdSeconds + " giây giữ mở nắp trượt"));
+                            .ifPresent(current -> {
+                                saveLog(UUID.randomUUID().toString(), current.getCorrelationId(), current.getSessionId(),
+                                        current.getOrderId(), current.getMissionId(), current.getDroneId(), current.getLockerId(),
+                                        current.getCompartmentId(), current.getTargetMarkerId(), current.getTargetDictionary(),
+                                        "BACKEND", "LOCKER", "cabinet/" + current.getLockerId() + "/command/close",
+                                        "DROP_PHASE_COMPLETED", "INTERNAL", null, "PROCESSED", "CONFIRMED", "SUCCESS", null,
+                                        "Hoàn tất giai đoạn nhả hàng", 0, null);
+                                requestCloseLid(current, "Gửi lệnh yêu cầu đóng nắp trượt ô tủ");
+                            });
                 } catch (Exception ex) {
                     log.error("[COMM] Error in scheduled close for session {}: {}", sessionId, ex.getMessage(), ex);
                 }
