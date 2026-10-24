@@ -131,6 +131,7 @@ public class DroneMissionProgressService {
         if (nextStage == null) {
             return;
         }
+        assertForwardTransition(order, mission, nextStage);
 
         boolean deposited = "READY_FOR_PICKUP".equals(nextStage);
         if (deposited) {
@@ -169,6 +170,38 @@ public class DroneMissionProgressService {
         }
         if (deposited) {
             sendPickupCodeQuietly(order);
+        }
+    }
+
+    /// Thứ tự chặng bay; chặng cuối READY_FOR_PICKUP là "hàng đã vào ô".
+    static final List<String> FLIGHT_ORDER =
+            List.of("LAUNCHING", "DEPARTED", "EN_ROUTE", "APPROACHING", "ARRIVED", "READY_FOR_PICKUP");
+
+    /**
+     * Chặn mọi chuyển chặng không hợp lệ, dù nguồn là KTV, telemetry, bộ giả lập hay sự kiện MQTT từ tủ:
+     * <ul>
+     *   <li>đơn phải còn đang giao (AWAITING_DISPATCH) — đơn đã huỷ / thất bại / hết hạn / đã vào ô thì không;</li>
+     *   <li>chặng của đơn và của nhiệm vụ phải khớp (không ghi đè dữ liệu đã cũ);</li>
+     *   <li>chỉ đi tới, không lùi, không lặp lại chặng hiện tại;</li>
+     *   <li>"hàng đã vào ô" chỉ đi được từ "đã tới" (ARRIVED).</li>
+     * </ul>
+     */
+    static void assertForwardTransition(LockerOrder order, DroneMission mission, String targetStage) {
+        String current = mission.getStatus();
+        int from = FLIGHT_ORDER.indexOf(current);
+        int to = FLIGHT_ORDER.indexOf(targetStage);
+        boolean valid = "DRONE_DELIVERY".equals(order.getType())
+                && "AWAITING_DISPATCH".equals(order.getStatus())
+                && Objects.equals(current, order.getDeliveryStage())
+                && from >= 0
+                && to > from
+                && (!"READY_FOR_PICKUP".equals(targetStage) || "ARRIVED".equals(current));
+        if (!valid) {
+            throw new BusinessException(
+                    "DRONE_STAGE_TRANSITION_INVALID",
+                    "Không thể chuyển đơn #" + order.getId() + " từ " + order.getStatus() + "/" + current
+                            + " sang " + targetStage,
+                    HttpStatus.CONFLICT);
         }
     }
 
@@ -385,6 +418,7 @@ public class DroneMissionProgressService {
         if (targetStage == null) {
             return;
         }
+        assertForwardTransition(order, mission, targetStage);
         String previousStage = order.getDeliveryStage();
 
         boolean deposited = "READY_FOR_PICKUP".equals(targetStage);
