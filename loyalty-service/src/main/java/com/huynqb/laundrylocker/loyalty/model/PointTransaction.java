@@ -32,6 +32,11 @@ public class PointTransaction {
     @Column(precision = 14, scale = 2)
     private java.math.BigDecimal amount;
 
+    /// Mã một lần đổi voucher do order-service sinh (VOUCHER_EXCHANGE / VOUCHER_EXCHANGE_REFUND): gọi lại
+    /// cùng mã không trừ/hoàn thêm. Null với loại khác.
+    @Column(length = 64)
+    private String reference;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

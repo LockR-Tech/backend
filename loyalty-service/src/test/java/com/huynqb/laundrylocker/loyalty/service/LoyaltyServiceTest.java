@@ -46,7 +46,7 @@ class LoyaltyServiceTest {
 
     @BeforeEach
     void setUp() {
-        settings = TestLoyaltyRules.settings(Map.of());
+        settings = TestLoyaltyRules.settings(TestLoyaltyRules.LEGACY_RATES);
         service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings));
         account = new LoyaltyAccount();
         account.setUserId(7L);

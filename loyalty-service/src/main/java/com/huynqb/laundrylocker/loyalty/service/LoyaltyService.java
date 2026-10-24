@@ -44,12 +44,16 @@ public class LoyaltyService {
     public static final String ADJUSTMENT_TYPE = "ADJUSTMENT";
     /// Đổi điểm lấy phần thưởng (luồng cũ).
     public static final String REDEEM_TYPE = "REDEEM";
+    /// Trừ điểm khi khách đổi một voucher (điểm âm); DB chỉ cho một dòng mỗi reference.
+    public static final String VOUCHER_EXCHANGE_TYPE = "VOUCHER_EXCHANGE";
+    /// Hoàn điểm lần đổi voucher không thành (order-service không lưu được voucher); một dòng mỗi reference.
+    public static final String VOUCHER_EXCHANGE_REFUND_TYPE = "VOUCHER_EXCHANGE_REFUND";
     /// Các loại chỉ hệ thống được ghi — admin điều chỉnh tay không được dùng.
-    private static final Set<String> RESERVED_TYPES =
-            Set.of(ORDER_EARN_TYPE, ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE, ORDER_EARN_REVERSAL_TYPE);
+    private static final Set<String> RESERVED_TYPES = Set.of(ORDER_EARN_TYPE, ORDER_REDEEM_TYPE,
+            ORDER_REDEEM_REFUND_TYPE, ORDER_EARN_REVERSAL_TYPE, VOUCHER_EXCHANGE_TYPE, VOUCHER_EXCHANGE_REFUND_TYPE);
     /// Dùng/hoàn điểm không làm đổi tổng điểm đã tích (hạng); mọi loại khác (tích, điều chỉnh tay) thì có.
-    private static final Set<String> SPENDING_TYPES =
-            Set.of(ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE, REDEEM_TYPE);
+    private static final Set<String> SPENDING_TYPES = Set.of(ORDER_REDEEM_TYPE, ORDER_REDEEM_REFUND_TYPE,
+            REDEEM_TYPE, VOUCHER_EXCHANGE_TYPE, VOUCHER_EXCHANGE_REFUND_TYPE);
 
     private BusinessTime time = BusinessTime.system();
 
@@ -127,6 +131,11 @@ public class LoyaltyService {
     /// điểm) và hạng theo tổng điểm đã tích.
     private LoyaltyAccountResponse applyPoints(
             LoyaltyAccount account, Long orderId, int points, String type, BigDecimal amount) {
+        return applyPoints(account, orderId, points, type, amount, null);
+    }
+
+    private LoyaltyAccountResponse applyPoints(
+            LoyaltyAccount account, Long orderId, int points, String type, BigDecimal amount, String reference) {
         account.setPoints(account.getPoints() + points);
         if (!SPENDING_TYPES.contains(type.toUpperCase(Locale.ROOT))) {
             account.setLifetimePoints(Math.max(0, lifetimeOf(account) + points));
@@ -139,6 +148,7 @@ public class LoyaltyService {
         transaction.setPoints(points);
         transaction.setType(type);
         transaction.setAmount(amount);
+        transaction.setReference(reference);
         LoyaltyAccountResponse response = toResponse(accountRepository.save(account));
         // Flush ngay để unique index chặn ghi trùng theo đơn ném lỗi trong lời gọi này (rollback cả phần đổi điểm).
         transactionRepository.saveAndFlush(transaction);
@@ -234,6 +244,66 @@ public class LoyaltyService {
         }
         applyPoints(account, orderId, points, ORDER_REDEEM_REFUND_TYPE, redemption.getAmount());
         return new OrderRedemptionRefundResponse(points);
+    }
+
+    /// Trừ điểm để khách đổi một voucher. Idempotent theo `reference`: gọi lại trả kết quả lần đầu. Không đủ
+    /// điểm ⇒ `exchanged = false`, không ghi gì. Khoá hàng tài khoản nên hai lần đổi đồng thời không làm âm
+    /// điểm; unique index (reference) WHERE type = 'VOUCHER_EXCHANGE' chặn ghi trùng.
+    @Transactional
+    public VoucherExchangeResponse exchangeForVoucher(VoucherExchangeRequest request) {
+        Optional<PointTransaction> existing = existingExchange(request);
+        if (existing.isPresent()) {
+            return exchangedResult(existing.get());
+        }
+        LoyaltyAccount account = accountRepository.findByUserIdForUpdate(request.userId()).orElse(null);
+        int balance = account == null ? 0 : account.getPoints();
+        // Lần gọi song song cùng mã có thể vừa commit trong lúc chờ khoá.
+        existing = existingExchange(request);
+        if (existing.isPresent()) {
+            return exchangedResult(existing.get());
+        }
+        if (account == null || balance < request.points()) {
+            return new VoucherExchangeResponse(false, 0, balance);
+        }
+        LoyaltyAccountResponse after =
+                applyPoints(account, null, -request.points(), VOUCHER_EXCHANGE_TYPE, null, request.reference());
+        return new VoucherExchangeResponse(true, request.points(), after.points());
+    }
+
+    /// Hoàn đúng số điểm lần đổi `reference` đã trừ. Idempotent: chưa trừ hoặc đã hoàn ⇒ trả 0, không ghi gì.
+    @Transactional
+    public OrderRedemptionRefundResponse refundVoucherExchange(String reference) {
+        PointTransaction exchange = StringUtils.hasText(reference)
+                ? transactionRepository.findFirstByReferenceAndType(reference, VOUCHER_EXCHANGE_TYPE).orElse(null)
+                : null;
+        if (exchange == null
+                || transactionRepository.existsByReferenceAndType(reference, VOUCHER_EXCHANGE_REFUND_TYPE)) {
+            return new OrderRedemptionRefundResponse(0);
+        }
+        LoyaltyAccount account = accountRepository.findByUserIdForUpdate(exchange.getUserId()).orElse(null);
+        if (account == null || transactionRepository.existsByReferenceAndType(reference, VOUCHER_EXCHANGE_REFUND_TYPE)) {
+            return new OrderRedemptionRefundResponse(0);
+        }
+        int points = Math.abs(exchange.getPoints());
+        applyPoints(account, null, points, VOUCHER_EXCHANGE_REFUND_TYPE, null, reference);
+        return new OrderRedemptionRefundResponse(points);
+    }
+
+    private Optional<PointTransaction> existingExchange(VoucherExchangeRequest request) {
+        Optional<PointTransaction> existing =
+                transactionRepository.findFirstByReferenceAndType(request.reference(), VOUCHER_EXCHANGE_TYPE);
+        if (existing.isPresent() && !request.userId().equals(existing.get().getUserId())) {
+            throw new com.huynqb.laundrylocker.common.exception.BusinessException(
+                    "LOYALTY_EXCHANGE_CONFLICT", "Mã đổi voucher đã thuộc tài khoản khác",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+        return existing;
+    }
+
+    private VoucherExchangeResponse exchangedResult(PointTransaction transaction) {
+        int balance = accountRepository.findByUserId(transaction.getUserId())
+                .map(LoyaltyAccount::getPoints).orElse(0);
+        return new VoucherExchangeResponse(true, Math.abs(transaction.getPoints()), balance);
     }
 
     private Optional<PointTransaction> existingRedemption(OrderRedemptionRequest request) {

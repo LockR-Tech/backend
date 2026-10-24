@@ -58,14 +58,15 @@ class LoyaltyOrderPointsTest {
     }
 
     @Test
-    void completedOrderEarnsOnePointPerThousandPaid() {
-        Optional<LoyaltyAccountResponse> result = service.awardOrderPoints(55L, 7L, new BigDecimal("25500"));
+    void completedOrderEarnsTenPercentAsPoints() {
+        // Mặc định 1 điểm mỗi 10đ đã trả, 1 điểm = 1đ khi dùng ⇒ tích 10% số tiền.
+        Optional<LoyaltyAccountResponse> result = service.awardOrderPoints(55L, 7L, new BigDecimal("25505"));
 
         assertTrue(result.isPresent());
-        assertEquals(125, result.get().points());
+        assertEquals(2650, result.get().points());
         ArgumentCaptor<PointTransaction> saved = ArgumentCaptor.forClass(PointTransaction.class);
         verify(transactionRepository).saveAndFlush(saved.capture());
-        assertEquals(25, saved.getValue().getPoints());
+        assertEquals(2550, saved.getValue().getPoints());
         assertEquals(55L, saved.getValue().getOrderId());
         assertEquals(LoyaltyService.ORDER_EARN_TYPE, saved.getValue().getType());
     }
@@ -80,7 +81,7 @@ class LoyaltyOrderPointsTest {
     @Test
     void freeOrTinyOrdersEarnNothing() {
         assertTrue(service.awardOrderPoints(55L, 7L, BigDecimal.ZERO).isEmpty());
-        assertTrue(service.awardOrderPoints(56L, 7L, new BigDecimal("999")).isEmpty());
+        assertTrue(service.awardOrderPoints(56L, 7L, new BigDecimal("9")).isEmpty());
         assertTrue(service.awardOrderPoints(57L, 7L, null).isEmpty());
         verify(transactionRepository, never()).saveAndFlush(any());
         assertEquals(100, account.getPoints());

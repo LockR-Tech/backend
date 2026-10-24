@@ -34,21 +34,22 @@ public class LoyaltySettingsCatalog implements SettingsCatalog {
                 integer(TIER_SILVER_POINTS, LOYALTY, "Điểm lên hạng BẠC (SILVER)",
                         "Tổng điểm ĐÃ TÍCH từ trước tới nay tối thiểu để đạt hạng SILVER — dùng điểm thanh toán "
                                 + "không làm tụt hạng. Các mốc luôn tăng dần: mốc sau nhỏ hơn mốc trước thì dùng mốc trước.",
-                        500, 1, 10_000_000, "điểm").asPublic(),
+                        50_000, 1, 10_000_000, "điểm").asPublic(),
                 integer(TIER_GOLD_POINTS, LOYALTY, "Điểm lên hạng VÀNG (GOLD)",
-                        "Tổng điểm đã tích tối thiểu để đạt hạng GOLD.", 2000, 1, 10_000_000, "điểm").asPublic(),
+                        "Tổng điểm đã tích tối thiểu để đạt hạng GOLD.", 200_000, 1, 10_000_000, "điểm").asPublic(),
                 integer(TIER_PLATINUM_POINTS, LOYALTY, "Điểm lên hạng BẠCH KIM (PLATINUM)",
-                        "Tổng điểm đã tích tối thiểu để đạt hạng PLATINUM.", 5000, 1, 10_000_000, "điểm").asPublic(),
+                        "Tổng điểm đã tích tối thiểu để đạt hạng PLATINUM.", 500_000, 1, 10_000_000, "điểm").asPublic(),
                 integer(STAMPS_PER_REWARD, LOYALTY, "Số tem đổi một phần thưởng",
                         "Thẻ tích tem đủ số tem này thì đổi được phần thưởng tem.", 10, 1, 100, "tem").asPublic(),
                 integer(POINTS_REWARD_COST, LOYALTY, "Số điểm đổi một phần thưởng",
-                        "Số điểm bị trừ khi đổi phần thưởng điểm.", 1000, 1, 10_000_000, "điểm").asPublic(),
+                        "Số điểm bị trừ khi đổi phần thưởng điểm.", 100_000, 1, 10_000_000, "điểm").asPublic(),
                 integer(STAMP_INCREMENT, LOYALTY, "Số tem cộng mỗi lần",
                         "Số tem cộng cho khách khi lệnh cộng tem không ghi rõ số lượng.", 1, 1, 10, "tem"),
                 integer(VND_PER_POINT, LOYALTY, "Số tiền cho 1 điểm thưởng",
                         "Đơn hoàn tất được cộng 1 điểm cho mỗi khoản tiền này khách đã thanh toán, làm tròn xuống. "
+                                + "Mặc định 10đ = tích 10% số tiền (1 điểm = 1đ khi dùng). "
                                 + "Đơn 0đ hoặc bị huỷ không được cộng điểm.",
-                        1000, 1, 10_000_000, "đ").asPublic(),
+                        10, 1, 10_000_000, "đ").asPublic(),
 
                 bool(REDEEM_ENABLED, REDEEM, "Cho phép dùng điểm thanh toán",
                         "Bật thì khách được trừ điểm vào tiền đơn khi đặt gửi hàng, thuê ô, giao drone. "
@@ -56,13 +57,13 @@ public class LoyaltySettingsCatalog implements SettingsCatalog {
                         true).asPublic(),
                 integer(REDEEM_VND_PER_POINT, REDEEM, "Giá trị 1 điểm khi dùng",
                         "Mỗi điểm dùng giảm bấy nhiêu tiền cho đơn. Áp dụng cho đơn tạo sau khi lưu.",
-                        100, 1, 1_000_000, "đ").asPublic(),
+                        1, 1, 1_000_000, "đ").asPublic(),
                 integer(REDEEM_MAX_PERCENT, REDEEM, "Tỉ lệ tối đa của đơn trả bằng điểm",
                         "Phần trăm tối đa số tiền đơn (sau khi trừ mã giảm giá) được trả bằng điểm.",
                         50, 1, 100, "%").asPublic(),
                 integer(REDEEM_MIN_POINTS, REDEEM, "Số điểm tối thiểu mỗi lần dùng",
                         "Khách phải dùng ít nhất bấy nhiêu điểm mỗi đơn; số điểm dùng được ít hơn thì không trừ. "
                                 + "0 = không giới hạn.",
-                        10, 0, 10_000_000, "điểm").asPublic());
+                        1000, 0, 10_000_000, "điểm").asPublic());
     }
 }

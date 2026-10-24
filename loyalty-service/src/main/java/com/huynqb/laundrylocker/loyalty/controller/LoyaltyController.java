@@ -171,6 +171,18 @@ public class LoyaltyController {
         return ApiResponse.ok(loyaltyService.refundOrderRedemption(orderId));
     }
 
+    /// order-service trừ điểm khi khách đổi voucher. Idempotent theo reference; không đủ điểm ⇒ exchanged=false.
+    @PostMapping("/internal/loyalty/voucher-exchanges")
+    public ApiResponse<VoucherExchangeResponse> exchangeForVoucher(@Valid @RequestBody VoucherExchangeRequest request) {
+        return ApiResponse.ok(loyaltyService.exchangeForVoucher(request));
+    }
+
+    /// order-service hoàn điểm lần đổi voucher không lưu được voucher. Idempotent.
+    @PostMapping("/internal/loyalty/voucher-exchanges/{reference}/refund")
+    public ApiResponse<OrderRedemptionRefundResponse> refundVoucherExchange(@PathVariable String reference) {
+        return ApiResponse.ok(loyaltyService.refundVoucherExchange(reference));
+    }
+
     @GetMapping("/internal/loyalty/users/{userId}")
     public ApiResponse<LoyaltyAccountResponse> getByUserInternal(@PathVariable Long userId) {
         return ApiResponse.ok(loyaltyService.getByUser(userId));
