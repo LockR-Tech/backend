@@ -68,6 +68,15 @@ public class Promotion {
     @Column(name = "description", length = 1000)
     private String description;
 
+    /// > 0 ⇒ voucher đổi bằng điểm: không hiện ở danh sách ưu đãi công khai, không lưu miễn phí; khách đổi
+    /// bấy nhiêu điểm để có voucher trong "Ưu đãi của tôi" và chỉ người đã đổi mới áp được mã.
+    @Column(name = "points_cost")
+    private Integer pointsCost;
+
+    public boolean exchangeable() {
+        return pointsCost != null && pointsCost > 0;
+    }
+
     @Column(name = "created_by_user_id")
     private Long createdByUserId;
 

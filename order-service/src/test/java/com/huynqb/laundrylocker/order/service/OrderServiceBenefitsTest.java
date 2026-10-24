@@ -427,6 +427,6 @@ class OrderServiceBenefitsTest {
 
     private static PromotionRequest promotionRequest(Long lockerId) {
         return new PromotionRequest("TUTV", "Ưu đãi tủ", "FIXED_AMOUNT", new BigDecimal("3000"), null, null,
-                null, "ACTIVE", null, null, lockerId, null, null, null);
+                null, "ACTIVE", null, null, lockerId, null, null, null, null);
     }
 }

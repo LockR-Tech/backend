@@ -1463,6 +1463,7 @@ public class OrderService {
         promotion.setTotalUsageLimit(request.totalUsageLimit());
         promotion.setPerUserLimit(request.perUserLimit());
         promotion.setDescription(request.description());
+        promotion.setPointsCost(request.pointsCost() == null || request.pointsCost() <= 0 ? null : request.pointsCost());
         promotion.setCreatedByUserId(createdByUserId);
         return promotionViews.view(promotionRepository.save(promotion), true);
     }
@@ -1523,6 +1524,7 @@ public class OrderService {
         promotion.setTotalUsageLimit(request.totalUsageLimit());
         promotion.setPerUserLimit(request.perUserLimit());
         promotion.setDescription(request.description());
+        promotion.setPointsCost(request.pointsCost() == null || request.pointsCost() <= 0 ? null : request.pointsCost());
         return promotionViews.view(promotionRepository.save(promotion), true);
     }
 
@@ -1615,6 +1617,7 @@ public class OrderService {
         summary.put("totalUsageLimit", promotion.getTotalUsageLimit());
         summary.put("perUserLimit", promotion.getPerUserLimit());
         summary.put("usageCount", promotion.getUsageCount());
+        summary.put("pointsCost", promotion.getPointsCost());
         return summary;
     }
 
@@ -1624,6 +1627,11 @@ public class OrderService {
         Promotion promotion = promotion(promotionId);
         if (!promotion.activeNow()) {
             throw new BusinessException("PROMOTION_INVALID", "Khuyến mãi không còn hiệu lực");
+        }
+        if (promotion.exchangeable()) {
+            throw new BusinessException("PROMOTION_EXCHANGE_REQUIRED",
+                    "Voucher này đổi bằng " + OrderBenefitService.points(promotion.getPointsCost())
+                            + " — hãy đổi ở mục Đổi điểm");
         }
         PromotionClaim claim =
                 promotionClaimRepository
@@ -1691,6 +1699,8 @@ public class OrderService {
     public List<PromotionView> activePromotions(Long lockerId) {
         return promotionViews.views(promotionRepository.findByStatus("ACTIVE").stream()
                 .filter(Promotion::activeNow)
+                // Voucher đổi bằng điểm có danh sách riêng (/api/promotions/exchangeable).
+                .filter(p -> !p.exchangeable())
                 .filter(p -> availableAt(p, lockerId))
                 .toList(), false);
     }

@@ -29,6 +29,8 @@ public record PromotionView(
         Integer usageCount,
         String imageUrl,
         String description,
+        /// > 0 ⇒ voucher đổi bằng điểm.
+        Integer pointsCost,
         Long createdByUserId,
         LocalDateTime createdAt,
         LocalDateTime updatedAt) {
@@ -54,6 +56,7 @@ public record PromotionView(
                 promotion.getUsageCount(),
                 promotion.getImageUrl(),
                 promotion.getDescription(),
+                promotion.getPointsCost(),
                 admin ? promotion.getCreatedByUserId() : null,
                 promotion.getCreatedAt(),
                 promotion.getUpdatedAt());

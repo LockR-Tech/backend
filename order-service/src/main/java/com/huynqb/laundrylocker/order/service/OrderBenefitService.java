@@ -148,6 +148,13 @@ public class OrderBenefitService {
                     ? "chỉ áp dụng tại " + where + " — hãy chọn tủ này để dùng mã"
                     : "chỉ áp dụng tại " + where;
         }
+        // Voucher đổi bằng điểm: mã không bí mật, nên chỉ người đang giữ voucher (đã đổi, chưa dùng) áp được.
+        if (checkLocker && promotion.exchangeable() && (userId == null || promotionClaimRepository
+                .findByPromotionIdAndUserId(promotion.getId(), userId)
+                .filter(claim -> "SAVED".equals(claim.getStatus()))
+                .isEmpty())) {
+            return "chỉ dùng được sau khi đổi " + points(promotion.getPointsCost()) + " lấy voucher này";
+        }
         if (orderTotal != null && promotion.getMinOrderAmount() != null
                 && orderTotal.compareTo(promotion.getMinOrderAmount()) < 0) {
             return "đơn chưa đạt giá trị tối thiểu " + vnd(promotion.getMinOrderAmount());
@@ -306,6 +313,11 @@ public class OrderBenefitService {
 
     private static BigDecimal nz(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    /// `10.000 điểm`.
+    static String points(int points) {
+        return String.format(Locale.ROOT, "%,d", points).replace(',', '.') + " điểm";
     }
 
     private static String vnd(BigDecimal amount) {

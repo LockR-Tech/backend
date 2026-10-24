@@ -313,6 +313,29 @@ class OrderBenefitServiceTest {
         assertTrue(OrderBenefitService.collectedMoney(paid));
     }
 
+    @Test
+    void exchangeOnlyVoucherNeedsAHeldClaim() {
+        Promotion voucher = promotion(9L, "DOI10K", "10000", null);
+        voucher.setPointsCost(10_000);
+        when(promotionRepository.findByCodeForUpdate("DOI10K")).thenReturn(Optional.of(voucher));
+        when(promotionClaimRepository.findByPromotionIdAndUserId(9L, 44L)).thenReturn(Optional.empty());
+
+        // Biết mã nhưng chưa đổi điểm ⇒ không áp được, kể cả khi chỉ tra mã.
+        BusinessException rejected = assertThrows(BusinessException.class,
+                () -> benefits.applyVouchers(order(20000, null), List.of("DOI10K"), null));
+        assertTrue(rejected.getMessage().contains("đổi 10.000 điểm"));
+        assertTrue(benefits.ineligibleReason(voucher, null, null, null, true).contains("đổi 10.000 điểm"));
+
+        PromotionClaim held = new PromotionClaim();
+        held.setStatus("SAVED");
+        when(promotionClaimRepository.findByPromotionIdAndUserId(9L, 44L)).thenReturn(Optional.of(held));
+        LockerOrder order = order(20000, null);
+        benefits.applyVouchers(order, List.of("DOI10K"), null);
+
+        assertEquals(0, new BigDecimal("10000").compareTo(order.getDiscount()));
+        assertEquals("USED", held.getStatus());
+    }
+
     private static LockerOrder order(int price, Long lockerId) {
         LockerOrder order = new LockerOrder();
         order.setId(21L);

@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.order.dto;
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -20,5 +21,7 @@ public record PromotionRequest(
         Long lockerId,
         Integer totalUsageLimit,
         Integer perUserLimit,
-        @Size(max = 1000) String description) {
+        @Size(max = 1000) String description,
+        /// > 0 ⇒ voucher đổi bằng điểm (giá bằng điểm); null/0 = mã thường.
+        @Min(0) Integer pointsCost) {
 }

@@ -21,6 +21,7 @@ import com.huynqb.laundrylocker.order.service.OrderService;
 import com.huynqb.laundrylocker.order.service.PromotionImageService;
 import com.huynqb.laundrylocker.order.service.ReceiverOrderQueryService;
 import com.huynqb.laundrylocker.order.service.StoreRatingQueryService;
+import com.huynqb.laundrylocker.order.service.VoucherExchangeService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -47,6 +48,7 @@ public class OrderController {
     private final PromotionImageService promotionImageService;
     private final ReceiverOrderQueryService receiverOrderQueryService;
     private final StoreRatingQueryService storeRatingQueryService;
+    private final VoucherExchangeService voucherExchangeService;
 
     // Đã gỡ (SEC-03/05): `POST /api/orders` (userId lấy từ body, đơn 0đ tự PAID),
     // `PATCH /api/orders/{id}/status`, `POST /api/orders/{id}/checkout`, `GET /api/orders`,
@@ -826,6 +828,22 @@ public class OrderController {
         return ApiResponse.ok(
                 "PROMOTION_CLAIMED", "Promotion saved to wallet",
                 orderService.claimPromotion(promotionId, userId));
+    }
+
+    /// Voucher đổi bằng điểm đang mở (rẻ → đắt), mỗi voucher kèm `pointsCost` và `held` (khách đăng nhập
+    /// đang giữ voucher đó chưa dùng). Không đăng nhập thì `held` luôn false.
+    @GetMapping("/api/promotions/exchangeable")
+    public ApiResponse<List<ExchangeableVoucherView>> exchangeableVouchers(
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok(voucherExchangeService.exchangeable(userId));
+    }
+
+    /// Đổi điểm lấy voucher: trừ `pointsCost` điểm, voucher vào "Ưu đãi của tôi".
+    @PostMapping("/api/promotions/{promotionId}/exchange")
+    public ApiResponse<VoucherExchangeResult> exchangeVoucher(
+            @PathVariable Long promotionId, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok("VOUCHER_EXCHANGED", "Voucher exchanged",
+                voucherExchangeService.exchange(promotionId, userId));
     }
 
     /// Có lockerId: chỉ mã toàn hệ thống + mã của đúng tủ đó. Mỗi mã kèm lockerCode/lockerName.
