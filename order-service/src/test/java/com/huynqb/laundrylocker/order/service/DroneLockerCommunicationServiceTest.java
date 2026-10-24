@@ -432,6 +432,18 @@ class DroneLockerCommunicationServiceTest {
         }
     }
 
+    /// Lệnh nắp của drone gắn `lid: true` để Pi trượt nắp nóc tủ, không kích relay cửa trước của ô.
+    @Test
+    void lidCommandPayloadAsksCabinetToSlideTheLid() {
+        var open = service.lidCommandPayload(BOX, "open", "cmd-open");
+        assertTrue(open.get("lid").asBoolean());
+        assertEquals("OPEN", open.get("action").asText());
+        assertEquals(BOX, open.get("boxId").asLong());
+        assertEquals("cmd-open", open.get("commandId").asText());
+
+        assertTrue(service.lidCommandPayload(BOX, "CLOSE", "cmd-close").get("lid").asBoolean());
+    }
+
     private void deliverSigned(String body) {
         String signature = DroneTelemetrySigner.sign(DroneTelemetrySigner.deviceKey(SECRET, DRONE),
                 DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, body);

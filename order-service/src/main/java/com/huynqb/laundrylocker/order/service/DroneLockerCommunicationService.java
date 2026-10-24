@@ -789,13 +789,7 @@ public class DroneLockerCommunicationService {
             return;
         }
         try {
-            ObjectNode payload = objectMapper.createObjectNode();
-            payload.put("commandId", commandId);
-            payload.put("boxId", boxId);
-            payload.put("box_id", boxId);
-            payload.put("action", action.toUpperCase(Locale.ROOT));
-            payload.put("timeout", 15);
-
+            ObjectNode payload = lidCommandPayload(boxId, action, commandId);
             String topic = "cabinet/" + lockerId + "/command/" + action.toLowerCase(Locale.ROOT);
             MqttMessage msg = new MqttMessage(payload.toString().getBytes(StandardCharsets.UTF_8));
             msg.setQos(1);
@@ -804,6 +798,19 @@ public class DroneLockerCommunicationService {
         } catch (Exception ex) {
             log.error("[COMM] Failed to publish {} command to locker {}: {}", action, lockerId, ex.getMessage());
         }
+    }
+
+    /// `lid: true` bảo Pi trượt nắp trên nóc tủ thay vì kích relay cửa trước của ô
+    /// (mqtt-contract § 2.1). Lệnh mở ô của khách/KTV/admin không có cờ này.
+    ObjectNode lidCommandPayload(Long boxId, String action, String commandId) {
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("commandId", commandId);
+        payload.put("boxId", boxId);
+        payload.put("box_id", boxId);
+        payload.put("action", action.toUpperCase(Locale.ROOT));
+        payload.put("lid", true);
+        payload.put("timeout", 15);
+        return payload;
     }
 
     /// Lệnh gửi drone được ký bằng khoá của chính drone đó: Pi chỉ làm theo lệnh có chữ ký đúng.
