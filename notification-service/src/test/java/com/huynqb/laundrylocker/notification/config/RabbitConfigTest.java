@@ -45,4 +45,13 @@ class RabbitConfigTest {
         assertEquals(DomainEventNames.LOCKER_SCHEDULE_DUE, config.scheduleDueBinding(queue, exchange).getRoutingKey());
         assertEquals(RabbitConfig.NOTIFICATION_QUEUE, config.scheduleDueBinding(queue, exchange).getDestination());
     }
+
+    @Test
+    void bindsLockerAvailabilityChanges() {
+        RabbitConfig config = new RabbitConfig();
+
+        assertEquals(DomainEventNames.LOCKER_AVAILABILITY_CHANGED,
+                config.lockerAvailabilityChangedBinding(config.notificationEventsQueue(), config.laundryEventsExchange())
+                        .getRoutingKey());
+    }
 }

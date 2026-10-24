@@ -26,6 +26,10 @@ public final class DomainEventNames {
     public static final String LOCKER_SCHEDULE_DUE = "locker.schedule.due";
     public static final String IOT_DEVICE_STATUS_CHANGED = "iot.device.status.changed";
     public static final String LOCKER_LAYOUT_UPDATED = "locker.layout.updated";
+    /// Số ô trống của một tủ vừa đổi (ô chuyển AVAILABLE/RESERVED/OCCUPIED/FAULT hoặc đổi loại ô).
+    /// Payload chỉ có lockerId — app tự tải lại ô trống; notification-service đẩy ra
+    /// `/topic/public/locker-availability` cho màn đặt đơn cập nhật ngay.
+    public static final String LOCKER_AVAILABILITY_CHANGED = "locker.availability.changed";
     public static final String ORDER_BOX_RELOCATED = "order.box.relocated";
     /**
      * Trạng thái chuyến giao hàng (drone) thay đổi: dispatched/approaching/arrived/delivered/delayed/failed.

@@ -50,6 +50,18 @@ class BrokerDestinationGuardInterceptorTest {
         }
     }
 
+    /// Màn đặt đơn của mọi người dùng nghe tủ nào vừa đổi số ô trống (chỉ có mã tủ).
+    @Test
+    void anyLoggedInUserListensToLockerAvailability() {
+        for (StompPrincipal user : List.of(customer(), user("8", "DRONE_TECHNICIAN"), user("1", "ADMIN"))) {
+            Message<byte[]> message = subscribe("/topic/public/locker-availability", user);
+            assertSame(message, interceptor.preSend(message, null));
+        }
+        // Chỉ đúng topic đó — không mở cả nhánh /topic/public/**.
+        assertThrows(MessagingException.class,
+                () -> interceptor.preSend(subscribe("/topic/public/other", customer()), null));
+    }
+
     /// Đăng ký thẳng `/queue/...` hay theo mẫu sẽ nhận hộp thư riêng của người khác.
     @Test
     void rawQueuesAndWildcardsAreRefused() {

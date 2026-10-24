@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "locker_boxes")
+@EntityListeners(LockerBoxAvailabilityListener.class)
 @Getter
 @Setter
 public class LockerBox {
@@ -90,5 +91,19 @@ public class LockerBox {
     @PreUpdate
     void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    /// Trạng thái + loại ô lúc nạp từ DB — để {@link LockerBoxAvailabilityListener} chỉ báo khi số ô
+    /// trống thật sự đổi, không báo mỗi lần cập nhật cảm biến cửa.
+    @Transient
+    private String loadedAvailabilityKey;
+
+    @PostLoad
+    void rememberAvailability() {
+        loadedAvailabilityKey = availabilityKey();
+    }
+
+    String availabilityKey() {
+        return status + "|" + cellType;
     }
 }

@@ -93,6 +93,11 @@ public class RabbitConfig {
     }
 
     @Bean
+    Binding lockerAvailabilityChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOCKER_AVAILABILITY_CHANGED);
+    }
+
+    @Bean
     Binding technicianPresenceUpdatedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
         return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.TECHNICIAN_PRESENCE_UPDATED);
     }
