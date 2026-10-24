@@ -66,6 +66,7 @@ public class DroneLockerCommunicationService {
     public static final String DRONE_EVENTS_TOPIC = "lockr/drone/delivery/events";
     public static final String DRONE_COMMANDS_TOPIC = "lockr/drone/delivery/commands";
     public static final String LOCKER_RESULT_SUBSCRIPTION = "cabinet/+/command/+/result";
+    public static final String LOCKER_HEARTBEAT_SUBSCRIPTION = "cabinet/+/heartbeat";
     static final String SIGNATURE_PROPERTY = "sig";
 
     private final DroneLockerCommLogRepository commLogRepository;
@@ -98,7 +99,21 @@ public class DroneLockerCommunicationService {
     @Value("${app.drone.delivery.require-signature:true}")
     private boolean requireSignature = true;
 
+    /// Lệnh nắp chưa có kết quả sau chừng này giây thì gửi lại khi tủ báo còn sống (lớn hơn timeout 15 s của Pi).
+    @Value("${app.drone.delivery.lid-command-resend-after-seconds:20}")
+    private long lidResendAfterSeconds = 20;
+
+    /// Lệnh mở nắp chờ quá chừng này giây (tủ mất kết nối lâu) thì bỏ phiên thay vì mở nắp muộn.
+    @Value("${app.drone.delivery.open-lid-max-wait-seconds:600}")
+    private long openLidMaxWaitSeconds = 600;
+
     private MqttClient mqttClient;
+
+    /// Lần gửi gần nhất của lệnh nắp đang chờ, theo commandId (mất khi restart ⇒ lấy updatedAt của phiên).
+    private record LidCommandAttempt(LocalDateTime sentAt, int retry) {
+    }
+
+    private final Map<String, LidCommandAttempt> lidCommandAttempts = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, runnable -> {
         Thread t = new Thread(runnable, "drone-locker-scheduler");
@@ -208,6 +223,9 @@ public class DroneLockerCommunicationService {
         } catch (MqttException e) {
             log.error("[COMM] Failed to create MQTT client for {}", brokerUrl, e);
         }
+        // Chạy trên luồng sự kiện để không đua với kết quả nắp đang tới.
+        scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::expireStaleOpenRequests),
+                30, 30, TimeUnit.SECONDS);
     }
 
     private void connectOrRetry(MqttConnectionOptions options) {
@@ -223,8 +241,8 @@ public class DroneLockerCommunicationService {
 
     private void subscribeTopics() {
         try {
-            String[] topics = new String[]{DRONE_EVENTS_TOPIC, LOCKER_RESULT_SUBSCRIPTION};
-            int[] qos = new int[]{1, 1};
+            String[] topics = new String[]{DRONE_EVENTS_TOPIC, LOCKER_RESULT_SUBSCRIPTION, LOCKER_HEARTBEAT_SUBSCRIPTION};
+            int[] qos = new int[]{1, 1, 0};
             mqttClient.subscribe(topics, qos);
             log.info("[COMM] Subscribed to topics: {}", Arrays.toString(topics));
         } catch (MqttException e) {
@@ -267,6 +285,15 @@ public class DroneLockerCommunicationService {
     }
 
     public void handleIncomingMessage(String topic, String payload, String signature) {
+        if (topic.startsWith("cabinet/") && topic.endsWith("/heartbeat")) {
+            String[] parts = topic.split("/");
+            try {
+                resendPendingLidCommands(parts.length == 3 ? parseLongOrNull(parts[1]) : null);
+            } catch (Exception e) {
+                log.error("[COMM] Error resending lid commands on {}: {}", topic, e.getMessage(), e);
+            }
+            return;
+        }
         log.info("[COMM] Incoming MQTT [{}] -> {}", topic, payload);
         try {
             JsonNode data = objectMapper.readTree(payload);
@@ -598,6 +625,7 @@ public class DroneLockerCommunicationService {
             return;
         }
         DroneDeliverySession session = found.get();
+        lidCommandAttempts.remove(commandId);
         Long boxId = longOrNull(data, "boxId");
         String status = text(data, "status");
         String hwState = text(data, "hwState");
@@ -735,6 +763,85 @@ public class DroneLockerCommunicationService {
     }
 
     // =========================================================================
+    // 3. LID COMMAND RECOVERY (tủ mất kết nối giữa chừng)
+    // =========================================================================
+
+    /// Tủ vừa báo còn sống (Pi gửi heartbeat ngay mỗi lần kết nối lại broker, sau đó mỗi phút): lệnh nắp của
+    /// tủ này chưa có kết quả thì gửi lại đúng mã lệnh cũ. Pi dùng clean session nên lệnh gửi lúc tủ mất kết
+    /// nối bị mất hẳn. Nắp đã ở đúng vị trí thì Pi vẫn báo SUCCESS, nên gửi lặp không hại.
+    void resendPendingLidCommands(Long lockerId) {
+        if (lockerId == null) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        for (DroneDeliverySession session : sessionRepository.findByLockerIdAndStateIn(lockerId,
+                DroneDeliverySession.LID_COMMAND_PENDING_STATES)) {
+            boolean open = DroneDeliverySession.OPEN_LID_REQUESTED.equals(session.getState());
+            if (open && isOpenRequestExpired(session, now)) {
+                expireOpenRequest(session);
+                continue;
+            }
+            String commandId = open ? session.getOpenCommandId() : session.getCloseCommandId();
+            LidCommandAttempt last = lidCommandAttempts.get(commandId);
+            LocalDateTime lastSentAt = last != null ? last.sentAt() : session.getUpdatedAt();
+            if (lastSentAt != null && lastSentAt.plusSeconds(lidResendAfterSeconds).isAfter(now)) {
+                continue; // lệnh vừa gửi, tủ có thể đang chạy nắp
+            }
+            if (!sendLockerLidCommand(session.getLockerId(), session.getCompartmentId(), open ? "OPEN" : "CLOSE", commandId)) {
+                continue;
+            }
+            int retry = last != null ? last.retry() + 1 : 1;
+            lidCommandAttempts.put(commandId, new LidCommandAttempt(now, retry));
+            saveLog(commandId, session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
+                    session.getMissionId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(),
+                    session.getTargetMarkerId(), session.getTargetDictionary(), "BACKEND", "LOCKER",
+                    "cabinet/" + session.getLockerId() + "/command/" + (open ? "open" : "close"),
+                    open ? "OPEN_LID_REQUESTED" : "CLOSE_LID_REQUESTED", "OUTBOUND", null, "SENT", "PENDING", "PENDING",
+                    null, "Gửi lại lệnh " + (open ? "mở" : "đóng") + " nắp trượt ô tủ (tủ đã kết nối lại, lần " + retry + ")",
+                    retry, null);
+            log.info("[COMM] Resent {} command {} to locker {} (retry {})", open ? "OPEN" : "CLOSE", commandId,
+                    lockerId, retry);
+        }
+    }
+
+    /// Lệnh mở nắp chờ quá lâu mà tủ không trả lời: drone hẳn đã rời đi, mở muộn chỉ để ô hở ⇒ kết thúc phiên
+    /// và báo drone; drone nhận diện lại mã sẽ mở phiên mới. Lệnh đóng nắp thì không bỏ — hàng đã nằm trong ô.
+    void expireStaleOpenRequests() {
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            sessionRepository.findByStateInOrderByCreatedAtDesc(Set.of(DroneDeliverySession.OPEN_LID_REQUESTED)).stream()
+                    .filter(session -> isOpenRequestExpired(session, now))
+                    .forEach(this::expireOpenRequest);
+        } catch (Exception e) {
+            log.error("[COMM] Error expiring stale open-lid requests: {}", e.getMessage(), e);
+        }
+    }
+
+    private boolean isOpenRequestExpired(DroneDeliverySession session, LocalDateTime now) {
+        return session.getCreatedAt() != null && !session.getCreatedAt().plusSeconds(openLidMaxWaitSeconds).isAfter(now);
+    }
+
+    private void expireOpenRequest(DroneDeliverySession session) {
+        String errorCode = "LOCKER_NO_RESPONSE";
+        String errorMessage = "Tủ không phản hồi lệnh mở nắp sau " + openLidMaxWaitSeconds
+                + " giây (mất kết nối) — huỷ phiên, drone cần nhận diện lại mã ArUco";
+        lidCommandAttempts.remove(session.getOpenCommandId());
+        session.setState(DroneDeliverySession.LID_OPEN_FAILED);
+        session.setErrorCode(errorCode);
+        session.setErrorMessage(errorMessage);
+        sessionRepository.save(session);
+        saveLog(session.getOpenCommandId(), session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
+                session.getMissionId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(),
+                session.getTargetMarkerId(), session.getTargetDictionary(), "BACKEND", "DRONE",
+                "cabinet/" + session.getLockerId() + "/command/open", "LID_OPEN_FAILED", "INTERNAL", null,
+                "PROCESSED", "TIMEOUT", "FAILED", errorCode, errorMessage, 0, null);
+        publishCommand("LID_OPEN_FAILED", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
+                session.getDroneId(), session.getLockerId(), session.getCompartmentId(), errorCode, errorMessage);
+        log.warn("[COMM] Open-lid request {} of session {} expired: locker {} never answered",
+                session.getOpenCommandId(), session.getSessionId(), session.getLockerId());
+    }
+
+    // =========================================================================
     // HELPERS: MQTT PUBLISHING & LOGGING
     // =========================================================================
 
@@ -783,10 +890,10 @@ public class DroneLockerCommunicationService {
         }
     }
 
-    private void sendLockerLidCommand(Long lockerId, Long boxId, String action, String commandId) {
+    private boolean sendLockerLidCommand(Long lockerId, Long boxId, String action, String commandId) {
         if (mqttClient == null || !mqttClient.isConnected()) {
             log.error("[COMM] Cannot send {} command: MQTT not connected", action);
-            return;
+            return false;
         }
         try {
             ObjectNode payload = lidCommandPayload(boxId, action, commandId);
@@ -795,8 +902,10 @@ public class DroneLockerCommunicationService {
             msg.setQos(1);
             mqttClient.publish(topic, msg);
             log.info("[COMM] Published {} to {}: {}", action, topic, payload);
+            return true;
         } catch (Exception ex) {
             log.error("[COMM] Failed to publish {} command to locker {}: {}", action, lockerId, ex.getMessage());
+            return false;
         }
     }
 

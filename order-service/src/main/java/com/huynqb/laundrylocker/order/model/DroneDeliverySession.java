@@ -33,6 +33,9 @@ public class DroneDeliverySession {
     public static final Set<String> ACTIVE_STATES =
             Set.of(MARKER_VALIDATED, OPEN_LID_REQUESTED, LID_OPENED, CLOSE_LID_REQUESTED);
 
+    /// Đã gửi lệnh nắp cho tủ, đang chờ kết quả.
+    public static final Set<String> LID_COMMAND_PENDING_STATES = Set.of(OPEN_LID_REQUESTED, CLOSE_LID_REQUESTED);
+
     @Id
     @Column(name = "session_id", length = 64)
     private String sessionId;
