@@ -305,6 +305,11 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
                 || path.equals("/api/iot/end-rental-with-code")) {
             return true;
         }
+        // Khoá công khai kiểm mã mở ô qua Bluetooth — Pi tải không cần JWT; không phải bí mật.
+        if (path.equals("/api/iot/ble/public-key")
+                && org.springframework.http.HttpMethod.GET.equals(method)) {
+            return true;
+        }
         if (path.startsWith("/api/auth")
                 || path.startsWith("/api/admin/auth")
                 || path.equals("/")

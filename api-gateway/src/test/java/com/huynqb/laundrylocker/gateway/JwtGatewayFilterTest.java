@@ -437,6 +437,36 @@ class JwtGatewayFilterTest {
         assertFalse(chainCalled.get());
     }
 
+    /// Pi tải khoá công khai kiểm mã mở ô qua Bluetooth không cần JWT; xin mã và cấp quyền thì cần.
+    @Test
+    void blePublicKeyIsPublicButTokenAndGrantsAreNot() {
+        assertPublicGet("/api/iot/ble/public-key");
+
+        for (MockServerHttpRequest.BaseBuilder<?> request : List.<MockServerHttpRequest.BaseBuilder<?>>of(
+                MockServerHttpRequest.post("/api/iot/ble/public-key"),
+                MockServerHttpRequest.post("/api/iot/ble-test/lockers/7/boxes/3/token"),
+                MockServerHttpRequest.get("/api/iot/ble-test/lockers"))) {
+            MockServerWebExchange exchange = MockServerWebExchange.from(request.build());
+            AtomicBoolean chainCalled = new AtomicBoolean(false);
+            filter.filter(exchange, chainThatMarks(chainCalled)).block();
+            assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+            assertFalse(chainCalled.get());
+        }
+
+        MockServerWebExchange customerToken = exchangeWithBearer(
+                MockServerHttpRequest.post("/api/iot/ble-test/lockers/7/boxes/3/token"), token("access", "CUSTOMER"));
+        AtomicBoolean tokenForwarded = new AtomicBoolean(false);
+        filter.filter(customerToken, chainThatMarks(tokenForwarded)).block();
+        assertTrue(tokenForwarded.get(), "customer may ask for a BLE token; iot-service checks the grant");
+
+        MockServerWebExchange customerGrant = exchangeWithBearer(
+                MockServerHttpRequest.post("/api/admin/iot/ble-test/lockers/7/users"), token("access", "CUSTOMER"));
+        AtomicBoolean grantForwarded = new AtomicBoolean(false);
+        filter.filter(customerGrant, chainThatMarks(grantForwarded)).block();
+        assertEquals(HttpStatus.FORBIDDEN, customerGrant.getResponse().getStatusCode());
+        assertFalse(grantForwarded.get());
+    }
+
     /// Webhook và trang quay về của SePay không mang JWT nên phải mở; đường VNPay/MoMo đã gỡ
     /// (ngừng hỗ trợ) nên không còn công khai — gọi không token ⇒ 401, không tới payment-service.
     @Test
