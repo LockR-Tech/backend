@@ -213,7 +213,7 @@ class DroneHomePickupFlowPostgresTest extends DroneFlowPostgresTestBase {
     }
 
     @Test
-    void technicianWithStaleLocationOrOffDutyIsNotOffered() {
+    void staleLocationIsOnlyAFallbackAndOffDutyIsNeverOffered() {
         technicianOnDuty(TECH_NEAR, 10.7001, 106.7001);
         technicianOnDuty(TECH_FAR, 10.7050, 106.7000);
         // App của người gần nhất đã 11 phút không gửi vị trí.
@@ -221,10 +221,16 @@ class DroneHomePickupFlowPostgresTest extends DroneFlowPostgresTestBase {
                 + "where user_id = ?", TECH_NEAR);
         long orderId = book().orderId();
         pay(orderId);
+        // Còn người có vị trí mới ⇒ mời người đó dù ở xa hơn.
         assertEquals(TECH_FAR, pickup(orderId).getTechnicianId());
 
-        // Ra ca khi đang được mời = từ chối; không còn ai ⇒ chờ.
+        // Ra ca khi đang được mời = từ chối; chỉ còn người vị trí cũ nhưng vẫn trong ca ⇒ mời dự phòng.
         pickupService.updatePresence(TECH_FAR, false, null, null);
+        assertEquals(TECH_NEAR, pickup(orderId).getTechnicianId());
+        assertEquals(DronePickup.OFFERED, pickup(orderId).getStatus());
+
+        // Người đó cũng ra ca ⇒ không còn ai trong ca ⇒ chờ.
+        pickupService.updatePresence(TECH_NEAR, false, null, null);
         assertEquals(DronePickup.SEARCHING, pickup(orderId).getStatus());
     }
 
