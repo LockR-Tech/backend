@@ -123,6 +123,10 @@ public class DroneLockerCommunicationService {
     /// Chặng bay được phép mở nắp: đang tới / đang tiếp cận / đã tới tủ nhận. Lúc cất cánh ở tủ gửi thì không.
     static final List<String> LID_ALLOWED_STAGES = List.of("EN_ROUTE", "APPROACHING", "ARRIVED");
 
+    /// Pi tủ (code nắp drone) gửi kèm kết quả mở: LIMIT_SWITCH = công tắc hành trình xác nhận, STEP_COUNT = chạy
+    /// hết số bước. BYPASS (giả lập) hoặc thiếu trường này thì không phải nắp trượt thật.
+    static final Set<String> HARDWARE_CONFIRMATIONS = Set.of("LIMIT_SWITCH", "STEP_COUNT", "BYPASS");
+
     private MqttClient mqttClient;
 
     /// Lần gửi gần nhất của lệnh nắp đang chờ, theo commandId (mất khi restart ⇒ lấy updatedAt của phiên).
@@ -134,6 +138,13 @@ public class DroneLockerCommunicationService {
 
     /// Lần gần nhất thấy tủ còn sống (heartbeat hoặc kết quả lệnh), theo lockerId.
     private final Map<Long, LocalDateTime> lockerSeenAt = new ConcurrentHashMap<>();
+
+    /// Lệnh mở đã nhận một kết quả "đã mở" không có xác nhận phần cứng — không bao giờ gửi lại.
+    private final Set<String> unverifiedOpenCommands = ConcurrentHashMap.newKeySet();
+
+    /// Tủ đã từng trả ACCEPTED ⇒ chạy code nắp drone mới (nhớ commandId, không chạy motor hai lần) ⇒ gửi lại
+    /// nhanh khi mất ACK là an toàn. Tủ chưa chứng minh được thì chỉ gửi lại sau thời gian chạy nắp đầy đủ.
+    private final Set<Long> ackCapableLockers = ConcurrentHashMap.newKeySet();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, runnable -> {
         Thread t = new Thread(runnable, "drone-locker-scheduler");
@@ -310,11 +321,16 @@ public class DroneLockerCommunicationService {
         if (topic.startsWith("cabinet/") && topic.endsWith("/heartbeat")) {
             String[] parts = topic.split("/");
             Long lockerId = parts.length == 3 ? parseLongOrNull(parts[1]) : null;
+            boolean reconnected = false;
             if (lockerId != null) {
-                lockerSeenAt.put(lockerId, LocalDateTime.now());
+                LocalDateTime now = LocalDateTime.now();
+                LocalDateTime previous = lockerSeenAt.put(lockerId, now);
+                // Trước đó đã thấy tủ rồi mất liên lạc quá ngưỡng ⇒ lệnh gửi trong lúc đó bị broker bỏ (clean
+                // session), tủ chắc chắn chưa chạy ⇒ gửi lại ngay là an toàn kể cả với code tủ cũ.
+                reconnected = previous != null && !previous.plusSeconds(lockerOfflineAfterSeconds).isAfter(now);
             }
             try {
-                resendPendingLidCommands(lockerId);
+                resendPendingLidCommands(lockerId, reconnected);
             } catch (Exception e) {
                 log.error("[COMM] Error resending lid commands on {}: {}", topic, e.getMessage(), e);
             }
@@ -786,10 +802,31 @@ public class DroneLockerCommunicationService {
                     && data.get("duplicate").asBoolean(false));
             return;
         }
+        String lidConfirmation = text(data, "lidConfirmation");
+        if (open && "SUCCESS".equalsIgnoreCase(status) && !HARDWARE_CONFIRMATIONS.contains(
+                lidConfirmation == null ? "" : lidConfirmation.toUpperCase(Locale.ROOT))) {
+            // Lệnh tới tủ không ký: "đã mở" mà không kèm xác nhận phần cứng có thể là trình giả lập
+            // (simulate_demo_cabinet.py nghe mọi tủ trên broker chung) hoặc code tủ cũ. Không coi là nắp đã mở,
+            // cũng không huỷ phiên — tiếp tục chờ kết quả thật của Pi tủ.
+            saveLog(commandId, session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
+                    session.getMissionId(), session.getDroneId(), lockerId, boxId, session.getTargetMarkerId(),
+                    session.getTargetDictionary(), "LOCKER", "BACKEND", topic, "LID_OPEN_RESULT", "INBOUND", rawPayload,
+                    "RECEIVED", "IGNORED", "IGNORED", "LID_UNVERIFIED",
+                    "Bỏ qua kết quả \"đã mở\" không có xác nhận phần cứng (lidConfirmation="
+                            + (lidConfirmation == null ? "trống" : lidConfirmation)
+                            + ") — có thể là trình giả lập tủ hoặc Pi tủ chưa cập nhật code; tiếp tục chờ tủ thật",
+                    0, null);
+            log.warn("[COMM] Ignored unverified OPEN result {} for session {} (lidConfirmation={}) — waiting for the real locker",
+                    commandId, session.getSessionId(), lidConfirmation);
+            // KHÔNG gửi lại lệnh này nữa: Pi tủ chạy code cũ không chống chạy trùng — gửi lại là motor chạy lại,
+            // đẩy nắp đã ở cuối hành trình. Chờ hết thời gian chạy nắp; tủ thật (code mới) vẫn có thể trả lời.
+            unverifiedOpenCommands.add(commandId);
+            lidCommandAttempts.put(commandId, new LidCommandAttempt(LocalDateTime.now(), lidMaxRetries, true));
+            return;
+        }
         lidCommandAttempts.remove(commandId);
         if (open) {
-            handleOpenResult(session, status, hwState, errorCode, errorMessage, topic, rawPayload,
-                    text(data, "lidConfirmation"));
+            handleOpenResult(session, status, hwState, errorCode, errorMessage, topic, rawPayload, lidConfirmation);
         } else {
             handleCloseResult(session, status, hwState, errorCode, errorMessage, topic, rawPayload);
         }
@@ -801,6 +838,7 @@ public class DroneLockerCommunicationService {
             String rawPayload, boolean duplicate) {
         LidCommandAttempt last = lidCommandAttempts.get(commandId);
         lidCommandAttempts.put(commandId, new LidCommandAttempt(LocalDateTime.now(), last != null ? last.retry() : 0, true));
+        ackCapableLockers.add(session.getLockerId());
         if (open && DroneDeliverySession.LID_OPENING.equals(session.getState())) {
             log.debug("[COMM] Duplicate ACCEPTED for open command {} — lid already moving", commandId);
             return;
@@ -835,7 +873,7 @@ public class DroneLockerCommunicationService {
                     + "để mở nắp thật";
         }
         // Không có công tắc hành trình xác nhận: nắp đã chạy hết số bước nhưng không chắc đã mở hoàn toàn.
-        boolean confirmedByLimit = !"STEP_COUNT".equalsIgnoreCase(lidConfirmation);
+        boolean confirmedByLimit = "LIMIT_SWITCH".equalsIgnoreCase(lidConfirmation);
         String openedMessage = confirmedByLimit ? "Nắp ô tủ đã mở hoàn toàn"
                 : "Nắp đã chạy hết hành trình theo số bước — tủ chưa có công tắc hành trình xác nhận mở hoàn toàn";
         saveLog(session.getOpenCommandId(), session.getCorrelationId(), session.getSessionId(), session.getOrderId(),
@@ -960,14 +998,14 @@ public class DroneLockerCommunicationService {
     /// Tủ vừa báo còn sống (Pi gửi heartbeat ngay mỗi lần kết nối lại broker, sau đó mỗi phút): lệnh nắp của
     /// tủ này chưa có kết quả thì gửi lại đúng mã lệnh cũ. Pi dùng clean session nên lệnh gửi lúc tủ mất kết
     /// nối bị mất hẳn. Nắp đã ở đúng vị trí thì Pi vẫn báo SUCCESS, nên gửi lặp không hại.
-    void resendPendingLidCommands(Long lockerId) {
+    void resendPendingLidCommands(Long lockerId, boolean reconnected) {
         if (lockerId == null) {
             return;
         }
         LocalDateTime now = LocalDateTime.now();
         for (DroneDeliverySession session : sessionRepository.findByLockerIdAndStateIn(lockerId,
                 DroneDeliverySession.LID_COMMAND_PENDING_STATES)) {
-            retryLidCommand(session, now, true);
+            retryLidCommand(session, now, true, reconnected);
         }
     }
 
@@ -977,13 +1015,14 @@ public class DroneLockerCommunicationService {
         try {
             LocalDateTime now = LocalDateTime.now();
             sessionRepository.findByStateInOrderByCreatedAtDesc(DroneDeliverySession.LID_COMMAND_PENDING_STATES)
-                    .forEach(session -> retryLidCommand(session, now, false));
+                    .forEach(session -> retryLidCommand(session, now, false, false));
         } catch (Exception e) {
             log.error("[COMM] Error retrying lid commands: {}", e.getMessage(), e);
         }
     }
 
-    private void retryLidCommand(DroneDeliverySession session, LocalDateTime now, boolean lockerJustSeen) {
+    private void retryLidCommand(DroneDeliverySession session, LocalDateTime now, boolean lockerJustSeen,
+            boolean reconnected) {
         boolean open = !DroneDeliverySession.CLOSE_LID_REQUESTED.equals(session.getState());
         if (DroneDeliverySession.OPEN_LID_REQUESTED.equals(session.getState()) && isOpenRequestExpired(session, now)) {
             expireOpenRequest(session);
@@ -993,7 +1032,10 @@ public class DroneLockerCommunicationService {
         LidCommandAttempt last = lidCommandAttempts.get(commandId);
         boolean acked = DroneDeliverySession.LID_OPENING.equals(session.getState()) || (last != null && last.acked());
         LocalDateTime lastSentAt = last != null ? last.sentAt() : session.getUpdatedAt();
-        long waitSeconds = acked ? lidMotionTimeoutSeconds : lidAckTimeoutSeconds;
+        // Chưa từng thấy tủ này gửi ACK: có thể là code cũ (không chống chạy trùng) ⇒ đợi đủ thời gian chạy nắp.
+        long waitSeconds = acked ? lidMotionTimeoutSeconds
+                : reconnected || ackCapableLockers.contains(session.getLockerId()) ? lidAckTimeoutSeconds
+                : lidMotionTimeoutSeconds;
         if (lastSentAt != null && lastSentAt.plusSeconds(waitSeconds).isAfter(now)) {
             return; // tủ có thể đang nhận / đang chạy nắp
         }
@@ -1001,6 +1043,12 @@ public class DroneLockerCommunicationService {
             return; // tủ offline: heartbeat lúc kết nối lại sẽ gửi lại, hạn lệnh mở vẫn được kiểm
         }
         int retry = last != null ? last.retry() : 0;
+        if (open && unverifiedOpenCommands.remove(commandId)) {
+            failLidCommand(session, true, "LID_UNVERIFIED", "Tủ chỉ báo \"đã mở\" mà không có xác nhận phần cứng "
+                    + "(trình giả lập tủ hoặc Pi tủ chưa cập nhật code nắp drone) — không coi là nắp đã mở; cập nhật code "
+                    + "iot trên Pi tủ và tắt trình giả lập simulate_demo_cabinet.py rồi thử lại");
+            return;
+        }
         if (retry >= lidMaxRetries) {
             failLidCommand(session, open, acked ? "LID_MOTION_TIMEOUT" : "LOCKER_NO_ACK",
                     acked ? "Tủ đã nhận lệnh nhưng không báo nắp chạy xong sau " + (retry + 1) + " lần hỏi"
@@ -1019,7 +1067,7 @@ public class DroneLockerCommunicationService {
                 "cabinet/" + session.getLockerId() + "/command/" + (open ? "open" : "close"),
                 open ? "OPEN_LID_REQUESTED" : "CLOSE_LID_REQUESTED", "OUTBOUND", null, "SENT", "PENDING", "PENDING",
                 null, "Gửi lại lệnh " + (open ? "mở" : "đóng") + " nắp trượt cùng mã lệnh (lần " + (retry + 1) + ", "
-                        + (lockerJustSeen ? "tủ vừa kết nối lại" : acked ? "nắp chạy quá lâu chưa báo xong"
+                        + (reconnected ? "tủ vừa kết nối lại" : acked ? "nắp chạy quá lâu chưa báo xong"
                         : "tủ chưa xác nhận nhận lệnh") + ")", retry + 1, null);
         log.info("[COMM] Resent {} command {} to locker {} (retry {}, acked={})", open ? "OPEN" : "CLOSE", commandId,
                 session.getLockerId(), retry + 1, acked);
