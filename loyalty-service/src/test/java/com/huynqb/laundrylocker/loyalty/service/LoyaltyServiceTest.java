@@ -42,12 +42,14 @@ class LoyaltyServiceTest {
 
     private BusinessSettings settings;
     private LoyaltyService service;
+    LoyaltyEvents events;
     private LoyaltyAccount account;
 
     @BeforeEach
     void setUp() {
         settings = TestLoyaltyRules.settings(TestLoyaltyRules.LEGACY_RATES);
-        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings));
+        events = org.mockito.Mockito.mock(LoyaltyEvents.class);
+        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings), events);
         account = new LoyaltyAccount();
         account.setUserId(7L);
         when(accountRepository.findByUserId(7L)).thenReturn(Optional.of(account));

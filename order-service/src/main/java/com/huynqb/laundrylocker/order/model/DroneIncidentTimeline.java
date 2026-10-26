@@ -7,6 +7,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
+@EntityListeners(DroneWorkChangeListener.class)
 @Table(name = "drone_incident_timeline")
 @Getter
 @Setter

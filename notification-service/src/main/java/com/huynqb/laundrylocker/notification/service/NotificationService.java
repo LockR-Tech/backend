@@ -35,6 +35,11 @@ public class NotificationService {
 
     /// Topic công khai (mọi người dùng đã đăng nhập) — xem BrokerDestinationGuardInterceptor.
     public static final String LOCKER_AVAILABILITY_TOPIC = "/topic/public/locker-availability";
+    public static final String CATALOG_TOPIC = "/topic/public/catalog";
+    /// Chỉ KTV tủ, KTV drone và ADMIN nghe — xem BrokerDestinationGuardInterceptor.
+    public static final String STAFF_MAINTENANCE_TOPIC = "/topic/staff/maintenance";
+    /// Topic chung ⇒ chỉ ADMIN nghe (BrokerDestinationGuardInterceptor).
+    public static final String ADMIN_CHANGES_TOPIC = "/topic/admin/changes";
     private final FcmPushNotificationService fcmPushNotificationService;
     private final WebSocketNotificationService webSocketNotificationService;
 
@@ -232,6 +237,22 @@ public class NotificationService {
     public void consumeDomainEvent(DomainEvent event) {
         Map<String, Object> payload = event.payload();
 
+        // Web quản trị: dữ liệu admin đang xem vừa đổi (người dùng, đơn, thanh toán, hoàn/rút tiền, phản hồi,
+        // ví, điểm thưởng) ⇒ đẩy loại + mã cho trang admin tải lại. Ví/điểm còn xử lý tiếp cho chủ tài khoản.
+        if (DomainEventNames.ADMIN_DATA_CHANGED.equals(event.type()) || isUserSyncEvent(event.type())) {
+            Map<String, Object> wsMsg = new HashMap<>();
+            wsMsg.put("entity", DomainEventNames.WALLET_UPDATED.equals(event.type()) ? "WALLET"
+                    : DomainEventNames.LOYALTY_POINTS_CHANGED.equals(event.type()) ? "LOYALTY"
+                    : payload.get("entity"));
+            wsMsg.put("id", DomainEventNames.ADMIN_DATA_CHANGED.equals(event.type())
+                    ? payload.get("id") : payload.get("userId"));
+            wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
+            webSocketNotificationService.sendToDestination(ADMIN_CHANGES_TOPIC, wsMsg);
+            if (DomainEventNames.ADMIN_DATA_CHANGED.equals(event.type())) {
+                return;
+            }
+        }
+
         if (DomainEventNames.LOCKER_LAYOUT_UPDATED.equals(event.type())
                 || DomainEventNames.LOCKER_BOX_FAULT.equals(event.type())) {
             Map<String, Object> wsMsg = new HashMap<>(payload);
@@ -251,6 +272,30 @@ public class NotificationService {
             wsMsg.put("lockerId", payload.get("lockerId"));
             wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
             webSocketNotificationService.sendToDestination(LOCKER_AVAILABILITY_TOPIC, wsMsg);
+            return;
+        }
+
+        // Việc của KTV đổi (phiếu, lịch, tủ, drone, đơn drone, sự cố kiện) hay thiết bị IoT đổi trạng thái:
+        // chỉ đẩy loại + mã cho app KTV tải lại, không tạo thông báo.
+        if (DomainEventNames.MAINTENANCE_CHANGED.equals(event.type())
+                || DomainEventNames.IOT_DEVICE_STATUS_CHANGED.equals(event.type())) {
+            boolean device = DomainEventNames.IOT_DEVICE_STATUS_CHANGED.equals(event.type());
+            Map<String, Object> wsMsg = new HashMap<>();
+            wsMsg.put("entity", device ? "DEVICE" : payload.get("entity"));
+            wsMsg.put("id", device ? payload.get("deviceId") : payload.get("id"));
+            wsMsg.put("lockerId", payload.get("lockerId"));
+            wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
+            webSocketNotificationService.sendToDestination(STAFF_MAINTENANCE_TOPIC, wsMsg);
+            return;
+        }
+
+        // Khuyến mãi/cửa hàng/tủ admin vừa sửa: chỉ đẩy loại + mã (dữ liệu công khai) cho app tải lại.
+        if (DomainEventNames.CATALOG_CHANGED.equals(event.type())) {
+            Map<String, Object> wsMsg = new HashMap<>();
+            wsMsg.put("entity", payload.get("entity"));
+            wsMsg.put("id", payload.get("id"));
+            wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
+            webSocketNotificationService.sendToDestination(CATALOG_TOPIC, wsMsg);
             return;
         }
 
@@ -281,6 +326,15 @@ public class NotificationService {
                 ? String.valueOf(rawMessage)
                 : paymentMessage(event.type(), payload);
         if (message == null) {
+            // Ví/điểm thưởng đổi mà không cần báo (cộng điểm, trả tiền…): chỉ nhắc app của chủ tài khoản tải lại.
+            if (isUserSyncEvent(event.type())) {
+                Map<String, Object> wsMsg = new HashMap<>();
+                wsMsg.put("type", event.type());
+                wsMsg.put("referenceType", payload.get("referenceType"));
+                wsMsg.put("referenceId", referenceId);
+                wsMsg.put("timestamp", java.time.LocalDateTime.now().toString());
+                webSocketNotificationService.sendUserEvent(userId, wsMsg);
+            }
             log.debug("{} event has no message, realtime update only", event.type());
             return;
         }
@@ -314,6 +368,8 @@ public class NotificationService {
                             ? "Đánh giá dịch vụ drone"
                             : "Bạn được giao phiếu sự cố drone";
             case "drone.schedule.due" -> "Lịch kiểm tra drone tới hạn";
+            case DomainEventNames.WALLET_UPDATED -> titleOr(payload, "Ví của bạn có thay đổi");
+            case DomainEventNames.LOYALTY_POINTS_CHANGED -> titleOr(payload, "Điểm thưởng thay đổi");
             default -> "Thông báo";
         };
         String referenceType = String.valueOf(payload.getOrDefault("referenceType", topUp ? "WALLET" : "ORDER"));
@@ -368,6 +424,16 @@ public class NotificationService {
             return upper.startsWith("ORDER") || upper.startsWith("DELIVERY") || upper.startsWith("PAYMENT");
         }
         return false;
+    }
+
+    private static boolean isUserSyncEvent(String eventType) {
+        return DomainEventNames.WALLET_UPDATED.equals(eventType)
+                || DomainEventNames.LOYALTY_POINTS_CHANGED.equals(eventType);
+    }
+
+    private static String titleOr(Map<String, Object> payload, String fallback) {
+        Object title = payload.get("title");
+        return title != null && StringUtils.hasText(String.valueOf(title)) ? String.valueOf(title) : fallback;
     }
 
     private boolean isOrderDomainEvent(String eventType) {

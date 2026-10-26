@@ -41,6 +41,7 @@ public class WalletService {
     private final PaymentRepository paymentRepository;
     private final RefundRepository refundRepository;
     private final PaymentReferenceResolver resolver;
+    private final WalletEvents walletEvents;
 
     @Transactional
     public Wallet getOrCreate(Long userId) {
@@ -354,6 +355,7 @@ public class WalletService {
         BigDecimal newBalance = wallet.getBalance().add(amount);
         wallet.setBalance(newBalance);
         walletRepository.save(wallet);
+        walletEvents.changed(userId);
         return transactionRepository.save(
                 record(wallet, userId, "CREDIT", amount, newBalance, source, referenceId, description));
     }
@@ -375,6 +377,7 @@ public class WalletService {
         BigDecimal newBalance = wallet.getBalance().subtract(amount);
         wallet.setBalance(newBalance);
         walletRepository.save(wallet);
+        walletEvents.changed(userId);
         return transactionRepository.save(
                 record(wallet, userId, "DEBIT", amount, newBalance, source, referenceId, description));
     }
@@ -393,6 +396,10 @@ public class WalletService {
         } else {
             debit(userId, amount.abs(), SOURCE_ADJUST, null, description);
         }
+        walletEvents.notify(userId, null, "Ví được điều chỉnh",
+                "Admin đã " + (amount.signum() > 0 ? "cộng " : "trừ ") + amount.abs().toBigInteger()
+                        + " đ " + (amount.signum() > 0 ? "vào" : "khỏi") + " ví của bạn"
+                        + (StringUtils.hasText(reason) ? ". Lý do: " + reason.trim() : "") + ".");
         return getBalance(userId);
     }
 
@@ -469,6 +476,9 @@ public class WalletService {
         record.setProcessedByUserId(adminUserId);
         record.setProcessedAt(LocalDateTime.now());
         WithdrawalRecord saved = withdrawalRepository.save(record);
+        walletEvents.notify(record.getUserId(), saved.getId(), "Rút tiền thành công",
+                "Yêu cầu rút " + record.getAmount().toBigInteger() + " đ (" + record.getReferenceId()
+                        + ") đã được chuyển khoản tới " + bankLabel(record) + ".");
 
         BigDecimal balance = getBalance(record.getUserId()).balance();
         BigDecimal withdrawable = getWithdrawableBalance(record.getUserId());
@@ -491,10 +501,19 @@ public class WalletService {
         String refundDesc = "Hoàn tiền yêu cầu rút " + record.getReferenceId() + " bị từ chối"
                 + (reason != null && !reason.isBlank() ? ": " + reason : "");
         credit(record.getUserId(), record.getAmount(), SOURCE_REFUND, "RF-" + record.getReferenceId(), refundDesc);
+        walletEvents.notify(record.getUserId(), saved.getId(), "Yêu cầu rút tiền bị từ chối",
+                "Yêu cầu rút " + record.getAmount().toBigInteger() + " đ (" + record.getReferenceId()
+                        + ") bị từ chối" + (StringUtils.hasText(reason) ? ". Lý do: " + reason.trim() : "")
+                        + ". Số tiền đã được hoàn lại vào ví.");
 
         BigDecimal balance = getBalance(record.getUserId()).balance();
         BigDecimal withdrawable = getWithdrawableBalance(record.getUserId());
         return toWithdrawResponse(saved, balance, withdrawable);
+    }
+
+    private static String bankLabel(WithdrawalRecord record) {
+        String bank = StringUtils.hasText(record.getBankName()) ? record.getBankName().trim() : "tài khoản ngân hàng";
+        return StringUtils.hasText(record.getAccountNumber()) ? bank + " (" + record.getAccountNumber() + ")" : bank;
     }
 
     @Transactional(readOnly = true)

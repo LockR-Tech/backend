@@ -13,6 +13,7 @@ public class WebSocketNotificationService {
 
     private static final String USER_NOTIFICATION_DESTINATION = "/queue/notifications";
     private static final String BROADCAST_DESTINATION = "/topic/notifications";
+    private static final String USER_EVENT_DESTINATION = "/queue/events";
 
     private final SimpMessagingTemplate messagingTemplate;
 
@@ -38,6 +39,15 @@ public class WebSocketNotificationService {
             messagingTemplate.convertAndSend(destination, payload);
         } catch (Exception ex) {
             log.warn("Failed to send WebSocket message to {}: {}", destination, ex.getMessage());
+        }
+    }
+
+    /// Tin đồng bộ riêng một người (ví, điểm thưởng đổi) không kèm thông báo: app chỉ tải lại màn liên quan.
+    public void sendUserEvent(Long userId, Object event) {
+        try {
+            messagingTemplate.convertAndSendToUser(String.valueOf(userId), USER_EVENT_DESTINATION, event);
+        } catch (Exception ex) {
+            log.warn("Failed to send user event to user {}: {}", userId, ex.getMessage());
         }
     }
 

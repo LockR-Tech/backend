@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /// L5: một dòng nhật ký xử lý của kỹ thuật viên cho một phiếu bảo trì.
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "repair_logs")
 @Getter
 @Setter

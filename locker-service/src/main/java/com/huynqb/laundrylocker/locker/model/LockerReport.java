@@ -7,6 +7,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "locker_reports")
 @Getter
 @Setter

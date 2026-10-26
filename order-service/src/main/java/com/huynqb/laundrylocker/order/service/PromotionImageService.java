@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.order.service;
 
+import com.huynqb.laundrylocker.common.event.CatalogChangeEvents;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.common.media.MediaPurpose;
@@ -8,6 +9,7 @@ import com.huynqb.laundrylocker.common.media.VerifiedMedia;
 import com.huynqb.laundrylocker.order.model.Promotion;
 import com.huynqb.laundrylocker.order.repository.PromotionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +20,7 @@ public class PromotionImageService {
 
     private final PromotionRepository promotionRepository;
     private final CloudinaryMediaStorage mediaStorage;
+    private final RabbitTemplate rabbitTemplate;
 
     @Transactional
     public Promotion updateImage(Long promotionId, MediaUpload upload, Long actorUserId) {
@@ -26,6 +29,7 @@ public class PromotionImageService {
         String previous = promotion.getImageUrl();
         promotion.setImageUrl(media.secureUrl());
         Promotion saved = promotionRepository.save(promotion);
+        CatalogChangeEvents.publish(rabbitTemplate, "order-service", CatalogChangeEvents.PROMOTION, saved.getId());
         mediaStorage.deleteReplacedAfterCommit(previous, media.secureUrl());
         return saved;
     }
@@ -36,6 +40,7 @@ public class PromotionImageService {
         String previous = promotion.getImageUrl();
         promotion.setImageUrl(null);
         Promotion saved = promotionRepository.save(promotion);
+        CatalogChangeEvents.publish(rabbitTemplate, "order-service", CatalogChangeEvents.PROMOTION, saved.getId());
         mediaStorage.deleteReplacedAfterCommit(previous, null);
         return saved;
     }

@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.locker.service;
 
 import com.huynqb.laundrylocker.common.dto.LockerBoxSummary;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
+import com.huynqb.laundrylocker.common.event.CatalogChangeEvents;
 import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
@@ -118,7 +119,9 @@ public class LockerService {
         locker.setAddress(request.address());
         locker.setLatitude(request.latitude());
         locker.setLongitude(request.longitude());
-        return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
+        LockerUnit saved = lockerRepository.save(locker);
+        publishLockerCatalogChanged(saved.getId());
+        return toStaffResponse(saved, new HashMap<>());
     }
 
     @Transactional
@@ -233,6 +236,7 @@ public class LockerService {
         locker.setAddress(request.address());
         locker.setLatitude(request.latitude());
         locker.setLongitude(request.longitude());
+        publishLockerCatalogChanged(id);
         return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
     }
 
@@ -245,6 +249,7 @@ public class LockerService {
         if (StringUtils.hasText(request.address())) {
             locker.setAddress(request.address());
         }
+        publishLockerCatalogChanged(id);
         return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
     }
 
@@ -304,6 +309,7 @@ public class LockerService {
             boxRepository.deleteAll(boxes);
         }
         lockerRepository.delete(locker);
+        publishLockerCatalogChanged(id);
     }
 
     @Transactional
@@ -346,6 +352,7 @@ public class LockerService {
 
         int count = targetLockers.size();
         lockerRepository.deleteAll(targetLockers);
+        targetIds.forEach(this::publishLockerCatalogChanged);
         return count;
     }
 
@@ -356,6 +363,7 @@ public class LockerService {
         // Admin bật bảo trì là ý định rõ ràng ⇒ nguồn ADMIN kể cả khi tủ đang bị phiếu chặn.
         locker.setStatus(maintenance ? "MAINTENANCE" : "ACTIVE");
         locker.setMaintenanceSource(maintenance ? MAINTENANCE_SOURCE_ADMIN : null);
+        publishLockerCatalogChanged(id);
         return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
     }
 
@@ -1184,6 +1192,7 @@ public class LockerService {
             locker.setStatus("MAINTENANCE");
             locker.setMaintenanceSource(MAINTENANCE_SOURCE_TICKET);
             lockerRepository.save(locker);
+            publishLockerCatalogChanged(locker.getId());
         }
         notifyRouted(saved, locker);
         return toReport(saved);
@@ -1850,6 +1859,7 @@ public class LockerService {
                         locker.setStatus("ACTIVE");
                         locker.setMaintenanceSource(null);
                         lockerRepository.save(locker);
+                        publishLockerCatalogChanged(locker.getId());
                     });
         }
         // Tra theo lịch (không theo report.scheduleId): kiểm tra KHÔNG ĐẠT có thể gộp vào phiếu ô đã mở sẵn.
@@ -4380,6 +4390,11 @@ public class LockerService {
         } catch (AmqpException ex) {
             log.warn("Could not publish {} for report {}: {}", eventType, report.getId(), ex.getMessage());
         }
+    }
+
+    /// Tủ đổi thông tin khách thấy (tên, địa chỉ, toạ độ, cửa hàng, trạng thái bảo trì) ⇒ app tải lại danh sách tủ.
+    private void publishLockerCatalogChanged(Long lockerId) {
+        CatalogChangeEvents.publish(rabbitTemplate, "locker-service", CatalogChangeEvents.LOCKER, lockerId);
     }
 
     public void publishLockerLayoutUpdated(Long lockerId, Long boxId, Integer boxNumber, String status, String message) {

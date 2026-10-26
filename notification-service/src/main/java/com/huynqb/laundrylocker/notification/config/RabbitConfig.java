@@ -103,6 +103,36 @@ public class RabbitConfig {
     }
 
     @Bean
+    Binding walletUpdatedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.WALLET_UPDATED);
+    }
+
+    @Bean
+    Binding loyaltyPointsChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOYALTY_POINTS_CHANGED);
+    }
+
+    @Bean
+    Binding catalogChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.CATALOG_CHANGED);
+    }
+
+    @Bean
+    Binding maintenanceChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.MAINTENANCE_CHANGED);
+    }
+
+    @Bean
+    Binding adminDataChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.ADMIN_DATA_CHANGED);
+    }
+
+    @Bean
+    Binding iotDeviceStatusChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
+        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.IOT_DEVICE_STATUS_CHANGED);
+    }
+
+    @Bean
     MessageConverter domainEventMessageConverter() {
         SimpleMessageConverter converter = new SimpleMessageConverter();
         converter.setAllowedListPatterns(

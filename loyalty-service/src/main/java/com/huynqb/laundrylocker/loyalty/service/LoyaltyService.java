@@ -30,6 +30,8 @@ public class LoyaltyService {
     private final PointTransactionRepository transactionRepository;
     /// Mốc hạng, số tem/điểm đổi thưởng do admin cấu hình (ADR-0005).
     private final LoyaltyRules rules;
+    /// Báo app của chủ tài khoản mỗi lần điểm/tem đổi (realtime).
+    private final LoyaltyEvents events;
 
     /// Hạng hiển thị sẵn trong thống kê (0 nếu chưa có ai) theo thứ tự tăng dần.
     private static final List<String> TIERS = List.of("BRONZE", "SILVER", "GOLD", "PLATINUM");
@@ -73,7 +75,12 @@ public class LoyaltyService {
                     "LOYALTY_TYPE_RESERVED", "Loại " + type.toUpperCase(Locale.ROOT)
                             + " chỉ dành cho điểm hệ thống tự ghi theo đơn hàng");
         }
-        return applyPoints(request.userId(), request.orderId(), request.points(), type);
+        LoyaltyAccountResponse response = applyPoints(request.userId(), request.orderId(), request.points(), type);
+        int points = request.points();
+        events.notify(request.userId(), "Điểm thưởng được điều chỉnh",
+                "Admin đã " + (points >= 0 ? "cộng " : "trừ ") + Math.abs(points) + " điểm thưởng. Số dư hiện tại: "
+                        + response.points() + " điểm.");
+        return response;
     }
 
     /// Cộng điểm khi đơn hoàn tất — mỗi đơn đúng một lần. Sự kiện giao lại/xử lý song song bị chặn bởi kiểm tra
@@ -152,6 +159,7 @@ public class LoyaltyService {
         LoyaltyAccountResponse response = toResponse(accountRepository.save(account));
         // Flush ngay để unique index chặn ghi trùng theo đơn ném lỗi trong lời gọi này (rollback cả phần đổi điểm).
         transactionRepository.saveAndFlush(transaction);
+        events.changed(account.getUserId());
         return response;
     }
 
@@ -363,6 +371,7 @@ public class LoyaltyService {
                     "Không đủ tem để đổi (cần " + Math.max(stamps, 1) + ", hiện có " + account.getStamps() + ")");
         }
         account.setStamps(account.getStamps() - stamps);
+        events.changed(account.getUserId());
         return toResponse(accountRepository.save(account));
     }
 
@@ -370,6 +379,7 @@ public class LoyaltyService {
     public LoyaltyAccountResponse addStamp(Long userId, Integer count) {
         LoyaltyAccount account = lockedAccountOrNew(userId);
         account.setStamps(account.getStamps() + (count == null ? rules.stampIncrement() : count));
+        events.changed(userId);
         return toResponse(accountRepository.save(account));
     }
 

@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /// Một ảnh đính kèm phiếu sự cố. File nằm trên Cloudinary; bảng này chỉ giữ metadata.
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "report_attachments")
 @Getter
 @Setter

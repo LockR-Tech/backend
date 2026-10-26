@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /// Một lần KTV drone tới nhà người gửi lấy kiện cho một đơn drone. Tạo khi đơn được thanh toán.
 @Entity
+@EntityListeners(DroneWorkChangeListener.class)
 @Table(name = "drone_pickups")
 @Getter
 @Setter

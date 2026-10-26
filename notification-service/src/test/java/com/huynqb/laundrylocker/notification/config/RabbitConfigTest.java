@@ -54,4 +54,22 @@ class RabbitConfigTest {
                 config.lockerAvailabilityChangedBinding(config.notificationEventsQueue(), config.laundryEventsExchange())
                         .getRoutingKey());
     }
+
+    @Test
+    void bindsCustomerRealtimeSyncEvents() {
+        RabbitConfig config = new RabbitConfig();
+        Queue queue = config.notificationEventsQueue();
+        TopicExchange exchange = config.laundryEventsExchange();
+
+        assertEquals(DomainEventNames.WALLET_UPDATED, config.walletUpdatedBinding(queue, exchange).getRoutingKey());
+        assertEquals(DomainEventNames.LOYALTY_POINTS_CHANGED,
+                config.loyaltyPointsChangedBinding(queue, exchange).getRoutingKey());
+        assertEquals(DomainEventNames.CATALOG_CHANGED, config.catalogChangedBinding(queue, exchange).getRoutingKey());
+        assertEquals(DomainEventNames.MAINTENANCE_CHANGED,
+                config.maintenanceChangedBinding(queue, exchange).getRoutingKey());
+        assertEquals(DomainEventNames.ADMIN_DATA_CHANGED,
+                config.adminDataChangedBinding(queue, exchange).getRoutingKey());
+        assertEquals(DomainEventNames.IOT_DEVICE_STATUS_CHANGED,
+                config.iotDeviceStatusChangedBinding(queue, exchange).getRoutingKey());
+    }
 }

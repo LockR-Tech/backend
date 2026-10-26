@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /// Một dòng nhật ký xử lý của kỹ thuật viên cho một con drone.
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "drone_maintenance_logs")
 @Getter
 @Setter

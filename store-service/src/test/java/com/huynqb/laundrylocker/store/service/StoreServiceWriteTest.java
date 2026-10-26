@@ -1,6 +1,8 @@
 package com.huynqb.laundrylocker.store.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.event.DomainEvent;
+import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
@@ -19,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
@@ -31,6 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,13 +48,14 @@ class StoreServiceWriteTest {
     @Mock private OrderClient orderClient;
     @Mock private CloudinaryMediaStorage mediaStorage;
     @Mock private LockerClient lockerClient;
+    @Mock private RabbitTemplate rabbitTemplate;
 
     private StoreService service;
     private StoreLocation existing;
 
     @BeforeEach
     void setUp() {
-        service = new StoreService(repository, orderClient, mediaStorage, TestStoreRules.defaults(), lockerClient);
+        service = new StoreService(repository, orderClient, mediaStorage, TestStoreRules.defaults(), lockerClient, rabbitTemplate);
         existing = new StoreLocation();
         existing.setId(3L);
         existing.setName("Chi nhánh cũ");
@@ -65,6 +71,15 @@ class StoreServiceWriteTest {
         when(repository.findById(3L)).thenReturn(Optional.of(existing));
         when(repository.findById(9L)).thenReturn(Optional.empty());
         when(repository.save(any(StoreLocation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    }
+
+    @Test
+    void adminEditAnnouncesCatalogChangeForCustomerApps() {
+        service.updateStatus(3L, "ACTIVE");
+
+        verify(rabbitTemplate).convertAndSend(eq(DomainEventNames.EXCHANGE), eq(DomainEventNames.CATALOG_CHANGED),
+                argThat((DomainEvent event) -> "STORE".equals(event.payload().get("entity"))
+                        && Long.valueOf(3L).equals(event.payload().get("id"))));
     }
 
     @Test

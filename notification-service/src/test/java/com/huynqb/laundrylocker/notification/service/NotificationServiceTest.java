@@ -266,6 +266,93 @@ class NotificationServiceTest {
         verify(notificationRepository, never()).save(any());
     }
 
+    @Test
+    @DisplayName("ví/điểm đổi không kèm message: chỉ nhắc app chủ tài khoản tải lại, không tạo thông báo")
+    void silentWalletAndLoyaltyChangesOnlyPushUserEvent() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.WALLET_UPDATED, "payment-service",
+                Map.of("userId", 7L, "referenceType", "WALLET")));
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.LOYALTY_POINTS_CHANGED, "loyalty-service",
+                Map.of("userId", 7L, "referenceType", "LOYALTY")));
+
+        org.mockito.ArgumentCaptor<Object> payload = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(webSocketNotificationService, times(2)).sendUserEvent(eq(7L), payload.capture());
+        @SuppressWarnings("unchecked") Map<String, Object> first = (Map<String, Object>) payload.getAllValues().get(0);
+        assertThat(first).containsEntry("type", DomainEventNames.WALLET_UPDATED).containsEntry("referenceType", "WALLET");
+        verify(notificationRepository, never()).save(any());
+        verify(webSocketNotificationService, never()).sendOrderUpdate(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("admin duyệt rút tiền: thông báo theo tiêu đề gửi kèm, tham chiếu ví (không vào kênh đơn)")
+    void walletEventWithMessageIsNotifiedWithItsTitle() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.WALLET_UPDATED, "payment-service",
+                Map.of("userId", 7L, "referenceType", "WALLET", "referenceId", 55L,
+                        "title", "Rút tiền thành công", "message", "Yêu cầu rút 50000 đ đã được chuyển khoản.")));
+
+        NotificationMessage saved = savedNotification();
+        assertThat(saved.getTitle()).isEqualTo("Rút tiền thành công");
+        assertThat(saved.getType()).isEqualTo(DomainEventNames.WALLET_UPDATED);
+        assertThat(saved.getReferenceType()).isEqualTo("WALLET");
+        assertThat(saved.getReferenceId()).isEqualTo(55L);
+        verify(webSocketNotificationService).sendToUser(eq(7L), any());
+        verify(webSocketNotificationService, never()).sendOrderUpdate(anyLong(), any());
+        verify(webSocketNotificationService, never()).sendUserEvent(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("admin sửa khuyến mãi/cửa hàng/tủ: chỉ đẩy loại + mã lên topic công khai")
+    void catalogChangeIsRelayedToPublicTopic() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.CATALOG_CHANGED, "order-service",
+                Map.of("entity", "PROMOTION", "id", 12L)));
+
+        org.mockito.ArgumentCaptor<Object> payload = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(webSocketNotificationService).sendToDestination(eq("/topic/public/catalog"), payload.capture());
+        @SuppressWarnings("unchecked") Map<String, Object> sent = (Map<String, Object>) payload.getValue();
+        assertThat(sent).containsEntry("entity", "PROMOTION").containsEntry("id", 12L)
+                .containsOnlyKeys("entity", "id", "timestamp");
+        verify(notificationRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("việc bảo trì/thiết bị đổi: chỉ đẩy loại + mã lên topic nhân viên, không tạo thông báo")
+    void maintenanceAndDeviceChangesAreRelayedToStaffTopic() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.MAINTENANCE_CHANGED, "locker-service",
+                Map.of("entity", "REPORT", "id", 34L, "lockerId", 5L)));
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.IOT_DEVICE_STATUS_CHANGED, "iot-service",
+                Map.of("deviceId", "PI-01", "lockerId", 5L, "status", "OFFLINE")));
+
+        org.mockito.ArgumentCaptor<Object> payload = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(webSocketNotificationService, times(2))
+                .sendToDestination(eq("/topic/staff/maintenance"), payload.capture());
+        @SuppressWarnings("unchecked") Map<String, Object> report = (Map<String, Object>) payload.getAllValues().get(0);
+        assertThat(report).containsEntry("entity", "REPORT").containsEntry("id", 34L).containsEntry("lockerId", 5L)
+                .containsOnlyKeys("entity", "id", "lockerId", "timestamp");
+        @SuppressWarnings("unchecked") Map<String, Object> device = (Map<String, Object>) payload.getAllValues().get(1);
+        assertThat(device).containsEntry("entity", "DEVICE").containsEntry("id", "PI-01");
+        verify(notificationRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("dữ liệu admin đổi (người dùng, hoàn tiền…) và ví/điểm: đẩy loại + mã lên topic admin")
+    void adminDataAndAccountChangesAreRelayedToAdminTopic() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.ADMIN_DATA_CHANGED, "payment-service",
+                Map.of("entity", "REFUND", "id", 9L)));
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.WALLET_UPDATED, "payment-service",
+                Map.of("userId", 7L, "referenceType", "WALLET")));
+
+        org.mockito.ArgumentCaptor<Object> payload = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(webSocketNotificationService, times(2))
+                .sendToDestination(eq("/topic/admin/changes"), payload.capture());
+        @SuppressWarnings("unchecked") Map<String, Object> refund = (Map<String, Object>) payload.getAllValues().get(0);
+        assertThat(refund).containsEntry("entity", "REFUND").containsEntry("id", 9L)
+                .containsOnlyKeys("entity", "id", "timestamp");
+        @SuppressWarnings("unchecked") Map<String, Object> wallet = (Map<String, Object>) payload.getAllValues().get(1);
+        assertThat(wallet).containsEntry("entity", "WALLET").containsEntry("id", 7L);
+        // Ví vẫn nhắc app của chủ ví như trước; tin admin không tạo thông báo.
+        verify(webSocketNotificationService).sendUserEvent(eq(7L), any());
+        verify(notificationRepository, never()).save(any());
+    }
+
     private NotificationMessage savedNotification() {
         org.mockito.ArgumentCaptor<NotificationMessage> captor =
                 org.mockito.ArgumentCaptor.forClass(NotificationMessage.class);

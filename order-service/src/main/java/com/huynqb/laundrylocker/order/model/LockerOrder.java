@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
+@EntityListeners({DroneWorkChangeListener.class, AdminDataChangeListener.class})
 @Table(name = "orders")
 @Getter
 @Setter

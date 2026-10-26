@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /// L5: Nhật ký / Lịch sử một lượt kiểm tra định kỳ Kiosk hoặc Drone của KTV.
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "maintenance_inspection_logs")
 @Getter
 @Setter

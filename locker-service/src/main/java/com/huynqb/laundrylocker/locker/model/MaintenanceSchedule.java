@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /// L5: lịch bảo trì phòng ngừa (kiểm tra định kỳ) cho một tủ.
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "maintenance_schedules")
 @Getter
 @Setter

@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Entity
+@EntityListeners(DroneWorkChangeListener.class)
 @Table(name = "drone_incident_evidence")
 @Getter
 @Setter

@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /// Một con drone vật lý gắn với một tủ (locker) làm trạm gốc.
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "drone_units")
 @Getter
 @Setter

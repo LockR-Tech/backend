@@ -7,6 +7,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
+@EntityListeners(AdminDataChangeListener.class)
 @Table(name = "order_ratings")
 @Getter
 @Setter

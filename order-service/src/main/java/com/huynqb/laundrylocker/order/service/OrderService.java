@@ -4,6 +4,7 @@ import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.common.dto.OrderSummary;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
+import com.huynqb.laundrylocker.common.event.CatalogChangeEvents;
 import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
@@ -1465,7 +1466,9 @@ public class OrderService {
         promotion.setDescription(request.description());
         promotion.setPointsCost(request.pointsCost() == null || request.pointsCost() <= 0 ? null : request.pointsCost());
         promotion.setCreatedByUserId(createdByUserId);
-        return promotionViews.view(promotionRepository.save(promotion), true);
+        Promotion saved = promotionRepository.save(promotion);
+        CatalogChangeEvents.publish(rabbitTemplate, "order-service", CatalogChangeEvents.PROMOTION, saved.getId());
+        return promotionViews.view(saved, true);
     }
 
     /// Danh sách admin. `lockerId` > 0 ⇒ chỉ mã của tủ đó; `lockerId` = 0 hoặc `scope=GLOBAL` ⇒ chỉ mã toàn
@@ -1525,7 +1528,9 @@ public class OrderService {
         promotion.setPerUserLimit(request.perUserLimit());
         promotion.setDescription(request.description());
         promotion.setPointsCost(request.pointsCost() == null || request.pointsCost() <= 0 ? null : request.pointsCost());
-        return promotionViews.view(promotionRepository.save(promotion), true);
+        Promotion saved = promotionRepository.save(promotion);
+        CatalogChangeEvents.publish(rabbitTemplate, "order-service", CatalogChangeEvents.PROMOTION, saved.getId());
+        return promotionViews.view(saved, true);
     }
 
     private static Long normalizeLockerId(Long lockerId) {
@@ -1545,6 +1550,7 @@ public class OrderService {
                     "Mã đã có lượt sử dụng hoặc đã được lưu vào ví — chuyển trạng thái INACTIVE thay vì xóa");
         }
         promotionRepository.delete(promotion);
+        CatalogChangeEvents.publish(rabbitTemplate, "order-service", CatalogChangeEvents.PROMOTION, id);
     }
 
     @Transactional(readOnly = true)
