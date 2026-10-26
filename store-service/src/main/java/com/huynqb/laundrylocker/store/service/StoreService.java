@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.store.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.event.CatalogChangeEvents;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
@@ -16,6 +17,7 @@ import com.huynqb.laundrylocker.store.repository.StoreRepository;
 import com.huynqb.laundrylocker.store.settings.StoreRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,12 +39,14 @@ public class StoreService {
     private final StoreRules rules;
     /// Kiểm tra tủ còn thuộc cửa hàng trước khi xoá.
     private final LockerClient lockerClient;
+    /// Báo app khách tải lại danh sách cửa hàng khi admin sửa (catalog.changed).
+    private final RabbitTemplate rabbitTemplate;
 
     @Transactional
     public StoreResponse create(StoreRequest request) {
         StoreLocation store = new StoreLocation();
         apply(store, request);
-        return toResponse(repository.save(store));
+        return toResponse(published(repository.save(store)));
     }
 
     @Transactional(readOnly = true)
@@ -95,7 +99,7 @@ public class StoreService {
     public StoreResponse update(Long id, StoreRequest request) {
         StoreLocation store = repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id));
         apply(store, request);
-        return toResponse(repository.save(store));
+        return toResponse(published(repository.save(store)));
     }
 
     @Transactional
@@ -103,7 +107,7 @@ public class StoreService {
         StoreLocation store = repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id));
         store.setStatus(status);
         store.setActive("ACTIVE".equalsIgnoreCase(status));
-        return toResponse(repository.save(store));
+        return toResponse(published(repository.save(store)));
     }
 
     /// Không xoá cửa hàng còn tủ (tủ sẽ trỏ tới cửa hàng không tồn tại). Chưa tra được
@@ -124,6 +128,12 @@ public class StoreService {
                     HttpStatus.CONFLICT);
         }
         repository.delete(store);
+        CatalogChangeEvents.publish(rabbitTemplate, "store-service", CatalogChangeEvents.STORE, id);
+    }
+
+    private StoreLocation published(StoreLocation store) {
+        CatalogChangeEvents.publish(rabbitTemplate, "store-service", CatalogChangeEvents.STORE, store.getId());
+        return store;
     }
 
     private List<LockerClient.LockerRef> lockersOf(Long storeId) {
@@ -152,7 +162,7 @@ public class StoreService {
         StoreLocation store = repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id));
         String previous = store.getImage();
         store.setImage(imageUrl);
-        StoreLocation saved = repository.save(store);
+        StoreLocation saved = published(repository.save(store));
         mediaStorage.deleteReplacedAfterCommit(previous, imageUrl);
         return toResponse(saved);
     }

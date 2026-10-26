@@ -22,11 +22,28 @@ class BrokerDestinationGuardInterceptorTest {
     void customersCannotListenToBroadcastTopics() {
         for (String topic : List.of(
                 "/topic/orders", "/topic/orders/12", "/topic/notifications",
-                "/topic/technicians/presence", "/topic/technicians/9/presence", "/topic/lockers", "/topic/lockers/3")) {
+                "/topic/technicians/presence", "/topic/technicians/9/presence", "/topic/lockers", "/topic/lockers/3",
+                "/topic/admin/changes")) {
             assertThrows(MessagingException.class, () -> interceptor.preSend(subscribe(topic, customer()), null), topic);
             assertThrows(MessagingException.class,
                     () -> interceptor.preSend(subscribe(topic, user("8", "LOCKER_TECHNICIAN")), null), topic);
         }
+    }
+
+    /// Màn KTV nghe việc bảo trì vừa đổi (chỉ loại + mã); khách và phiên không có người dùng bị từ chối.
+    @Test
+    void onlyStaffListensToMaintenanceChanges() {
+        for (StompPrincipal staff : List.of(
+                user("8", "LOCKER_TECHNICIAN"), user("9", "DRONE_TECHNICIAN"), user("1", "ADMIN"))) {
+            Message<byte[]> message = subscribe("/topic/staff/maintenance", staff);
+            assertSame(message, interceptor.preSend(message, null));
+        }
+        assertThrows(MessagingException.class,
+                () -> interceptor.preSend(subscribe("/topic/staff/maintenance", customer()), null));
+        assertThrows(MessagingException.class,
+                () -> interceptor.preSend(subscribe("/topic/staff/maintenance", null), null));
+        assertThrows(MessagingException.class,
+                () -> interceptor.preSend(subscribe("/topic/staff/other", user("8", "LOCKER_TECHNICIAN")), null));
     }
 
     @Test
@@ -44,7 +61,8 @@ class BrokerDestinationGuardInterceptorTest {
     @Test
     void deliveryTopicsAndOwnQueuesAreLeftToTheirChecks() {
         for (String destination : List.of(
-                "/topic/deliveries/21/position", "/user/queue/notifications", "/user/queue/orders")) {
+                "/topic/deliveries/21/position", "/user/queue/notifications", "/user/queue/orders",
+                "/user/queue/events")) {
             Message<byte[]> message = subscribe(destination, customer());
             assertSame(message, interceptor.preSend(message, null), destination);
         }
@@ -54,8 +72,10 @@ class BrokerDestinationGuardInterceptorTest {
     @Test
     void anyLoggedInUserListensToLockerAvailability() {
         for (StompPrincipal user : List.of(customer(), user("8", "DRONE_TECHNICIAN"), user("1", "ADMIN"))) {
-            Message<byte[]> message = subscribe("/topic/public/locker-availability", user);
-            assertSame(message, interceptor.preSend(message, null));
+            for (String topic : List.of("/topic/public/locker-availability", "/topic/public/catalog")) {
+                Message<byte[]> message = subscribe(topic, user);
+                assertSame(message, interceptor.preSend(message, null));
+            }
         }
         // Chỉ đúng topic đó — không mở cả nhánh /topic/public/**.
         assertThrows(MessagingException.class,

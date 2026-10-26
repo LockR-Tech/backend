@@ -36,12 +36,15 @@ class LoyaltyEarnReversalTest {
     @Mock PointTransactionRepository transactionRepository;
 
     private LoyaltyService service;
+
+    LoyaltyEvents events;
     private LoyaltyAccount account;
 
     @BeforeEach
     void setUp() {
+        events = org.mockito.Mockito.mock(LoyaltyEvents.class);
         service = new LoyaltyService(accountRepository, transactionRepository,
-                new LoyaltyRules(TestLoyaltyRules.settings(Map.of())));
+                new LoyaltyRules(TestLoyaltyRules.settings(Map.of())), events);
         account = new LoyaltyAccount();
         account.setUserId(7L);
         account.setPoints(100);

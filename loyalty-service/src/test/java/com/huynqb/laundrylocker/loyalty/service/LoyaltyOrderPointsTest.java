@@ -43,12 +43,14 @@ class LoyaltyOrderPointsTest {
 
     private BusinessSettings settings;
     private LoyaltyService service;
+    LoyaltyEvents events;
     private LoyaltyAccount account;
 
     @BeforeEach
     void setUp() {
         settings = TestLoyaltyRules.settings(Map.of());
-        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings));
+        events = org.mockito.Mockito.mock(LoyaltyEvents.class);
+        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings), events);
         account = new LoyaltyAccount();
         account.setUserId(7L);
         account.setPoints(100);
@@ -69,6 +71,8 @@ class LoyaltyOrderPointsTest {
         assertEquals(2550, saved.getValue().getPoints());
         assertEquals(55L, saved.getValue().getOrderId());
         assertEquals(LoyaltyService.ORDER_EARN_TYPE, saved.getValue().getType());
+        // Điểm cộng sau khi đơn hoàn tất (không do khách bấm) ⇒ phải báo app tải lại.
+        verify(events).changed(7L);
     }
 
     @Test
@@ -85,6 +89,16 @@ class LoyaltyOrderPointsTest {
         assertTrue(service.awardOrderPoints(57L, 7L, null).isEmpty());
         verify(transactionRepository, never()).saveAndFlush(any());
         assertEquals(100, account.getPoints());
+        verify(events, never()).changed(any());
+    }
+
+    @Test
+    void adminAdjustmentNotifiesAccountOwner() {
+        service.adjustPoints(new AdjustPointsRequest(7L, null, -40, null));
+
+        verify(events).changed(7L);
+        verify(events).notify(7L, "Điểm thưởng được điều chỉnh",
+                "Admin đã trừ 40 điểm thưởng. Số dư hiện tại: 60 điểm.");
     }
 
     @Test

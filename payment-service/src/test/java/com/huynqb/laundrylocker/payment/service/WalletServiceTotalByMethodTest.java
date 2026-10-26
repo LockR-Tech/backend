@@ -34,6 +34,7 @@ class WalletServiceTotalByMethodTest {
     @Mock private PaymentRepository paymentRepository;
     @Mock private RefundRepository refundRepository;
     @Mock private PaymentReferenceResolver resolver;
+    @Mock private WalletEvents walletEvents;
 
     private WalletService walletService;
 
@@ -45,7 +46,8 @@ class WalletServiceTotalByMethodTest {
                 withdrawalRepository,
                 paymentRepository,
                 refundRepository,
-                resolver
+                resolver,
+                walletEvents
         );
     }
 

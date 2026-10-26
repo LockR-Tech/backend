@@ -17,8 +17,11 @@ import java.util.Set;
 ///   `/topic/lockers/**`...) mang nội dung thông báo của mọi người — kể cả tin "Mã mở tủ" gửi người
 ///   nhận — và vị trí KTV, nên chỉ ADMIN (web quản trị) được nghe. `/topic/deliveries/**` do
 ///   DeliveryTopicSubscriptionInterceptor kiểm theo đơn.
-/// - `/topic/public/locker-availability` chỉ mang mã tủ vừa đổi số ô trống — mọi người dùng đã
-///   đăng nhập được nghe để màn đặt đơn cập nhật ô trống ngay.
+/// - `/topic/public/locker-availability` chỉ mang mã tủ vừa đổi số ô trống, `/topic/public/catalog`
+///   chỉ mang loại + mã khuyến mãi/cửa hàng/tủ admin vừa sửa — mọi người dùng đã đăng nhập được nghe
+///   để màn đặt đơn, danh sách tủ, ưu đãi cập nhật ngay.
+/// - `/topic/staff/maintenance` chỉ mang loại + mã việc bảo trì vừa đổi (phiếu, lịch, tủ, drone, đơn drone,
+///   thiết bị) — KTV tủ, KTV drone và ADMIN nghe để màn KTV cập nhật ngay; khách bị từ chối.
 /// - Không ai đăng ký thẳng `/queue/**`: hàng đợi riêng phải đi qua `/user/queue/...` để Spring
 ///   gắn đúng phiên; đăng ký kiểu `/queue/**` sẽ nhận hộp thư của mọi người.
 /// - Chỉ ADMIN được đăng ký theo mẫu (`*`, `?`, `{}`).
@@ -27,7 +30,9 @@ import java.util.Set;
 public class BrokerDestinationGuardInterceptor implements ChannelInterceptor {
 
     private static final String DELIVERY_PREFIX = "/topic/deliveries/";
-    private static final Set<String> PUBLIC_TOPICS = Set.of("/topic/public/locker-availability");
+    private static final Set<String> PUBLIC_TOPICS = Set.of(
+            "/topic/public/locker-availability", "/topic/public/catalog");
+    private static final String STAFF_MAINTENANCE_TOPIC = "/topic/staff/maintenance";
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -47,6 +52,12 @@ public class BrokerDestinationGuardInterceptor implements ChannelInterceptor {
             throw new MessagingException("Subscribe to /user/queue/... instead of " + destination);
         }
         boolean admin = isAdmin(accessor);
+        if (STAFF_MAINTENANCE_TOPIC.equals(destination)) {
+            if (isStaff(accessor)) {
+                return message;
+            }
+            throw new MessagingException("Not allowed to subscribe to " + destination);
+        }
         // Broker khớp đích theo mẫu Ant: `/**` hay `/t*/**` nghe được mọi topic và hộp thư.
         if (isPattern(destination) && !admin) {
             throw new MessagingException("Wildcard subscriptions are not allowed: " + destination);
@@ -66,6 +77,11 @@ public class BrokerDestinationGuardInterceptor implements ChannelInterceptor {
 
     private static boolean isUnder(String destination, String prefix) {
         return destination.equals(prefix) || destination.startsWith(prefix + "/");
+    }
+
+    private static boolean isStaff(StompHeaderAccessor accessor) {
+        return accessor.getUser() instanceof StompPrincipal principal
+                && principal.hasAnyRole("ADMIN", "LOCKER_TECHNICIAN", "DRONE_TECHNICIAN");
     }
 
     private static boolean isAdmin(StompHeaderAccessor accessor) {

@@ -23,6 +23,9 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -34,6 +37,7 @@ class WalletServiceWithdrawTest {
     @Mock private PaymentRepository paymentRepository;
     @Mock private RefundRepository refundRepository;
     @Mock private PaymentReferenceResolver resolver;
+    @Mock private WalletEvents walletEvents;
 
     private WalletService walletService;
 
@@ -45,7 +49,8 @@ class WalletServiceWithdrawTest {
                 withdrawalRepository,
                 paymentRepository,
                 refundRepository,
-                resolver
+                resolver,
+                walletEvents
         );
     }
 
@@ -195,6 +200,8 @@ class WalletServiceWithdrawTest {
         assertEquals("COMPLETED", response.status());
         assertEquals(adminUserId, record.getProcessedByUserId());
         assertNotNull(record.getProcessedAt());
+        // Khách được báo ngay (app tải lại yêu cầu rút) thay vì phải tự làm mới.
+        verify(walletEvents).notify(eq(100L), eq(withdrawalId), eq("Rút tiền thành công"), contains("50000 đ"));
     }
 
     @Test
@@ -224,6 +231,25 @@ class WalletServiceWithdrawTest {
         // Wallet balance refunded: 20000 + 50000 = 70000
         assertEquals(0, wallet.getBalance().compareTo(BigDecimal.valueOf(70000)));
         verify(transactionRepository).save(any(WalletTransaction.class));
+        verify(walletEvents).changed(100L);
+        verify(walletEvents).notify(eq(100L), eq(withdrawalId), eq("Yêu cầu rút tiền bị từ chối"),
+                contains("Lý do: Sai số tài khoản"));
+    }
+
+    @Test
+    void adjust_notifiesWalletOwner() {
+        Wallet wallet = new Wallet();
+        wallet.setId(1L);
+        wallet.setUserId(100L);
+        wallet.setBalance(BigDecimal.valueOf(20000));
+        when(walletRepository.findByUserId(100L)).thenReturn(Optional.of(wallet));
+
+        walletService.adjust(100L, BigDecimal.valueOf(-5000), "Thu lại tiền nạp nhầm");
+
+        assertEquals(0, wallet.getBalance().compareTo(BigDecimal.valueOf(15000)));
+        verify(walletEvents).changed(100L);
+        verify(walletEvents).notify(eq(100L), isNull(), eq("Ví được điều chỉnh"),
+                eq("Admin đã trừ 5000 đ khỏi ví của bạn. Lý do: Thu lại tiền nạp nhầm."));
     }
     @Test
     void listAdminWithdrawals_includesRequesterNameAndPhone() {

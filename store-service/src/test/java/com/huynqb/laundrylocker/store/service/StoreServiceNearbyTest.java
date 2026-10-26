@@ -40,7 +40,7 @@ class StoreServiceNearbyTest {
 
     @Test
     void defaultRadiusIsTenKilometres() {
-        StoreService service = new StoreService(repository, orderClient, mediaStorage, TestStoreRules.defaults(), lockerClient);
+        StoreService service = new StoreService(repository, orderClient, mediaStorage, TestStoreRules.defaults(), lockerClient, null);
 
         assertEquals(List.of(1L), ids(service.nearby(10.77, 106.70, null)));
     }
@@ -49,7 +49,7 @@ class StoreServiceNearbyTest {
     void defaultRadiusFollowsAdminSettingButExplicitRadiusWins() {
         StoreService service = new StoreService(
                 repository, orderClient, mediaStorage,
-                TestStoreRules.of(Map.of("app.store.nearby-default-radius-km", "25.5")), lockerClient);
+                TestStoreRules.of(Map.of("app.store.nearby-default-radius-km", "25.5")), lockerClient, null);
 
         assertEquals(List.of(1L, 2L), ids(service.nearby(10.77, 106.70, null)));
         assertEquals(List.of(1L), ids(service.nearby(10.77, 106.70, 5.0)));

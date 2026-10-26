@@ -25,6 +25,11 @@ spring:
     properties:
       hibernate:
         default_schema: store_schema
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
   flyway:
     enabled: true
     create-schemas: true

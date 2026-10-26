@@ -39,6 +39,24 @@ public final class DomainEventNames {
      * Trạng thái ca trực (vào ca/hết ca) hoặc toạ độ GPS của KTV (kiosk/drone) thay đổi realtime.
      */
     public static final String TECHNICIAN_PRESENCE_UPDATED = "technician.presence.updated";
+    /// Số dư hoặc giao dịch ví của một người vừa đổi (nạp/trả/hoàn, rút tiền được duyệt/từ chối, admin điều
+    /// chỉnh). Payload: userId, referenceType = WALLET, referenceId?, title?, message? — có `message` thì
+    /// notification-service tạo thông báo, không thì chỉ đẩy `/user/queue/events` để app tải lại ví.
+    public static final String WALLET_UPDATED = "wallet.updated";
+    /// Điểm/tem thưởng của một người vừa đổi (cộng khi đơn hoàn tất, thu hồi khi hoàn tiền, admin điều chỉnh…).
+    /// Payload như {@link #WALLET_UPDATED}, referenceType = LOYALTY.
+    public static final String LOYALTY_POINTS_CHANGED = "loyalty.points.changed";
+    /// Dữ liệu công khai admin vừa sửa: khuyến mãi, cửa hàng, tủ. Payload chỉ có `entity` (PROMOTION, STORE,
+    /// LOCKER) và `id` — notification-service đẩy ra `/topic/public/catalog` cho app tải lại danh sách.
+    public static final String CATALOG_CHANGED = "catalog.changed";
+    /// Việc của KTV vừa đổi: phiếu sự cố, lịch bảo trì, tủ, drone (locker-service), đơn drone, sự cố kiện
+    /// drone (order-service). Payload chỉ có `entity`, `id`, `lockerId?` — notification-service đẩy ra
+    /// `/topic/staff/maintenance` (chỉ KTV + ADMIN nghe) cho app KTV tải lại ngay.
+    public static final String MAINTENANCE_CHANGED = "maintenance.changed";
+    /// Dữ liệu web quản trị vừa đổi do người khác: người dùng (user), đơn, phản hồi/đánh giá (order), thanh
+    /// toán, hoàn tiền, rút tiền (payment). Payload chỉ có `entity`, `id` — notification-service đẩy ra
+    /// `/topic/admin/changes` (chỉ ADMIN nghe) cho trang admin tải lại ngay.
+    public static final String ADMIN_DATA_CHANGED = "admin.data.changed";
 
     private DomainEventNames() {
     }

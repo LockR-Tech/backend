@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 /// Customer feedback on how maintenance handled their fault report — the
 /// other half of the claim/resolve notification loop (closes it both ways).
 @Entity
+@EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "locker_report_ratings")
 @Getter
 @Setter

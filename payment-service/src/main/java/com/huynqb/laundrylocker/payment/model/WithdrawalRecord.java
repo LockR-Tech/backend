@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
+@EntityListeners(AdminDataChangeListener.class)
 @Table(name = "withdrawal_requests")
 @Getter
 @Setter

@@ -8,6 +8,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
+@EntityListeners(AdminDataChangeListener.class)
 @Table(name = "user_profiles")
 @Getter
 @Setter
