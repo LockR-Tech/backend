@@ -79,6 +79,10 @@ resilience4j:
     configs:
       default:
         register-health-indicator: true
+        # 4xx is a valid answer from the other service (wrong code, not found...), not a sign it is down:
+        # counting it would open the circuit and reject valid requests too.
+        ignore-exceptions:
+          - feign.FeignException$FeignClientException
         sliding-window-size: ${APP_RESILIENCE4J_CB_SLIDING_WINDOW_SIZE:20}
         minimum-number-of-calls: ${APP_RESILIENCE4J_CB_MINIMUM_CALLS:10}
         failure-rate-threshold: ${APP_RESILIENCE4J_CB_FAILURE_RATE_THRESHOLD:50}
@@ -86,3 +90,10 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: ${APP_RESILIENCE4J_CB_HALF_OPEN_CALLS:3}
         slow-call-duration-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_DURATION:4s}
         slow-call-rate-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_RATE_THRESHOLD:80}
+  # Feign circuit breakers also apply the Resilience4j TimeLimiter, whose default is 1s; keep it
+  # above connectTimeout + readTimeout so Feign's own timeouts decide.
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: ${APP_RESILIENCE4J_TL_TIMEOUT:10s}
+        cancel-running-future: true
