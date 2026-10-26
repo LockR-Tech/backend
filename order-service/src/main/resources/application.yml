@@ -76,6 +76,10 @@ resilience4j:
     configs:
       default:
         register-health-indicator: true
+        # 4xx is a valid answer from the other service (wrong code, not found...), not a sign it is down:
+        # counting it would open the circuit and reject valid requests too.
+        ignore-exceptions:
+          - feign.FeignException$FeignClientException
         sliding-window-size: ${APP_RESILIENCE4J_CB_SLIDING_WINDOW_SIZE:20}
         minimum-number-of-calls: ${APP_RESILIENCE4J_CB_MINIMUM_CALLS:10}
         failure-rate-threshold: ${APP_RESILIENCE4J_CB_FAILURE_RATE_THRESHOLD:50}
