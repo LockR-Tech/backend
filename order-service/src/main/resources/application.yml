@@ -83,6 +83,15 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: ${APP_RESILIENCE4J_CB_HALF_OPEN_CALLS:3}
         slow-call-duration-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_DURATION:4s}
         slow-call-rate-threshold: ${APP_RESILIENCE4J_CB_SLOW_CALL_RATE_THRESHOLD:80}
+  # Feign circuit breakers also apply the Resilience4j TimeLimiter, whose default is 1s.
+  # Revenue reports (/api/admin/revenue/*) load a whole period from payment-service and
+  # SMTP notifications may take up to 15s, so the 1s limit returned intermittent 503s.
+  # Keep it above the longest Feign readTimeout so Feign's own timeouts decide.
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: ${APP_RESILIENCE4J_TL_TIMEOUT:20s}
+        cancel-running-future: true
 
 app:
   # Quy tắc nghiệp vụ admin cấu hình được (ADR-0005) — /api/admin/settings/order.
