@@ -42,10 +42,11 @@ spring:
             # Admin theo dõi hành trình drone (ADMIN — JwtGatewayFilter chặn /api/admin/**).
             # Không trùng /api/admin/drones/** của locker-service: "drone-orders" ≠ "drones".
             # drone-locker-logs: nhật ký liên lạc drone ↔ tủ (DroneLockerCommLogController).
+            # drone-flight-control: thời tiết, dừng bay từng trạm, lịch sử chặn bay (DroneFlightControlController).
             - id: order-service-admin-drone-orders
               uri: lb://order-service
               predicates:
-                - Path=/api/admin/drone-orders,/api/admin/drone-orders/**,/api/admin/drone-incidents,/api/admin/drone-incidents/**,/api/admin/drone-locker-logs,/api/admin/drone-locker-logs/**
+                - Path=/api/admin/drone-orders,/api/admin/drone-orders/**,/api/admin/drone-incidents,/api/admin/drone-incidents/**,/api/admin/drone-locker-logs,/api/admin/drone-locker-logs/**,/api/admin/drone-flight-control,/api/admin/drone-flight-control/**
             - id: order-service-locker-technician-recovery
               uri: lb://order-service
               predicates:

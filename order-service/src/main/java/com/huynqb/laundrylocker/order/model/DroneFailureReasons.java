@@ -13,6 +13,8 @@ public final class DroneFailureReasons {
 
     /// Admin bật "Tạm dừng bay" (thời tiết xấu, lệnh cấm bay…).
     public static final String WEATHER = "WEATHER";
+    /// Admin tạm dừng bay ở trạm cất cánh hoặc tủ nhận của đơn.
+    public static final String STATION_SUSPENDED = "STATION_SUSPENDED";
     /// Drone của nhiệm vụ lỗi/bảo trì/ngừng hoạt động.
     public static final String DRONE_FAULT = "DRONE_FAULT";
     /// Tủ gửi không còn drone nào dùng được.
@@ -40,6 +42,7 @@ public final class DroneFailureReasons {
 
     private static final Map<String, String> LABELS = Map.ofEntries(
             Map.entry(WEATHER, "Tạm dừng bay do thời tiết hoặc lệnh điều hành"),
+            Map.entry(STATION_SUSPENDED, "Trạm bay đang tạm dừng"),
             Map.entry(DRONE_FAULT, "Drone gặp sự cố"),
             Map.entry(NO_DRONE_AVAILABLE, "Tủ gửi không còn drone sẵn sàng"),
             Map.entry(SOURCE_LOCKER_FAULT, "Tủ gửi gặp sự cố"),

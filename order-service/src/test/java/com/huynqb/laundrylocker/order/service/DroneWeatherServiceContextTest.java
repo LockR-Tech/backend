@@ -15,6 +15,8 @@ class DroneWeatherServiceContextTest {
     void weatherServiceBeanStartsInSpringContext() {
         new ApplicationContextRunner()
                 .withConfiguration(org.springframework.boot.autoconfigure.AutoConfigurations.of(RestClientAutoConfiguration.class))
+                .withBean(com.huynqb.laundrylocker.order.settings.OrderRules.class,
+                        com.huynqb.laundrylocker.order.settings.TestOrderRules::defaults)
                 .withBean(DroneWeatherService.class)
                 .run(context -> assertThat(context)
                         .hasNotFailed()

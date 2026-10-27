@@ -15,6 +15,7 @@ import com.huynqb.laundrylocker.order.dto.OpenReportDto;
 import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.DronePickup;
+import com.huynqb.laundrylocker.order.model.DroneFlightBlock;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
@@ -66,6 +67,7 @@ public class DroneDeliveryBlockService {
     private final UserClient userClient;
     private final DroneSourceLockerSelector sourceLockerSelector;
     private final OrderRules rules;
+    private final DroneFlightControl flightControl;
 
     public enum Verdict {
         /// Không đổi gì (vẫn bình thường, hoặc vẫn bị chặn và chưa quá hạn).
@@ -90,7 +92,11 @@ public class DroneDeliveryBlockService {
         private List<OpenReportDto> reports;
     }
 
-    private record Cause(String reason, Long ticketId, String note) {
+    /// `lockerId`: trạm đang dừng gây ra chặn (STATION_SUSPENDED), để ghi lịch sử chặn bay.
+    private record Cause(String reason, Long ticketId, String note, Long lockerId) {
+        Cause(String reason, Long ticketId, String note) {
+            this(reason, ticketId, note, null);
+        }
     }
 
     /// Không tra được locker-service: không kết luận gì, giữ nguyên trạng thái chặn hiện có.
@@ -162,6 +168,7 @@ public class DroneDeliveryBlockService {
             if (newlyBlocked) {
                 announce(order, mission, pickup, label, cause, inFlight);
             }
+            recordFlightBlock(order, cause);
             return new Review(Verdict.BLOCKED, cause.reason(), cause.ticketId(), cause.note());
         }
 
@@ -197,6 +204,19 @@ public class DroneDeliveryBlockService {
         }
 
         Long destinationId = order.getDestinationLockerId() != null ? order.getDestinationLockerId() : order.getLockerId();
+        // Drone đã cất cánh thì để chuyến bay kết thúc; trạm dừng chỉ chặn các chuyến chưa bay.
+        boolean airborne = DroneMissionProgressService.IN_FLIGHT_STAGES.contains(order.getDeliveryStage());
+        if (!airborne) {
+            Cause stopped = stationSuspended(destinationId, "Tủ nhận");
+            if (stopped != null) {
+                return stopped;
+            }
+            Long currentSource = order.getSourceLockerId();
+            if (currentSource != null && flightControl.suspended(currentSource)
+                    && (mission != null || !reselectSource(order, pickup, snapshot))) {
+                return stationSuspended(currentSource, "Trạm cất cánh");
+            }
+        }
         LockerLayoutDto destination = layout(destinationId, snapshot);
         if (!"ACTIVE".equalsIgnoreCase(destination.status())) {
             return new Cause(DroneFailureReasons.DESTINATION_LOCKER_FAULT,
@@ -243,6 +263,28 @@ public class DroneDeliveryBlockService {
                     "Đã lấy hàng quá " + launchTimeout + " phút mà drone chưa cất cánh");
         }
         return null;
+    }
+
+    private Cause stationSuspended(Long lockerId, String role) {
+        return flightControl.activeSuspension(lockerId)
+                .map(suspension -> new Cause(DroneFailureReasons.STATION_SUSPENDED, null,
+                        role + " đang tạm dừng bay (" + DroneFlightControl.reasonLabel(suspension.getReason()) + ")"
+                                + (suspension.getNote() == null ? "" : ": " + suspension.getNote()),
+                        lockerId))
+                .orElse(null);
+    }
+
+    /// Đơn đang chạy vừa bị chặn vì lệnh dừng bay ⇒ một dòng lịch sử chặn bay (mỗi lần lý do đổi, không mỗi lượt quét).
+    private void recordFlightBlock(LockerOrder order, Cause cause) {
+        String blockCause = switch (cause.reason()) {
+            case DroneFailureReasons.WEATHER -> DroneFlightBlock.FLIGHTS_SUSPENDED;
+            case DroneFailureReasons.STATION_SUSPENDED -> DroneFlightBlock.STATION_SUSPENDED;
+            default -> null;
+        };
+        if (blockCause != null) {
+            flightControl.record(DroneFlightBlock.IN_PROGRESS, blockCause, DroneFlightControl.Context.of(order, null),
+                    cause.lockerId(), cause.note(), null);
+        }
     }
 
     /// Tủ gửi có còn là nơi cất cánh được không; `needDrone` khi đơn chưa được gán drone cụ thể.

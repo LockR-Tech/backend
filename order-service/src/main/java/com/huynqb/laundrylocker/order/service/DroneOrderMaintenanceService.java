@@ -10,6 +10,8 @@ import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.dto.*;
 import com.huynqb.laundrylocker.order.model.DroneMission;
+import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
+import com.huynqb.laundrylocker.order.model.DroneFlightBlock;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
 import com.huynqb.laundrylocker.order.model.DronePickup;
@@ -45,6 +47,8 @@ public class DroneOrderMaintenanceService {
     private final OrderBenefitService benefits;
     private final LockerLookupClient lockerLookupClient;
     private final DroneWeatherService weatherService;
+    /// Trạm đang dừng bay + lịch sử chặn bay.
+    private final DroneFlightControl flightControl;
 
     private static final java.security.SecureRandom SEAL_RANDOM = new java.security.SecureRandom();
     private static final java.time.ZoneId FLIGHT_ZONE = java.time.ZoneId.of("Asia/Ho_Chi_Minh");
@@ -68,7 +72,7 @@ public class DroneOrderMaintenanceService {
             throw new BusinessException("DRONE_ORDER_STATUS_INVALID", "Drone order is not awaiting dispatch");
         }
         assertParcelInHand(order, userId);
-        assertFlightsNotSuspended();
+        assertFlightsNotSuspended(DroneFlightBlock.ACCEPT, DroneFlightControl.Context.of(order, userId));
 
         DroneMission existingMission = missionRepository.findByOrderId(orderId).orElse(null);
         if (existingMission != null
@@ -91,6 +95,8 @@ public class DroneOrderMaintenanceService {
         if (order.getSourceLockerId() == null) {
             order.setSourceLockerId(drone.lockerId());
         }
+        flightControl.assertStationsOpen(DroneFlightBlock.ACCEPT, DroneFlightControl.Context.of(order, userId),
+                order.getSourceLockerId(), requireDestinationLockerId(order));
         validateLockerPreflight(fetchLockerLayout(order.getSourceLockerId()), "Source");
         LockerLayoutDto layout = fetchLockerLayout(requireDestinationLockerId(order));
         validateLockerPreflight(layout, "Destination");
@@ -209,7 +215,10 @@ public class DroneOrderMaintenanceService {
             throw new BusinessException(
                     "DRONE_SURCHARGE_UNPAID", "Customer must pay the weight surcharge before launch");
         }
-        assertFlightsNotSuspended();
+        DroneFlightControl.Context flightContext = launchContext(order, mission, userId);
+        assertFlightsNotSuspended(DroneFlightBlock.LAUNCH, flightContext);
+        flightControl.assertStationsOpen(DroneFlightBlock.LAUNCH, flightContext,
+                flightContext.sourceLockerId(), flightContext.destinationLockerId());
         int hourNow = java.time.ZonedDateTime.now(FLIGHT_ZONE).getHour();
         if (!rules.droneFlightAllowedAt(hourNow)) {
             throw new BusinessException(
@@ -221,7 +230,7 @@ public class DroneOrderMaintenanceService {
         validateReservedDroneForLaunch(drone);
         LockerLayoutDto layout = fetchLockerLayout(requireDestinationLockerId(order));
         validateLockerPreflight(layout, "Destination");
-        assertWeatherSafe(order, mission);
+        assertWeatherSafe(flightContext);
         DroneUnitDto updatedDrone = transitionDroneStatus(
                 mission.getDroneUnitId(), "RESERVED", "IN_FLIGHT", null);
         mission.setStatus("LAUNCHING");
@@ -247,37 +256,52 @@ public class DroneOrderMaintenanceService {
         return toResponse(order, mission, updatedDrone);
     }
 
-    private void assertWeatherSafe(LockerOrder order, DroneMission mission) {
+    /// Tuyến của nhiệm vụ (đã gán drone thì theo nhiệm vụ, chưa thì theo đơn).
+    private DroneFlightControl.Context launchContext(LockerOrder order, DroneMission mission, Long userId) {
+        Long sourceId = mission.getSourceLockerId() != null ? mission.getSourceLockerId() : order.getSourceLockerId();
+        Long destinationId = mission.getDestinationLockerId() != null
+                ? mission.getDestinationLockerId()
+                : order.getDestinationLockerId() != null ? order.getDestinationLockerId() : order.getLockerId();
+        return new DroneFlightControl.Context(order.getId(), order.getOrderCode(), userId, sourceId, destinationId);
+    }
+
+    private void assertWeatherSafe(DroneFlightControl.Context context) {
+        DroneWeatherAssessment weather;
         try {
-            Long sourceId = mission.getSourceLockerId() != null ? mission.getSourceLockerId() : order.getSourceLockerId();
-            Long destinationId = mission.getDestinationLockerId() != null
-                    ? mission.getDestinationLockerId()
-                    : order.getDestinationLockerId() != null ? order.getDestinationLockerId() : order.getLockerId();
+            Long sourceId = context.sourceLockerId();
+            Long destinationId = context.destinationLockerId();
             if (sourceId == null || destinationId == null) {
-                throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể xác định tuyến bay để kiểm tra thời tiết.");
+                throw weatherUnknown(context, "Không thể xác định tuyến bay để kiểm tra thời tiết.");
             }
             var response = lockerLookupClient.getLockers(List.of(sourceId, destinationId));
             var lockers = response == null ? null : response.data();
             if (lockers == null) {
-                throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể tải vị trí tủ để kiểm tra thời tiết.");
+                throw weatherUnknown(context, "Không thể tải vị trí tủ để kiểm tra thời tiết.");
             }
             var source = lockers.stream().filter(locker -> Objects.equals(locker.id(), sourceId)).findFirst().orElse(null);
             var destination = lockers.stream().filter(locker -> Objects.equals(locker.id(), destinationId)).findFirst().orElse(null);
             if (source == null || destination == null) {
-                throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể xác định tọa độ tuyến bay để kiểm tra thời tiết.");
+                throw weatherUnknown(context, "Không thể xác định tọa độ tuyến bay để kiểm tra thời tiết.");
             }
-            var weather = weatherService.assessRoute(source, destination);
-            if (!weather.safe()) {
-                String code = "UNAVAILABLE".equals(weather.status())
-                        ? "DRONE_WEATHER_UNAVAILABLE"
-                        : "DRONE_WEATHER_UNSAFE";
-                throw new BusinessException(code, weather.message());
-            }
+            weather = weatherService.assessRoute(source, destination);
         } catch (BusinessException exception) {
             throw exception;
         } catch (RuntimeException exception) {
-            throw new BusinessException("DRONE_WEATHER_UNAVAILABLE", "Không thể xác nhận thời tiết tuyến bay.");
+            throw weatherUnknown(context, "Không thể xác nhận thời tiết tuyến bay.");
         }
+        if (!weather.safe()) {
+            flightControl.recordWeather(DroneFlightBlock.LAUNCH, context, weather);
+            String code = "UNAVAILABLE".equals(weather.status())
+                    ? "DRONE_WEATHER_UNAVAILABLE"
+                    : "DRONE_WEATHER_UNSAFE";
+            throw new BusinessException(code, weather.message());
+        }
+    }
+
+    /// Không xác định được tuyến để hỏi thời tiết: luôn chặn (không phải "thiếu dữ liệu dự báo" mà admin cho bỏ qua).
+    private BusinessException weatherUnknown(DroneFlightControl.Context context, String message) {
+        flightControl.record(DroneFlightBlock.LAUNCH, DroneFlightBlock.WEATHER_UNAVAILABLE, context, null, message, null);
+        return new BusinessException("DRONE_WEATHER_UNAVAILABLE", message);
     }
 
     @Transactional
@@ -671,8 +695,9 @@ public class DroneOrderMaintenanceService {
         }
     }
 
-    private void assertFlightsNotSuspended() {
+    private void assertFlightsNotSuspended(String action, DroneFlightControl.Context context) {
         if (rules.droneFlightsSuspended()) {
+            flightControl.recordSuspended(action, context);
             throw new BusinessException("DRONE_FLIGHTS_SUSPENDED", "Drone flights are temporarily suspended");
         }
     }

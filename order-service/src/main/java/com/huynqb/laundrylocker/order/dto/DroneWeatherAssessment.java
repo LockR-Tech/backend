@@ -40,9 +40,16 @@ public record DroneWeatherAssessment(
     }
 
     public static DroneWeatherAssessment unavailable(OffsetDateTime checkedAt) {
-        return new DroneWeatherAssessment(false, "UNAVAILABLE",
-                "Không thể xác nhận dự báo thời tiết tuyến bay. Vui lòng thử lại sau.",
-                checkedAt, 30, 0, 0, 0, 0, -1);
+        return unavailable(checkedAt, 30, true);
+    }
+
+    /// `blocks` = false khi admin cho bay lúc không có dữ liệu thời tiết: vẫn báo UNAVAILABLE nhưng `safe`.
+    public static DroneWeatherAssessment unavailable(OffsetDateTime checkedAt, int windowMinutes, boolean blocks) {
+        return new DroneWeatherAssessment(!blocks, "UNAVAILABLE",
+                blocks
+                        ? "Không thể xác nhận dự báo thời tiết tuyến bay. Vui lòng thử lại sau."
+                        : "Chưa lấy được dự báo thời tiết. Đội bay tự quan sát thời tiết trước khi phóng.",
+                checkedAt, windowMinutes, 0, 0, 0, 0, -1);
     }
 
     public boolean unavailable() {

@@ -74,7 +74,9 @@ class DroneLockerCommunicationServiceTest {
     private final UserClient userClient = mock(UserClient.class);
     private final DroneDeliveryMailer mailer = mock(DroneDeliveryMailer.class);
     private final DroneDeliverySessionRepository sessionRepository = mock(DroneDeliverySessionRepository.class);
-    private final OrderRules rules = TestOrderRules.defaults();
+    /// Quy tắc trong bộ nhớ: test đổi thời gian chờ / số lần gửi lại như admin sửa trên web.
+    private final com.huynqb.laundrylocker.common.settings.BusinessSettings settings = TestOrderRules.settings(Map.of());
+    private final OrderRules rules = new OrderRules(settings);
 
     private final Map<String, DroneDeliverySession> sessions = new LinkedHashMap<>();
     private final List<String> seenMessageIds = new ArrayList<>();
@@ -596,8 +598,8 @@ class DroneLockerCommunicationServiceTest {
     @Test
     void unacknowledgedOpenIsRetriedWithTheSameCommandIdThenFails() throws Exception {
         MqttClient mqtt = connectedMqtt();
-        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
-        ReflectionTestUtils.setField(service, "lidMaxRetries", 2);
+        settings.update(Map.of("app.drone.delivery.lid-ack-timeout-seconds", 0), null);
+        settings.update(Map.of("app.drone.delivery.lid-max-retries", 2), null);
         heartbeat(LOCKER);
         markLockerAckCapable();
         deliverSigned(marker(null, null));
@@ -622,8 +624,8 @@ class DroneLockerCommunicationServiceTest {
     @Test
     void offlineLockerDoesNotBurnRetries() throws Exception {
         MqttClient mqtt = connectedMqtt();
-        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
-        ReflectionTestUtils.setField(service, "lidMaxRetries", 1);
+        settings.update(Map.of("app.drone.delivery.lid-ack-timeout-seconds", 0), null);
+        settings.update(Map.of("app.drone.delivery.lid-max-retries", 1), null);
         deliverSigned(marker(null, null));
         DroneDeliverySession session = sessions.values().iterator().next();
 
@@ -638,7 +640,7 @@ class DroneLockerCommunicationServiceTest {
     @Test
     void lidThatIsMovingIsNotNaggedWithRetries() throws Exception {
         MqttClient mqtt = connectedMqtt();
-        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
+        settings.update(Map.of("app.drone.delivery.lid-ack-timeout-seconds", 0), null);
         heartbeat(LOCKER);
         deliverSigned(marker(null, null));
         DroneDeliverySession session = sessions.values().iterator().next();
@@ -710,8 +712,8 @@ class DroneLockerCommunicationServiceTest {
     @Test
     void unverifiedOpenIsNeverResentSoALegacyLockerDoesNotRunTheMotorAgain() throws Exception {
         MqttClient mqtt = connectedMqtt();
-        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
-        ReflectionTestUtils.setField(service, "lidMotionTimeoutSeconds", 0L);
+        settings.update(Map.of("app.drone.delivery.lid-ack-timeout-seconds", 0), null);
+        settings.update(Map.of("app.drone.delivery.lid-motion-timeout-seconds", 0), null);
         heartbeat(LOCKER);
         deliverSigned(marker(null, null));
         DroneDeliverySession session = sessions.values().iterator().next();
@@ -766,7 +768,7 @@ class DroneLockerCommunicationServiceTest {
     @Test
     void lockerNeverSeenAcknowledgingIsNotRetriedBeforeAFullLidRun() throws Exception {
         MqttClient mqtt = connectedMqtt();
-        ReflectionTestUtils.setField(service, "lidAckTimeoutSeconds", 0L);
+        settings.update(Map.of("app.drone.delivery.lid-ack-timeout-seconds", 0), null);
         heartbeat(LOCKER);
         deliverSigned(marker(null, null));
 

@@ -67,7 +67,7 @@ class DroneTelemetryServiceTest {
         service = new DroneTelemetryService(
                 missionRepository, orderRepository, progressService, references, positionClient, lockerDroneClient,
                 new DroneTelemetryRegistry(15), new TransactionTemplate(mock(PlatformTransactionManager.class)),
-                30, 150, 30);
+                com.huynqb.laundrylocker.order.settings.TestOrderRules.defaults());
         order = new LockerOrder();
         order.setId(21L);
         order.setType("DRONE_DELIVERY");

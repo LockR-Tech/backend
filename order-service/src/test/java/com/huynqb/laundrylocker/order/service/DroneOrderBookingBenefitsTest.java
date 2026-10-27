@@ -60,6 +60,7 @@ class DroneOrderBookingBenefitsTest {
     @Mock private DroneWeatherService weatherService;
     @Mock private OrderBenefitService benefits;
     @Mock private PaidOrderEffects paidEffects;
+    @Mock private DroneFlightControl flightControl;
 
     private DroneOrderBookingService service;
 
@@ -68,7 +69,7 @@ class DroneOrderBookingBenefitsTest {
         service = new DroneOrderBookingService(
                 orderRepository, historyRepository, userClient, lockerClient, lockerCellClient, notificationClient,
                 rabbitTemplate, TestOrderRules.of(Map.of()), sourceLockerSelector, queryService, weatherService,
-                benefits, paidEffects);
+                benefits, paidEffects, flightControl);
         // Thời tiết xét cả chặng từ nơi gửi (điểm lấy hàng) tới tủ nhận.
         when(weatherService.assessJourney(org.mockito.ArgumentMatchers.eq(10.77), org.mockito.ArgumentMatchers.eq(106.70), any(), any())).thenReturn(new DroneWeatherAssessment(
                 true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",

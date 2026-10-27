@@ -931,9 +931,11 @@ public class DroneParcelIncidentService {
         }
     }
 
-    private static boolean canRequestReturn(DroneTelemetryFrame telemetry, boolean telemetryLive) {
+    /// Đủ pin theo quy tắc `drone-return-min-battery-percent`; thấp hơn thì để autopilot tự hạ cánh an toàn.
+    private boolean canRequestReturn(DroneTelemetryFrame telemetry, boolean telemetryLive) {
         return telemetryLive && telemetry != null && telemetry.autopilotConnected()
-                && telemetry.airborne() && telemetry.batteryPercent() != null && telemetry.batteryPercent() >= 15;
+                && telemetry.airborne() && telemetry.batteryPercent() != null
+                && telemetry.batteryPercent() >= rules.droneReturnMinBatteryPercent();
     }
 
     private static void validateCoordinate(Double latitude, Double longitude) {

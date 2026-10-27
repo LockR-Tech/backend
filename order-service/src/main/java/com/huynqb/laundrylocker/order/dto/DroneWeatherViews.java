@@ -16,7 +16,7 @@ public final class DroneWeatherViews {
             DroneWeatherAssessment weather) {
     }
 
-    /// Thời tiết tại một tủ có bãi đáp drone.
+    /// Thời tiết tại một tủ có bãi đáp drone; `suspension` khác null khi admin đang tạm dừng bay ở trạm này.
     public record LockerWeather(
             Long lockerId,
             String code,
@@ -24,6 +24,7 @@ public final class DroneWeatherViews {
             String address,
             Double latitude,
             Double longitude,
-            DroneWeatherAssessment weather) {
+            DroneWeatherAssessment weather,
+            DroneFlightControlViews.StationSuspension suspension) {
     }
 }

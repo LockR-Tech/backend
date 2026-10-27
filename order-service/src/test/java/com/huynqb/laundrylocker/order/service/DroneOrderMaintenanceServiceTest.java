@@ -24,6 +24,8 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -49,6 +51,7 @@ class DroneOrderMaintenanceServiceTest {
     private DroneDeliveryMailer mailer;
     @Mock private OrderBenefitService benefits;
     @Mock private DroneWeatherService weatherService;
+    @Mock private DroneFlightControl flightControl;
 
     @org.junit.jupiter.api.BeforeEach
     void mailerReportsNothingSent() {
@@ -71,7 +74,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
         when(missionRepository.findByOrderId(21L)).thenReturn(Optional.empty());
@@ -118,7 +121,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -152,7 +155,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setSourceBoxId(8001L);
         DroneMission mission = new DroneMission();
@@ -202,7 +205,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -235,7 +238,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -268,7 +271,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setId(301L);
@@ -322,6 +325,9 @@ class DroneOrderMaintenanceServiceTest {
         assertEquals("DRONE_WEATHER_UNSAFE", error.getCode());
         verify(lockerDroneClient, never()).transitionDroneStatus(any(), any());
         verify(missionRepository, never()).save(any());
+        // Lần phóng bị chặn vì thời tiết vào lịch sử chặn bay của admin.
+        verify(flightControl).recordWeather(eq(com.huynqb.laundrylocker.order.model.DroneFlightBlock.LAUNCH),
+                argThat(context -> Long.valueOf(21L).equals(context.orderId())), any());
     }
 
     @Test
@@ -334,7 +340,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -362,7 +368,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setStatus("AWAITING_DISPATCH");
         order.setSourceBoxId(8001L);
@@ -456,7 +462,7 @@ class DroneOrderMaintenanceServiceTest {
                 historyRepository,
                 notificationClient,
                 TestOrderRules.of(java.util.Map.of("app.order.drone-flights-suspended", true)), pickupRepository, mailer, benefits,
-                lockerLookupClient, weatherService);
+                lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "AWAITING_DISPATCH");
         when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
 
@@ -474,6 +480,8 @@ class DroneOrderMaintenanceServiceTest {
                 assertThrows(BusinessException.class, () -> service.launch(21L, 99L, "launch-1"));
         assertEquals("DRONE_FLIGHTS_SUSPENDED", launch.getCode());
         verify(lockerDroneClient, never()).transitionDroneStatus(any(), any());
+        verify(flightControl).recordSuspended(eq(com.huynqb.laundrylocker.order.model.DroneFlightBlock.ACCEPT), any());
+        verify(flightControl).recordSuspended(eq(com.huynqb.laundrylocker.order.model.DroneFlightBlock.LAUNCH), any());
     }
 
     @Test
@@ -589,7 +597,7 @@ class DroneOrderMaintenanceServiceTest {
                 lockerClient,
                 historyRepository,
                 notificationClient,
-                TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
     }
 
     private DroneMission inFlightMission(String status) {
@@ -614,7 +622,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -643,7 +651,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = new DroneMission();
         mission.setOrderId(21L);
@@ -695,7 +703,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         awaitingLoading(order);
 
@@ -717,7 +725,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         DroneMission mission = awaitingLoading(order);
 
@@ -787,7 +795,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         awaitingLoading(order);
 
@@ -810,7 +818,7 @@ class DroneOrderMaintenanceServiceTest {
                         lockerClient,
                         historyRepository,
                         notificationClient,
-                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService);
+                        TestOrderRules.defaults(), pickupRepository, mailer, benefits, lockerLookupClient, weatherService, flightControl);
         LockerOrder order = droneOrder(21L, "ACCEPTED");
         order.setPaymentStatus("UNPAID");
         DroneMission mission = new DroneMission();
