@@ -93,8 +93,8 @@ public class LockerBox {
         updatedAt = LocalDateTime.now();
     }
 
-    /// Trạng thái + loại ô lúc nạp từ DB — để {@link LockerBoxAvailabilityListener} chỉ báo khi số ô
-    /// trống thật sự đổi, không báo mỗi lần cập nhật cảm biến cửa.
+    /// Trạng thái + loại ô + trạng thái kích hoạt lúc nạp từ DB — để {@link LockerBoxAvailabilityListener}
+    /// chỉ báo khi số ô trống thật sự đổi, không báo mỗi lần cập nhật cảm biến cửa.
     @Transient
     private String loadedAvailabilityKey;
 
@@ -104,6 +104,6 @@ public class LockerBox {
     }
 
     String availabilityKey() {
-        return status + "|" + cellType;
+        return status + "|" + cellType + "|" + Boolean.TRUE.equals(active);
     }
 }

@@ -1,10 +1,12 @@
 package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
+import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
 import org.junit.jupiter.api.Test;
 import java.util.List;
@@ -12,10 +14,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class DroneSourceLockerSelectorTest {
+    private final LockerLookupClient lookup = mock(LockerLookupClient.class);
     private final LockerDroneClient drones = mock(LockerDroneClient.class);
     private final OrderRules rules = mock(OrderRules.class);
     private final DroneSourceLockerSelector selector = new DroneSourceLockerSelector(
-            mock(LockerLookupClient.class), drones, rules);
+            lookup, drones, rules);
 
     @Test
     void onlyIdleActiveDronesWithKnownSufficientBatteryCanServeANewPickup() {
@@ -43,6 +46,17 @@ class DroneSourceLockerSelectorTest {
         when(drones.listDroneUnits(1L)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
         when(drones.getLockerLayout(1L)).thenReturn(ApiResponse.ok(new LockerLayoutDto(1L, "A", "A", "ACTIVE", true, "FAULT")));
         assertFalse(selector.serviceable(1L));
+    }
+
+    @Test
+    void destinationWithFaultyOrMaintenanceLandingPadIsRejected() {
+        LockerInfo destFault = new LockerInfo(
+                5L, 1L, "DST", "Destination", "ACTIVE", "", 10.71, 106.71, true, "M5", "FAULT", 8, 4);
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(destFault)));
+
+        BusinessException err = assertThrows(
+                BusinessException.class, () -> selector.select(10.70, 106.70, 5L, null));
+        assertEquals("LANDING_PAD_NOT_READY", err.getCode());
     }
 
     private DroneUnitDto drone(String status, Integer battery, boolean active) {

@@ -15,6 +15,7 @@ public record LockerResponse(
         Double longitude,
         Boolean landingPad,
         String landingMarkerId,
+        String landingPadStatus,
         Integer totalBoxes,
         Integer availableBoxes,
         Long assignedTechnicianId,
@@ -22,11 +23,31 @@ public record LockerResponse(
         Boolean online) {
 
     public LockerResponse(
+            Long id,
+            Long storeId,
+            String code,
+            String name,
+            String status,
+            String address,
+            Double latitude,
+            Double longitude,
+            Boolean landingPad,
+            String landingMarkerId,
+            Integer totalBoxes,
+            Integer availableBoxes,
+            Long assignedTechnicianId,
+            String assignedTechnicianName,
+            Boolean online) {
+        this(id, storeId, code, name, status, address, latitude, longitude, landingPad, landingMarkerId,
+                null, totalBoxes, availableBoxes, assignedTechnicianId, assignedTechnicianName, online);
+    }
+
+    public LockerResponse(
             Long id, Long storeId, String code, String name, String status, String address,
             Double latitude, Double longitude, Boolean landingPad, String landingMarkerId,
             Integer totalBoxes, Integer availableBoxes) {
         this(id, storeId, code, name, status, address, latitude, longitude, landingPad, landingMarkerId,
-                totalBoxes, availableBoxes, null, null, null);
+                null, totalBoxes, availableBoxes, null, null, null);
     }
 
     public LockerResponse(
@@ -34,6 +55,6 @@ public record LockerResponse(
             Double latitude, Double longitude, Boolean landingPad, String landingMarkerId,
             Integer totalBoxes, Integer availableBoxes, Long assignedTechnicianId, String assignedTechnicianName) {
         this(id, storeId, code, name, status, address, latitude, longitude, landingPad, landingMarkerId,
-                totalBoxes, availableBoxes, assignedTechnicianId, assignedTechnicianName, null);
+                null, totalBoxes, availableBoxes, assignedTechnicianId, assignedTechnicianName, null);
     }
 }

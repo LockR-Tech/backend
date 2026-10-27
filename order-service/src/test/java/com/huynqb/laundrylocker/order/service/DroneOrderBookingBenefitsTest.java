@@ -159,6 +159,21 @@ class DroneOrderBookingBenefitsTest {
         verify(paidEffects, never()).settleIfFree(any());
     }
 
+    @Test
+    void rejectsDestinationCellAlreadyHeldByActiveOrder() {
+        LockerOrder existing = new LockerOrder();
+        existing.setId(99L);
+        existing.setReservedBoxId(9001L);
+        existing.setStatus("AWAITING_DISPATCH");
+        when(orderRepository.findActiveByBoxId(9001L)).thenReturn(List.of(existing));
+
+        BusinessException err = assertThrows(
+                BusinessException.class, () -> service.create(request(null, null), 44L, "idem-dup-box"));
+
+        assertEquals("BOX_NOT_AVAILABLE", err.getCode());
+        verify(lockerClient, never()).reserveBox(any(), any());
+    }
+
     private static CreateDroneDeliveryOrderRequest request(String promotionCode, Integer pointsToUse) {
         return new CreateDroneDeliveryOrderRequest(
                 5L, null,

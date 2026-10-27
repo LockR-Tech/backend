@@ -151,8 +151,8 @@ SELECT 9000 + g,
        106.6600 + (g % 50) * 0.0020,
        'Tủ khóa thông minh tự phục vụ số ' || g,
        NOW() - (g || ' days')::interval, NOW(),
-       (g % 5 = 0),
-       CASE WHEN g % 5 = 0 THEN 'ARUCO-' || g ELSE NULL END
+       TRUE,
+       'ARUCO-' || g
 FROM generate_series(1, 100) AS g;
 
 -- 9 cells per locker = 900 boxes (3 DRONE / 5 STANDARD / 1 XL layout)

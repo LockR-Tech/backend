@@ -13,6 +13,7 @@ import com.huynqb.laundrylocker.locker.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.locker.dto.LockerReportRequest;
 import com.huynqb.laundrylocker.locker.dto.ReportAttachmentRequest;
 import com.huynqb.laundrylocker.locker.model.AttachmentStage;
+import com.huynqb.laundrylocker.locker.model.CellType;
 import com.huynqb.laundrylocker.locker.model.LockerBox;
 import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
@@ -95,6 +96,7 @@ class LockerServiceTicketRoutingTest {
         box.setStatus("AVAILABLE");
         when(lockerRepository.findById(LOCKER_ID)).thenReturn(Optional.of(locker));
         when(boxRepository.findById(BOX_ID)).thenReturn(Optional.of(box));
+        when(boxRepository.findByIdForUpdate(BOX_ID)).thenReturn(Optional.of(box));
         when(reportRepository.save(any(LockerReport.class))).thenAnswer(invocation -> {
             LockerReport report = invocation.getArgument(0);
             if (report.getId() == null) {
@@ -624,6 +626,30 @@ class LockerServiceTicketRoutingTest {
         service.updateLandingPadStatus(LOCKER_ID, "OK", null, TECH, "LOCKER_TECHNICIAN");
         assertEquals("RESOLVED", pad.getStatus());
         assertEquals("OK", locker.getLandingPadStatus());
+    }
+
+    @Test
+    void reserveBoxLocksRowAndRejectsInactiveCell() {
+        box.setActive(false);
+
+        BusinessException err = assertThrows(BusinessException.class, () -> service.reserveBox(BOX_ID, "DRONE"));
+
+        assertEquals("BOX_NOT_AVAILABLE", err.getCode());
+        verify(boxRepository).findByIdForUpdate(BOX_ID);
+    }
+
+    @Test
+    void sweepExpiredReservationsSkipsDroneCells() {
+        when(boxRepository.findByStatusAndReservedUntilBeforeAndCellTypeNot(
+                eq("RESERVED"), any(), eq(CellType.DRONE)))
+                .thenReturn(List.of());
+
+        int released = service.sweepExpiredReservations();
+
+        assertEquals(0, released);
+        verify(boxRepository).findByStatusAndReservedUntilBeforeAndCellTypeNot(
+                eq("RESERVED"), any(), eq(CellType.DRONE));
+        verify(boxRepository, never()).findByStatusAndReservedUntilBefore(anyString(), any());
     }
 
     private LockerReport savedReport() {

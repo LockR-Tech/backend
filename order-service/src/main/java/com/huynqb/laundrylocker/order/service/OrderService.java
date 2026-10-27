@@ -1935,6 +1935,9 @@ public class OrderService {
             try {
                 if ("INITIALIZED".equals(freshStatus)) {
                     lockerClient.reserveBox(boxId, null);
+                } else if ("AWAITING_DISPATCH".equals(freshStatus)) {
+                    lockerClient.reserveBox(
+                            boxId, "DRONE_DELIVERY".equals(order.getType()) ? "DRONE" : null);
                 } else if ("STORING".equals(freshStatus) || "RETURNED".equals(freshStatus)) {
                     lockerClient.occupyBox(boxId);
                 } else {

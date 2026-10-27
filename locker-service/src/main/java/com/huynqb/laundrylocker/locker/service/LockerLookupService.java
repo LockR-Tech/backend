@@ -46,8 +46,9 @@ public class LockerLookupService {
                     return new LockerResponse(
                             locker.getId(), locker.getStoreId(), locker.getCode(), locker.getName(), locker.getStatus(),
                             locker.getAddress(), locker.getLatitude(), locker.getLongitude(),
-                            locker.getLandingPad(), locker.getLandingMarkerId(), boxes.size(), available,
-                            locker.getAssignedTechnicianId(), null);
+                            locker.getLandingPad(), locker.getLandingMarkerId(), locker.getLandingPadStatus(),
+                            boxes.size(), available,
+                            locker.getAssignedTechnicianId(), null, null);
                 })
                 .toList();
     }

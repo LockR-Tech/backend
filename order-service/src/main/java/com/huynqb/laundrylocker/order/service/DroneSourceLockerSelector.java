@@ -56,6 +56,9 @@ public class DroneSourceLockerSelector {
         if (!Boolean.TRUE.equals(destination.landingPad())) {
             throw new BusinessException("LANDING_PAD_ABSENT", "Drone destination locker has no landing pad");
         }
+        if (destination.landingPadStatus() != null && !"OK".equalsIgnoreCase(destination.landingPadStatus())) {
+            throw new BusinessException("LANDING_PAD_NOT_READY", "Drone destination landing pad is not ready");
+        }
         if (destination.latitude() == null || destination.longitude() == null) {
             throw new BusinessException(
                     "DRONE_LOCKER_LOCATION_MISSING", "Destination locker has no coordinates; drone range cannot be checked");
