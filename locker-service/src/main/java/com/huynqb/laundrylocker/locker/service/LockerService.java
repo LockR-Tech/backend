@@ -2803,7 +2803,8 @@ public class LockerService {
         //    Bao gồm cả LOCKER_TECHNICIAN và DRONE_TECHNICIAN (với KTV drone thì không được có đơn đang vận hành)
         var liveCandidate = presenceRepository.findByOnDutyTrue().stream()
                 .filter(p -> p.getLatitude() != null && p.getLongitude() != null)
-                .filter(p -> p.getLastLocatedAt() != null && p.getLastLocatedAt().isAfter(LocalDateTime.now().minusMinutes(60)))
+                .filter(p -> p.getLastLocatedAt() != null
+                        && p.getLastLocatedAt().isAfter(LocalDateTime.now().minusMinutes(rules.technicianLocationMaxAgeMinutes())))
                 .filter(p -> {
                     String type = p.getTechnicianType() != null ? p.getTechnicianType().toUpperCase() : "";
                     if (DRONE_TECHNICIAN.equals(type)) {

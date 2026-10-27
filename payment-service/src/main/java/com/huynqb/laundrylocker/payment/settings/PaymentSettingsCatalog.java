@@ -18,6 +18,7 @@ import static com.huynqb.laundrylocker.common.settings.SettingDefinition.stringL
 public class PaymentSettingsCatalog implements SettingsCatalog {
 
     public static final String TOPUP_MIN_AMOUNT = "app.payment.topup-min-amount";
+    public static final String WITHDRAW_MIN_AMOUNT = "app.payment.withdraw-min-amount";
     public static final String TOPUP_MAX_AMOUNT = "app.payment.topup-max-amount";
     public static final String TOPUP_DEFAULT_AMOUNT = "app.payment.topup-default-amount";
     public static final String TOPUP_PRESETS = "app.payment.topup-presets";
@@ -48,6 +49,9 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
         return List.of(
                 integer(TOPUP_MIN_AMOUNT, TOPUP, "Số tiền nạp tối thiểu",
                         "Yêu cầu nạp ví nhỏ hơn số này bị từ chối.", 1000, 1000, 100_000_000, "VND").asPublic(),
+                integer(WITHDRAW_MIN_AMOUNT, TOPUP, "Số tiền rút tối thiểu",
+                        "Yêu cầu rút tiền từ ví về ngân hàng nhỏ hơn số này bị từ chối.", 10_000, 1000, 100_000_000, "VND")
+                        .asPublic(),
                 integer(TOPUP_MAX_AMOUNT, TOPUP, "Số tiền nạp tối đa mỗi lần",
                         "Yêu cầu nạp ví lớn hơn số này bị từ chối. Nhỏ hơn mức tối thiểu thì dùng mức tối thiểu.",
                         50_000_000, 1000, 1_000_000_000, "VND").asPublic(),

@@ -40,7 +40,6 @@ public class AuthService {
     /// Tên miền `.invalid` (RFC 2606) không bao giờ nhận thư ⇒ email giữ chỗ không trùng email thật nào.
     private static final String DELETED_EMAIL_DOMAIN = "deleted.invalid";
     /// Số lần nhập sai OTP 2FA admin tối đa cho một token tạm; quá số này token bị huỷ, phải đăng nhập lại.
-    static final int ADMIN_2FA_MAX_ATTEMPTS = 5;
 
     private final AuthAccountRepository authAccountRepository;
     private final RefreshTokenRepository refreshTokenRepository;
@@ -650,7 +649,7 @@ public class AuthService {
     }
 
     /// Kiểm OTP trước rồi mới tiêu token tạm: gõ sai một lần không làm mất phiên 2FA. Sai đủ
-    /// {@link #ADMIN_2FA_MAX_ATTEMPTS} lần thì token tạm bị huỷ, phải đăng nhập lại từ đầu.
+    /// `app.auth.admin-2fa-max-attempts` lần thì token tạm bị huỷ, phải đăng nhập lại từ đầu.
     @Transactional
     public Map<String, Object> verifyAdmin2fa(Map<String, Object> request) {
         String tempToken = text(request, "tempToken");
@@ -662,7 +661,7 @@ public class AuthService {
                     "ADMIN_AUTH_OTP_INVALID",
                     remaining > 0
                             ? "Mã OTP không đúng hoặc đã hết hạn (còn " + remaining + " lần thử)"
-                            : "Nhập sai OTP quá " + ADMIN_2FA_MAX_ATTEMPTS + " lần — vui lòng đăng nhập lại");
+                            : "Nhập sai OTP quá " + rules.admin2faMaxAttempts() + " lần — vui lòng đăng nhập lại");
         }
         consumeTempToken(tempToken, "ADMIN_2FA");
         UserSummary user = userClient.getUser(account.getUserId()).data();
@@ -767,8 +766,8 @@ public class AuthService {
     /// Tăng đếm lần nhập sai; chạm trần thì xoá token. Trả về số lần thử còn lại (0 = token đã bị huỷ).
     private int recordFailedOtpAttempt(String token) {
         TempToken updated = TEMP_TOKENS.computeIfPresent(token, (key, temp) ->
-                temp.failedAttempts() + 1 >= ADMIN_2FA_MAX_ATTEMPTS ? null : temp.withFailedAttempt());
-        return updated == null ? 0 : ADMIN_2FA_MAX_ATTEMPTS - updated.failedAttempts();
+                temp.failedAttempts() + 1 >= rules.admin2faMaxAttempts() ? null : temp.withFailedAttempt());
+        return updated == null ? 0 : rules.admin2faMaxAttempts() - updated.failedAttempts();
     }
 
     private int revokeRefreshTokens(Long accountId) {

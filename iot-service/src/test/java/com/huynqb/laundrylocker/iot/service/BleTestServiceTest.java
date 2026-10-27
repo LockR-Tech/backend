@@ -60,7 +60,8 @@ class BleTestServiceTest {
             return i.getArgument(0);
         });
         signer = new BleTokenSigner(keys);
-        service = new BleTestService(grants, signer, lockerClient, layoutLookup, logs);
+        service = new BleTestService(grants, signer, lockerClient, layoutLookup, logs,
+                com.huynqb.laundrylocker.iot.settings.TestIotRules.defaults());
         when(lockerClient.lockers(List.of(LOCKER))).thenReturn(
                 ApiResponse.ok(List.of(new LockerView(LOCKER, "CAB-TU01", "Tủ thật TU01", null))));
         when(layoutLookup.layout(LOCKER)).thenReturn(Optional.of(new LockerLayoutView(LOCKER, "CAB-TU01", "Tủ thật",
@@ -109,7 +110,8 @@ class BleTestServiceTest {
         assertEquals(3, Short.toUnsignedInt(b.getShort()));
         assertEquals(CUSTOMER, b.getLong());
         long exp = Integer.toUnsignedLong(b.getInt());
-        assertTrue(exp >= before + BleTestService.TOKEN_TTL_SECONDS && exp <= before + BleTestService.TOKEN_TTL_SECONDS + 5);
+        // Mặc định catalog: 120 giây (`app.iot.ble-token-ttl-seconds`).
+        assertTrue(exp >= before + 120 && exp <= before + 120 + 5);
         byte[] nonce = new byte[8];
         b.get(nonce);
         assertEquals(r.nonce(), HexFormat.of().formatHex(nonce));

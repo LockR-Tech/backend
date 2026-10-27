@@ -7,6 +7,7 @@ import com.huynqb.laundrylocker.auth.dto.KioskQrDtos.SessionCreated;
 import com.huynqb.laundrylocker.auth.dto.KioskQrDtos.SessionStatus;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.auth.settings.AuthRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -30,18 +31,16 @@ import java.util.concurrent.ConcurrentHashMap;
 /// Đăng nhập kiosk bằng QR (CONTRACTS §1). Kiosk tạo phiên và hiện QR `lockr://kiosk-login?sid=..&code=..`;
 /// khách đang đăng nhập trên app quét và xác nhận; kiosk poll bằng pollToken (chỉ kiosk giữ, không nằm trên
 /// QR) để nhận token đúng một lần. Phiên lưu trong bộ nhớ (một instance auth-service), hết hạn sau
-/// {@link #SESSION_TTL}, dọn định kỳ.
+/// `app.auth.kiosk-qr.session-ttl-seconds` (admin chỉnh), dọn định kỳ.
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class KioskQrLoginService {
 
-    static final Duration SESSION_TTL = Duration.ofSeconds(120);
     /// Phiên đã kết thúc (hết hạn/huỷ/đã lấy token) giữ thêm một lúc để kiosk poll thấy trạng thái cuối.
     static final Duration RETENTION_AFTER_END = Duration.ofSeconds(60);
     static final Duration RATE_WINDOW = Duration.ofMinutes(1);
     static final long POLL_INTERVAL_MS = 2000;
-    static final int MAX_CONFIRM_ATTEMPTS = 5;
     static final int MAX_CREATES_PER_LOCKER = 10;
     /// Nhiều kiosk cùng địa điểm có thể ra Internet qua chung một IP nên trần theo IP rộng hơn theo tủ.
     static final int MAX_CREATES_PER_IP = 30;
@@ -55,6 +54,7 @@ public class KioskQrLoginService {
     enum Status { PENDING, CONFIRMED, EXPIRED, CANCELLED, CONSUMED }
 
     private final AuthService authService;
+    private final AuthRules rules;
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     private final Map<String, Window> createWindows = new ConcurrentHashMap<>();
     private Clock clock = Clock.systemUTC();
@@ -81,7 +81,7 @@ public class KioskQrLoginService {
         String sessionId = UUID.randomUUID().toString();
         String pollToken = randomPollToken();
         String confirmCode = randomConfirmCode();
-        Session session = new Session(sha256(pollToken), confirmCode, lockerId, now.plus(SESSION_TTL));
+        Session session = new Session(sha256(pollToken), confirmCode, lockerId, now.plusSeconds(rules.kioskQrSessionTtlSeconds()));
         sessions.put(sessionId, session);
         return new SessionCreated(
                 sessionId, pollToken, confirmCode,
@@ -148,10 +148,11 @@ public class KioskQrLoginService {
             }
             if (!codeMatches(session.confirmCode, confirmCode)) {
                 session.failedAttempts++;
-                int remaining = MAX_CONFIRM_ATTEMPTS - session.failedAttempts;
+                int maxAttempts = rules.kioskQrMaxConfirmAttempts();
+                int remaining = maxAttempts - session.failedAttempts;
                 if (remaining <= 0) {
                     end(session, Status.CANCELLED, now);
-                    throw invalid("Nhập sai mã xác nhận quá " + MAX_CONFIRM_ATTEMPTS
+                    throw invalid("Nhập sai mã xác nhận quá " + maxAttempts
                             + " lần — phiên đăng nhập đã bị huỷ, vui lòng quét mã mới");
                 }
                 throw invalid("Mã xác nhận không đúng (còn " + remaining + " lần thử)");

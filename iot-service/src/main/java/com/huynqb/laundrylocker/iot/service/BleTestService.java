@@ -10,6 +10,7 @@ import com.huynqb.laundrylocker.iot.dto.LockerLayoutView;
 import com.huynqb.laundrylocker.iot.dto.LockerView;
 import com.huynqb.laundrylocker.iot.model.BleTestGrant;
 import com.huynqb.laundrylocker.iot.repository.BleTestGrantRepository;
+import com.huynqb.laundrylocker.iot.settings.IotRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -25,14 +26,13 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /// Thử mở ô qua Bluetooth (F3-G11). Admin cấp quyền cho từng tài khoản trên từng tủ; tài khoản được
-/// cấp xin mã mở một ô bất kỳ của tủ đó, mã sống {@link #TOKEN_TTL_SECONDS} giây và chỉ dùng được
+/// cấp xin mã mở một ô bất kỳ của tủ đó, mã sống `app.iot.ble-token-ttl-seconds` giây (admin chỉnh, mặc định 120) và chỉ dùng được
 /// một lần. App ghi mã cho Pi qua BLE GATT — Pi kiểm chữ ký rồi kích relay, không cần mạng lúc mở.
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class BleTestService {
 
-    public static final long TOKEN_TTL_SECONDS = 120;
     /// GATT của Pi — phải khớp iot `services/ble_gatt_service.py`.
     public static final String SERVICE_UUID = "06776521-9674-432d-b886-5e951244ffa3";
     public static final String OPEN_CHAR_UUID = "54af4ad7-dcde-47dc-ad44-fa2c7438dd36";
@@ -45,6 +45,7 @@ public class BleTestService {
     private final LockerClient lockerClient;
     private final CabinetLayoutLookup layoutLookup;
     private final CabinetControlLogService controlLogs;
+    private final IotRules rules;
 
     // ─── admin ───
 
@@ -115,7 +116,7 @@ public class BleTestService {
         LockerLayoutView.Cell cell = layout.cells().stream().filter(c -> boxNumber.equals(c.boxNumber())).findFirst()
                 .orElseThrow(() -> new BusinessException(
                         "BOX_NOT_IN_LOCKER", "Tủ không có ô số " + boxNumber, HttpStatus.NOT_FOUND));
-        Instant expiresAt = Instant.now().plusSeconds(TOKEN_TTL_SECONDS);
+        Instant expiresAt = Instant.now().plusSeconds(rules.bleTokenTtlSeconds());
         BleTokenSigner.SignedToken token = signer.sign(lockerId, boxNumber, userId, expiresAt);
         controlLogs.recordWeb(lockerId, userId, "BLE_TOKEN", null, cell.id(), null, "ISSUED",
                 "Cấp mã mở ô " + boxNumber + " qua Bluetooth, hết hạn " + CLOCK_TIME.format(expiresAt));

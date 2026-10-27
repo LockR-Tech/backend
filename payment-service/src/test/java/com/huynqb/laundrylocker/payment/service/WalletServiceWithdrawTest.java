@@ -50,7 +50,8 @@ class WalletServiceWithdrawTest {
                 paymentRepository,
                 refundRepository,
                 resolver,
-                walletEvents
+                walletEvents,
+                com.huynqb.laundrylocker.payment.settings.TestPaymentRules.defaults()
         );
     }
 
