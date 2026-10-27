@@ -2,7 +2,10 @@ package com.huynqb.laundrylocker.iot.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.iot.dto.CabinetControlLogResponse;
+import com.huynqb.laundrylocker.iot.dto.HardwareConfigRequest;
+import com.huynqb.laundrylocker.iot.dto.HardwareConfigView;
 import com.huynqb.laundrylocker.iot.service.CabinetControlService;
+import com.huynqb.laundrylocker.iot.service.CabinetHardwareConfigService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,6 +20,37 @@ import java.util.Map;
 public class CabinetControlController {
 
     private final CabinetControlService control;
+    private final CabinetHardwareConfigService hardware;
+
+    /// Cấu hình phần cứng đã lưu (bản đồ chân + sơ đồ đấu dây); chưa lưu thì trả mẫu TU01.
+    @GetMapping("/api/locker-technician/cabinet/{lockerId}/hardware")
+    public ApiResponse<HardwareConfigView> hardware(
+            @PathVariable Long lockerId,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(hardware.get(lockerId, userId, roles));
+    }
+
+    /// Lưu cấu hình phần cứng (chỉ ADMIN). Chưa gửi xuống tủ — bấm Áp dụng để gửi.
+    @PutMapping("/api/locker-technician/cabinet/{lockerId}/hardware")
+    public ApiResponse<HardwareConfigView> saveHardware(
+            @PathVariable Long lockerId,
+            @RequestBody HardwareConfigRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok("CABINET_HW_SAVED", "Đã lưu cấu hình phần cứng",
+                hardware.save(lockerId, body, userId, roles));
+    }
+
+    /// Gửi cấu hình đã lưu xuống tủ (chỉ ADMIN); tủ khởi động lại bộ điều khiển khoảng 10 giây.
+    @PostMapping("/api/locker-technician/cabinet/{lockerId}/hardware/apply")
+    public ApiResponse<Map<String, Object>> applyHardware(
+            @PathVariable Long lockerId,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok("CABINET_HW_APPLY", "Đã gửi cấu hình xuống tủ",
+                hardware.apply(lockerId, userId, roles));
+    }
 
     /// Trạng thái các trục nắp của tủ (để trang điều khiển hiển thị).
     @GetMapping("/api/locker-technician/cabinet/{lockerId}/panel")
