@@ -20,6 +20,8 @@ final class HardwareConfigValidator {
     static final int MAX_UNLOCK_MS = 10_000;
     static final int MAX_BOXES = 16;
     static final List<String> LID_PIN_KEYS = List.of("pulPin", "dirPin", "homePin", "endPin");
+    static final Map<String, String> LID_PIN_NAMES = Map.of(
+            "pulPin", "PUL−", "dirPin", "DIR−", "homePin", "công tắc gốc", "endPin", "công tắc cuối");
     private static final List<String> FLAGS = List.of(
             "relayActiveHigh", "doorClosedLow", "requireDoorSensor", "lidBypassPhysicalMotion");
 
@@ -78,9 +80,9 @@ final class HardwareConfigValidator {
                 for (String key : LID_PIN_KEYS) {
                     JsonNode pin = lid.path(key);
                     if (!pin.isIntegralNumber()) {
-                        errors.add("Trục " + axis + ": thiếu chân " + key);
+                        errors.add("Trục " + axis + ": thiếu chân " + LID_PIN_NAMES.get(key));
                     } else if (enabled) {
-                        used.add(Map.entry(pin.asInt(), "trục " + axis + " " + key));
+                        used.add(Map.entry(pin.asInt(), LID_PIN_NAMES.get(key) + " trục " + axis));
                     }
                 }
                 JsonNode boxes = lid.path("boxes");
