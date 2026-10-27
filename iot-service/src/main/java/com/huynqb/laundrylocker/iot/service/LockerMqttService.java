@@ -420,6 +420,16 @@ public class LockerMqttService {
     }
 
     /// Truy vấn trạng thái các trục nắp của tủ (để trang điều khiển hiển thị).
+    /// Bản đồ chân admin sửa trên web (mqtt-contract § 2.1 `hw-config`). Pi kiểm tra, lưu, báo
+    /// `ACCEPTED` (kèm `warnings`) rồi tự khởi động lại; sai ⇒ `FAILED` kèm `errors`.
+    public CompletableFuture<JsonNode> sendHardwareConfigAsync(Long lockerId, JsonNode config) {
+        String commandId = UUID.randomUUID().toString();
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("commandId", commandId);
+        payload.set("config", config);
+        return sendCommandAsync(lockerId, "hw-config", commandId, payload);
+    }
+
     public CompletableFuture<JsonNode> sendPanelQueryAsync(Long lockerId) {
         String commandId = UUID.randomUUID().toString();
         ObjectNode payload = objectMapper.createObjectNode();

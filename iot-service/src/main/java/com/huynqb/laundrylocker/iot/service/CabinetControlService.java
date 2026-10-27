@@ -136,7 +136,7 @@ public class CabinetControlService {
     }
 
     /// ADMIN: mọi tủ. LOCKER_TECHNICIAN: chỉ tủ mình phụ trách. Tủ không tồn tại ⇒ 404.
-    private void requireLockerInScope(Long lockerId, Long userId, String roles) {
+    void requireLockerInScope(Long lockerId, Long userId, String roles) {
         if (lockerId == null) {
             throw new BusinessException("LOCKER_REQUIRED", "Thiếu mã tủ");
         }
@@ -162,7 +162,7 @@ public class CabinetControlService {
     }
 
     /// Gửi lệnh + chờ kết quả tối đa `unlockWaitSeconds`. Trả {accepted, status, message, result}.
-    private Map<String, Object> await(String label, Supplier<CompletableFuture<JsonNode>> send) {
+    Map<String, Object> await(String label, Supplier<CompletableFuture<JsonNode>> send) {
         int waitSeconds = rules.unlockWaitSeconds();
         String status;
         String message;
