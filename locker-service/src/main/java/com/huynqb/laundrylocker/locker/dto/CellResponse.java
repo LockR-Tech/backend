@@ -24,7 +24,29 @@ public record CellResponse(
         Integer arucoMarkerId,
         BigDecimal arucoMarkerSizeCm,
         LocalDateTime arucoAssignedAt,
-        String arucoAssignedBy) {
+        String arucoAssignedBy,
+        Boolean active) {
+
+    public CellResponse(
+            Long id,
+            Integer boxNumber,
+            String size,
+            String cellType,
+            Integer rowIndex,
+            Integer colIndex,
+            String status,
+            String faultReason,
+            Boolean doorOpen,
+            String hwState,
+            Long lockerId,
+            String arucoDictionary,
+            Integer arucoMarkerId,
+            BigDecimal arucoMarkerSizeCm,
+            LocalDateTime arucoAssignedAt,
+            String arucoAssignedBy) {
+        this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, doorOpen, hwState, lockerId,
+                arucoDictionary, arucoMarkerId, arucoMarkerSizeCm, arucoAssignedAt, arucoAssignedBy, true);
+    }
 
     public CellResponse(
             Long id,
@@ -39,7 +61,7 @@ public record CellResponse(
             String hwState,
             Long lockerId) {
         this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, doorOpen, hwState, lockerId,
-                null, null, null, null, null);
+                null, null, null, null, null, true);
     }
 
     public CellResponse(
@@ -54,7 +76,7 @@ public record CellResponse(
             Boolean doorOpen,
             String hwState) {
         this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, doorOpen, hwState, null,
-                null, null, null, null, null);
+                null, null, null, null, null, true);
     }
 
     public CellResponse(
@@ -67,6 +89,6 @@ public record CellResponse(
             String status,
             String faultReason) {
         this(id, boxNumber, size, cellType, rowIndex, colIndex, status, faultReason, null, null, null,
-                null, null, null, null, null);
+                null, null, null, null, null, true);
     }
 }

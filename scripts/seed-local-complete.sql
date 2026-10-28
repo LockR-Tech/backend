@@ -143,7 +143,7 @@ INSERT INTO locker_schema.lockers
 VALUES
 (1, 1, 'CAB-DEMO-01', 'Tủ demo capstone 3x3 + vali', 'ACTIVE',      'FPT University HCMC',                              10.841100, 106.809700, 'Tủ demo theo bản vẽ 1.5x1.2x0.5m, bãi đáp drone trên nóc, hàng 1 dành cho drone', TRUE,  'ARUCO-23', 'OK',          NOW() - INTERVAL '400 days', NOW() - INTERVAL '1 day'),
 (2, 2, 'CAB-VGP-01',  'Tủ Vinhomes Grand Park S5.02','ACTIVE',      'Sảnh block S5.02, Vinhomes Grand Park',            10.842900, 106.836100, 'Tủ 9 ô, có bãi đáp drone',                                                        TRUE,  'ARUCO-41', 'OK',          NOW() - INTERVAL '350 days', NOW() - INTERVAL '2 days'),
-(3, 3, 'CAB-LM81-01', 'Tủ Landmark 81 B1',           'ACTIVE',      'Tầng hầm B1, Landmark 81',                         10.794700, 106.721900, 'Tủ 9 ô trong hầm, không có bãi đáp drone',                                        FALSE, NULL,       'OK',          NOW() - INTERVAL '300 days', NOW() - INTERVAL '3 days'),
+(3, 3, 'CAB-LM81-01', 'Tủ Landmark 81 B1',           'ACTIVE',      'Tầng hầm B1, Landmark 81',                         10.794700, 106.721900, 'Tủ 9 ô, có bãi đáp drone',                                                        TRUE,  'ARUCO-55', 'OK',          NOW() - INTERVAL '300 days', NOW() - INTERVAL '3 days'),
 (4, 4, 'CAB-AEON-01', 'Tủ Aeon Tân Phú cổng B',      'MAINTENANCE', 'Cổng B, Aeon Mall Tân Phú',                        10.801400, 106.617500, 'Đang nâng cấp bo mạch RS485, tạm ngưng nhận đơn mới',                              TRUE,  'ARUCO-77', 'MAINTENANCE', NOW() - INTERVAL '260 days', NOW() - INTERVAL '5 days');
 
 SELECT setval('locker_schema.lockers_id_seq', 4, true);
@@ -174,9 +174,9 @@ VALUES
 (18, 2, 8, 'MEDIUM', TRUE, 'Ô thường',       'AVAILABLE', 'STANDARD', 3, 3, NULL, NULL, NOW() - INTERVAL '350 days', NULL),
 (19, 2, 9, 'XL',     TRUE, 'Ô vali',         'AVAILABLE', 'XL',       2, 0, NULL, NULL, NOW() - INTERVAL '350 days', NULL),
 -- Tủ 3 — CAB-LM81-01
-(20, 3, 1, 'MEDIUM', TRUE,  'Ô thường', 'AVAILABLE', 'STANDARD', 1, 1, NULL, NULL, NOW() - INTERVAL '300 days', NULL),
+(20, 3, 1, 'MEDIUM', TRUE,  'Ô drone hàng 1', 'AVAILABLE', 'DRONE',    1, 1, NULL, NULL, NOW() - INTERVAL '300 days', NULL),
 (21, 3, 2, 'MEDIUM', TRUE,  'Ô thường', 'RESERVED',  'STANDARD', 1, 2, NULL, NOW() + INTERVAL '45 minutes', NOW() - INTERVAL '300 days', NOW() - INTERVAL '15 minutes'),
-(22, 3, 3, 'MEDIUM', TRUE,  'Ô thường', 'AVAILABLE', 'STANDARD', 1, 3, NULL, NULL, NOW() - INTERVAL '300 days', NULL),
+(22, 3, 3, 'MEDIUM', TRUE,  'Ô drone hàng 1', 'AVAILABLE', 'DRONE',    1, 3, NULL, NULL, NOW() - INTERVAL '300 days', NULL),
 (23, 3, 4, 'MEDIUM', TRUE,  'Ô thường', 'AVAILABLE', 'STANDARD', 2, 1, NULL, NULL, NOW() - INTERVAL '300 days', NULL),
 (24, 3, 5, 'MEDIUM', TRUE,  'Ô thường', 'AVAILABLE', 'STANDARD', 2, 2, NULL, NULL, NOW() - INTERVAL '300 days', NULL),
 (25, 3, 6, 'MEDIUM', FALSE, 'Ô thường', 'FAULT',     'STANDARD', 2, 3, 'Khoá điện từ kẹt, đã ngưng sử dụng', NULL, NOW() - INTERVAL '300 days', NOW() - INTERVAL '8 days'),

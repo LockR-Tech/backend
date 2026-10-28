@@ -1,7 +1,11 @@
 package com.huynqb.laundrylocker.locker.repository;
 
 import com.huynqb.laundrylocker.locker.model.LockerBox;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -12,6 +16,17 @@ public interface LockerBoxRepository extends JpaRepository<LockerBox, Long> {
     List<LockerBox> findByLockerId(Long lockerId);
 
     List<LockerBox> findByStatusAndReservedUntilBefore(String status, LocalDateTime cutoff);
+
+    /// Sweep TTL bỏ qua một loại ô (DRONE): ô drone được giữ suốt vòng đời đơn drone (chờ KTV,
+    /// hoãn bay…), chỉ order-service (job đối soát) biết đơn còn sống hay không.
+    List<LockerBox> findByStatusAndReservedUntilBeforeAndCellTypeNot(
+            String status, LocalDateTime cutoff, String cellType);
+
+    /// Khoá dòng ô cho các chuyển trạng thái đọc-kiểm-ghi (reserve/occupy/release): hai đơn đặt
+    /// cùng lúc không thể cùng thấy AVAILABLE rồi cùng giữ một ô.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select b from LockerBox b where b.id = :id")
+    Optional<LockerBox> findByIdForUpdate(@Param("id") Long id);
 
     List<LockerBox> findByLockerIdAndStatusAndActiveTrue(Long lockerId, String status);
 

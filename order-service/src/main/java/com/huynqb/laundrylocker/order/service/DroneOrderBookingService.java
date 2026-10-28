@@ -394,10 +394,14 @@ public class DroneOrderBookingService {
                         "DRONE_DESTINATION_CELL_LOCKER_MISMATCH",
                         "Selected drone cell does not belong to the destination locker");
             }
+            if (Boolean.FALSE.equals(cell.active())) {
+                throw new BusinessException("BOX_NOT_AVAILABLE", "Selected drone cell is not active");
+            }
             if (!"AVAILABLE".equalsIgnoreCase(cell.status())) {
                 throw new BusinessException("BOX_NOT_AVAILABLE", "Selected drone cell is not available");
             }
         }
+        assertBoxNotHeldByActiveOrder(boxId);
         try {
             lockerClient.reserveBox(boxId, "DRONE");
             return boxId;
@@ -405,6 +409,12 @@ public class DroneOrderBookingService {
             throw ex;
         } catch (Exception ex) {
             throw new BusinessException("BOX_RESERVE_FAILED", "Could not reserve drone box " + boxId);
+        }
+    }
+
+    private void assertBoxNotHeldByActiveOrder(Long boxId) {
+        if (!orderRepository.findActiveByBoxId(boxId).isEmpty()) {
+            throw new BusinessException("BOX_NOT_AVAILABLE", "Selected drone cell is already held by an active order");
         }
     }
 

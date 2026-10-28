@@ -152,8 +152,8 @@ SELECT 9000 + g,
        106.6600 + (g % 50) * 0.0020,
        'Tu khoa thong minh demo so ' || g,
        NOW() - (g || ' days')::interval, NOW(),
-       (g % 5 = 0),
-       CASE WHEN g % 5 = 0 THEN 'ARUCO-' || g ELSE NULL END
+       TRUE,
+       'ARUCO-' || g
 FROM generate_series(1, 100) AS g;
 
 -- 9 cells per locker = 900 boxes (3 DRONE / 5 STANDARD / 1 XL layout)

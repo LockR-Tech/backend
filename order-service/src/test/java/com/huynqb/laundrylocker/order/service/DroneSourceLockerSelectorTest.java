@@ -1,10 +1,12 @@
 package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
+import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.settings.OrderRules;
 import org.junit.jupiter.api.Test;
 import java.util.List;
@@ -12,10 +14,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class DroneSourceLockerSelectorTest {
+    private final LockerLookupClient lookup = mock(LockerLookupClient.class);
     private final LockerDroneClient drones = mock(LockerDroneClient.class);
     private final OrderRules rules = mock(OrderRules.class);
     private final DroneSourceLockerSelector selector = new DroneSourceLockerSelector(
-            mock(LockerLookupClient.class), drones, rules, mock(DroneFlightControl.class));
+            lookup, drones, rules, mock(DroneFlightControl.class));
 
     @Test
     void onlyIdleActiveDronesWithKnownSufficientBatteryCanServeANewPickup() {
@@ -45,10 +48,20 @@ class DroneSourceLockerSelectorTest {
         assertFalse(selector.serviceable(1L));
     }
 
+    @Test
+    void destinationWithFaultyOrMaintenanceLandingPadIsRejected() {
+        LockerInfo destFault = new LockerInfo(
+                5L, 1L, "DST", "Destination", "ACTIVE", "", 10.71, 106.71, true, "M5", "FAULT", 8, 4);
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(destFault)));
+
+        BusinessException err = assertThrows(
+                BusinessException.class, () -> selector.select(10.70, 106.70, 5L, null));
+        assertEquals("LANDING_PAD_NOT_READY", err.getCode());
+    }
+
     /// Trạm đang dừng bay không làm tủ gửi: chọn trạm kế tiếp; mọi trạm trong tầm đều dừng thì báo đúng lý do.
     @Test
     void suspendedStationsAreSkippedAsSource() {
-        LockerLookupClient lookup = mock(LockerLookupClient.class);
         DroneFlightControl flightControl = mock(DroneFlightControl.class);
         DroneSourceLockerSelector withStops = new DroneSourceLockerSelector(lookup, drones, rules, flightControl);
         when(rules.droneMaxPickupMeters()).thenReturn(5000);
@@ -68,13 +81,13 @@ class DroneSourceLockerSelectorTest {
         when(flightControl.activeSuspensions()).thenReturn(java.util.Map.of(
                 1L, new com.huynqb.laundrylocker.order.model.DroneStationSuspension(),
                 2L, new com.huynqb.laundrylocker.order.model.DroneStationSuspension()));
-        var error = assertThrows(com.huynqb.laundrylocker.common.exception.BusinessException.class,
+        var error = assertThrows(BusinessException.class,
                 () -> withStops.select(10.7001, 106.7001, 9L, null));
         assertEquals("DRONE_STATION_SUSPENDED", error.getCode());
     }
 
-    private static com.huynqb.laundrylocker.order.dto.admin.LockerInfo station(Long id, double lat, double lng) {
-        return new com.huynqb.laundrylocker.order.dto.admin.LockerInfo(
+    private static LockerInfo station(Long id, double lat, double lng) {
+        return new LockerInfo(
                 id, 1L, "S" + id, "Trạm " + id, "ACTIVE", null, lat, lng, true, null, 4, 4);
     }
 

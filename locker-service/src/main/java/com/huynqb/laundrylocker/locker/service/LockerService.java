@@ -119,6 +119,8 @@ public class LockerService {
         locker.setAddress(request.address());
         locker.setLatitude(request.latitude());
         locker.setLongitude(request.longitude());
+        locker.setLandingPad(true);
+        locker.setLandingPadStatus("OK");
         LockerUnit saved = lockerRepository.save(locker);
         publishLockerCatalogChanged(saved.getId());
         return toStaffResponse(saved, new HashMap<>());
@@ -236,8 +238,10 @@ public class LockerService {
         locker.setAddress(request.address());
         locker.setLatitude(request.latitude());
         locker.setLongitude(request.longitude());
+        LockerUnit saved = lockerRepository.save(locker);
+        publishLockerAvailabilityChanged(id);
         publishLockerCatalogChanged(id);
-        return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
+        return toStaffResponse(saved, new HashMap<>());
     }
 
     @Transactional
@@ -364,6 +368,7 @@ public class LockerService {
         locker.setStatus(maintenance ? "MAINTENANCE" : "ACTIVE");
         locker.setMaintenanceSource(maintenance ? MAINTENANCE_SOURCE_ADMIN : null);
         publishLockerCatalogChanged(id);
+        publishLockerAvailabilityChanged(id);
         return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
     }
 
@@ -554,8 +559,12 @@ public class LockerService {
 
     @Transactional
     public LockerBoxSummary reserveBox(Long boxId, String channel) {
-        LockerBox box = findBox(boxId);
+        // Khoá dòng ô tới hết giao dịch: kiểm AVAILABLE và ghi RESERVED là một bước nguyên tử.
+        LockerBox box = lockBox(boxId);
         assertLockerBookable(box.getLockerId());
+        if (!Boolean.TRUE.equals(box.getActive())) {
+            throw new BusinessException("BOX_NOT_AVAILABLE", "Box is not active");
+        }
         if (!"AVAILABLE".equalsIgnoreCase(box.getStatus())) {
             throw new BusinessException("BOX_NOT_AVAILABLE", "Box is not available");
         }
@@ -592,9 +601,15 @@ public class LockerService {
     /// Backstop sweep for boxes stuck RESERVED past their TTL — defense in
     /// depth in case order-service's own auto-cancel sweep is down. Does not
     /// touch the order itself; just frees the cell so it isn't lost forever.
+    ///
+    /// DRONE cells are skipped: a drone order legitimately holds its cell for its whole
+    /// AWAITING_DISPATCH life (payment, technician pickup, weather holds…), which can exceed
+    /// the TTL. Freeing it here let a second order grab a cell the drone was still flying to.
+    /// Orphan DRONE holds are released by order-service's reconcile job, which knows the order.
     @Transactional
     public int sweepExpiredReservations() {
-        List<LockerBox> expired = boxRepository.findByStatusAndReservedUntilBefore("RESERVED", LocalDateTime.now());
+        List<LockerBox> expired = boxRepository.findByStatusAndReservedUntilBeforeAndCellTypeNot(
+                "RESERVED", LocalDateTime.now(), CellType.DRONE);
         for (LockerBox box : expired) {
             box.setStatus("AVAILABLE");
             box.setReservedUntil(null);
@@ -607,7 +622,7 @@ public class LockerService {
 
     @Transactional
     public LockerBoxSummary occupyBox(Long boxId) {
-        LockerBox box = findBox(boxId);
+        LockerBox box = lockBox(boxId);
         if (!"RESERVED".equalsIgnoreCase(box.getStatus()) && !"AVAILABLE".equalsIgnoreCase(box.getStatus())) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "BOX_NOT_RESERVED", "Box must be reserved before deposit");
@@ -621,7 +636,7 @@ public class LockerService {
 
     @Transactional
     public LockerBoxSummary releaseBox(Long boxId) {
-        LockerBox box = findBox(boxId);
+        LockerBox box = lockBox(boxId);
         String status = box.getStatus();
         if (isFaultHold(status)
                 || "OUT_OF_SERVICE".equalsIgnoreCase(status)
@@ -942,7 +957,11 @@ public class LockerService {
         List<LockerBox> boxes = boxRepository.findByLockerIdOrderByRowIndexAscColIndexAsc(lockerId);
         Map<Long, IotClient.BoxHardwareStatus> hwByBox = fetchHardwareStatuses(lockerId);
         List<CellResponse> cells = boxes.stream().map(b -> toCell(b, hwByBox.get(b.getId()))).toList();
-        long available = boxes.stream().filter(b -> "AVAILABLE".equalsIgnoreCase(b.getStatus())).count();
+        long available = isBookable(locker)
+                ? boxes.stream()
+                        .filter(b -> Boolean.TRUE.equals(b.getActive()) && "AVAILABLE".equalsIgnoreCase(b.getStatus()))
+                        .count()
+                : 0;
         long fault = boxes.stream().filter(b -> "FAULT".equalsIgnoreCase(b.getStatus())).count();
 
         Boolean online = null;
@@ -985,10 +1004,14 @@ public class LockerService {
                 lockerId, ReportCategory.LANDING_PAD, OPEN_REPORT_STATUSES);
         if ("OK".equals(status) && open.isPresent()) {
             closeReportOfAsset(open.get(), actorUserId, roles.contains("ADMIN"));
+            publishLockerAvailabilityChanged(lockerId);
+            publishLockerCatalogChanged(lockerId);
             return layout(lockerId);
         }
         locker.setLandingPadStatus(status);
         lockerRepository.save(locker);
+        publishLockerAvailabilityChanged(lockerId);
+        publishLockerCatalogChanged(lockerId);
         if (!"OK".equals(status) && open.isEmpty()) {
             LockerReport report = new LockerReport();
             report.setLockerId(lockerId);
@@ -1192,6 +1215,7 @@ public class LockerService {
             locker.setStatus("MAINTENANCE");
             locker.setMaintenanceSource(MAINTENANCE_SOURCE_TICKET);
             lockerRepository.save(locker);
+            publishLockerAvailabilityChanged(locker.getId());
             publishLockerCatalogChanged(locker.getId());
         }
         notifyRouted(saved, locker);
@@ -1847,6 +1871,8 @@ public class LockerService {
                     .ifPresent(locker -> {
                         locker.setLandingPadStatus("OK");
                         lockerRepository.save(locker);
+                        publishLockerAvailabilityChanged(locker.getId());
+                        publishLockerCatalogChanged(locker.getId());
                     });
         }
         if (Boolean.TRUE.equals(report.getBlocksLocker())
@@ -1859,6 +1885,7 @@ public class LockerService {
                         locker.setStatus("ACTIVE");
                         locker.setMaintenanceSource(null);
                         lockerRepository.save(locker);
+                        publishLockerAvailabilityChanged(locker.getId());
                         publishLockerCatalogChanged(locker.getId());
                     });
         }
@@ -3701,6 +3728,12 @@ public class LockerService {
         return boxRepository.findById(id).orElseThrow(() -> new NotFoundException("Box", id));
     }
 
+    /// Như {@link #findBox} nhưng khoá dòng (SELECT … FOR UPDATE) tới hết giao dịch — dùng cho
+    /// reserve/occupy/release để hai luồng không cùng đọc một trạng thái cũ rồi ghi đè nhau.
+    private LockerBox lockBox(Long id) {
+        return boxRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Box", id));
+    }
+
     /// API công khai (app khách, kiosk): không lộ KTV phụ trách.
     private LockerResponse toResponse(LockerUnit locker) {
         return toResponse(locker, null, gatewayOnline(locker.getId()));
@@ -3765,7 +3798,8 @@ public class LockerService {
         return new LockerResponse(
                 locker.getId(), locker.getStoreId(), locker.getCode(), locker.getName(), locker.getStatus(),
                 locker.getAddress(), locker.getLatitude(), locker.getLongitude(),
-                locker.getLandingPad(), locker.getLandingMarkerId(), totalBoxes, availableBoxes,
+                locker.getLandingPad(), locker.getLandingMarkerId(), locker.getLandingPadStatus(),
+                totalBoxes, availableBoxes,
                 technicianId, technicianName, online);
     }
 
@@ -3796,7 +3830,8 @@ public class LockerService {
                 box.getArucoMarkerId(),
                 box.getArucoMarkerSizeCm(),
                 box.getArucoAssignedAt(),
-                box.getArucoAssignedBy());
+                box.getArucoAssignedBy(),
+                box.getActive());
     }
 
     private void publishBoxFault(LockerBox box, String reason) {
@@ -4396,6 +4431,26 @@ public class LockerService {
     /// Tủ đổi thông tin khách thấy (tên, địa chỉ, toạ độ, cửa hàng, trạng thái bảo trì) ⇒ app tải lại danh sách tủ.
     private void publishLockerCatalogChanged(Long lockerId) {
         CatalogChangeEvents.publish(rabbitTemplate, "locker-service", CatalogChangeEvents.LOCKER, lockerId);
+    }
+
+    private void publishLockerAvailabilityChanged(Long lockerId) {
+        if (lockerId == null) {
+            return;
+        }
+        // Gửi SAU commit: app nhận tin rồi tải lại phải thấy dữ liệu mới; rollback thì không báo.
+        com.huynqb.laundrylocker.common.util.AfterCommit.run(() -> {
+            try {
+                rabbitTemplate.convertAndSend(
+                        DomainEventNames.EXCHANGE,
+                        DomainEventNames.LOCKER_AVAILABILITY_CHANGED,
+                        DomainEvent.of(
+                                DomainEventNames.LOCKER_AVAILABILITY_CHANGED,
+                                "locker-service",
+                                Map.of("lockerId", lockerId)));
+            } catch (AmqpException ex) {
+                log.warn("Could not publish locker.availability.changed for locker {}: {}", lockerId, ex.getMessage());
+            }
+        });
     }
 
     public void publishLockerLayoutUpdated(Long lockerId, Long boxId, Integer boxNumber, String status, String message) {

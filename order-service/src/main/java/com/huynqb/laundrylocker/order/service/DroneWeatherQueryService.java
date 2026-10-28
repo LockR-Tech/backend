@@ -15,7 +15,9 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -27,7 +29,15 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class DroneWeatherQueryService {
 
-    private static final java.util.Set<String> AWAITING_PICKUP_STAGES = java.util.Set.of("AWAITING_DISPATCH", "PICKUP_ASSIGNED");
+    private static final Set<String> AWAITING_PICKUP_STAGES = Set.of("AWAITING_DISPATCH", "PICKUP_ASSIGNED");
+
+    /// Các trạng thái / chặng mà chuyến bay đã kết thúc (kiện đã vào ô nhận hoặc đơn đã đóng/huỷ/rơi kiện):
+    /// không còn lấy dự báo thời tiết 30 phút cho đơn nữa.
+    private static final Set<String> FLIGHT_ENDED_ORDER_STATUSES = Set.of(
+            "STORING", "COMPLETED", "CANCELED", "CANCELLED", "EXPIRED");
+    private static final Set<String> FLIGHT_ENDED_DELIVERY_STAGES = Set.of(
+            "READY_FOR_PICKUP", "DELIVERED", "COMPLETED", "FAILED",
+            "CANCELED", "CANCELLED", "EXPIRED", "DROP_REPORTED");
 
     private final LockerOrderRepository orderRepository;
     private final LockerLookupClient lockerLookupClient;
@@ -43,6 +53,13 @@ public class DroneWeatherQueryService {
         List<LockerInfo> lockers = lockers(Stream.of(sourceId, destinationId).filter(Objects::nonNull).toList());
         LockerInfo source = find(lockers, sourceId);
         LockerInfo destination = find(lockers, destinationId);
+        if (isFlightEnded(order)) {
+            return new DroneWeatherViews.RouteWeather(
+                    order.getId(),
+                    sourceId, source == null ? null : source.name(),
+                    destinationId, destination == null ? null : destination.name(),
+                    null);
+        }
         // Kiện chưa rời nhà người gửi: xét cả chặng nhà → tủ bay như lúc đặt đơn; đã lấy rồi thì chỉ còn tuyến bay.
         boolean beforePickup = AWAITING_PICKUP_STAGES.contains(order.getDeliveryStage());
         DroneWeatherAssessment weather = source == null || destination == null
@@ -55,6 +72,15 @@ public class DroneWeatherQueryService {
                 sourceId, source == null ? null : source.name(),
                 destinationId, destination == null ? null : destination.name(),
                 weather);
+    }
+
+    private static boolean isFlightEnded(LockerOrder order) {
+        String status = order.getStatus() == null ? "" : order.getStatus().trim().toUpperCase(Locale.ROOT);
+        if (FLIGHT_ENDED_ORDER_STATUSES.contains(status)) {
+            return true;
+        }
+        String stage = order.getDeliveryStage() == null ? "" : order.getDeliveryStage().trim().toUpperCase(Locale.ROOT);
+        return FLIGHT_ENDED_DELIVERY_STAGES.contains(stage);
     }
 
     /// Tủ đang hoạt động, có bãi đáp và toạ độ — sắp theo tên — kèm lệnh dừng bay của từng trạm.
