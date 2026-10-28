@@ -149,11 +149,11 @@ public class AuthService {
                 findByIdentifier(request.identifier());
         if (!"ACTIVE".equalsIgnoreCase(account.getStatus())
                 || !passwordEncoder.matches(request.password(), account.getPasswordHash())) {
-            throw new BusinessException("AUTH_INVALID", "Invalid credentials");
+            throw new BusinessException("AUTH_INVALID", "Email/số điện thoại hoặc mật khẩu không đúng");
         }
         account.setLastLoginAt(LocalDateTime.now());
         UserSummary user = userClient.getUser(account.getUserId()).data();
-        return issue(account, user.roles());
+        return issueSingleFactor(account, user.roles());
     }
 
     @Transactional
@@ -181,9 +181,9 @@ public class AuthService {
         Optional<SocialIdentity> existingIdentity = socialIdentityRepository.findByProviderAndProviderUserId(provider, uid);
         if (existingIdentity.isPresent()) {
             AuthAccount account = authAccountRepository.findById(existingIdentity.get().getAccountId())
-                    .orElseThrow(() -> new BusinessException("AUTH_ACCOUNT_NOT_FOUND", "Account not found for social identity"));
+                    .orElseThrow(() -> new BusinessException("AUTH_ACCOUNT_NOT_FOUND", "Tài khoản liên kết này chưa được đăng ký"));
             UserSummary user = userClient.getUser(account.getUserId()).data();
-            return issue(account, user.roles());
+            return issueSingleFactor(account, user.roles());
         }
 
         AuthAccount account = null;
@@ -220,22 +220,22 @@ public class AuthService {
         socialIdentityRepository.save(socialIdentity);
 
         UserSummary user = userClient.getUser(account.getUserId()).data();
-        return issue(account, user.roles());
+        return issueSingleFactor(account, user.roles());
     }
 
     @Transactional
     public AuthResponse refresh(RefreshTokenRequest request) {
         Claims claims = jwtService.parse(request.refreshToken());
         if (!"refresh".equals(claims.get("tokenUse", String.class))) {
-            throw new BusinessException("AUTH_INVALID_REFRESH", "Refresh token is invalid");
+            throw new BusinessException("AUTH_INVALID_REFRESH", "Phiên đăng nhập không hợp lệ, vui lòng đăng nhập lại");
         }
         RefreshToken stored =
                 refreshTokenRepository
                         .findByTokenHashAndRevokedFalse(hash(request.refreshToken()))
-                        .orElseThrow(() -> new BusinessException("AUTH_INVALID_REFRESH", "Refresh token is invalid"));
+                        .orElseThrow(() -> new BusinessException("AUTH_INVALID_REFRESH", "Phiên đăng nhập không hợp lệ, vui lòng đăng nhập lại"));
         if (stored.getExpiresAt().isBefore(Instant.now())) {
             stored.setRevoked(true);
-            throw new BusinessException("AUTH_REFRESH_EXPIRED", "Refresh token expired");
+            throw new BusinessException("AUTH_REFRESH_EXPIRED", "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại");
         }
         AuthAccount account = findAccount(stored.getAccountId());
         UserSummary user = userClient.getUser(account.getUserId()).data();
@@ -302,7 +302,7 @@ public class AuthService {
                             account.setPhoneVerified(true);
                             account.setLastLoginAt(LocalDateTime.now());
                             UserSummary user = userClient.getUser(account.getUserId()).data();
-                            return authMap(issue(account, user.roles()), false, phoneNumber, null);
+                            return authMap(issueSingleFactor(account, user.roles()), false, phoneNumber, null);
                         })
                 .orElseGet(
                         () -> {
@@ -389,7 +389,7 @@ public class AuthService {
     public Map<String, Object> verifyEmailOtp(Map<String, Object> request) {
         String email = normalizeEmail(text(request, "email"));
         if (!emailOtpService.verifyOtp(email, "EMAIL_LOGIN", text(request, "otp"))) {
-            throw new BusinessException("AUTH_OTP_INVALID", "OTP is invalid or expired");
+            throw new BusinessException("AUTH_OTP_INVALID", "Mã OTP không đúng hoặc đã hết hạn");
         }
         return authAccountRepository
                 .findByEmail(email)
@@ -398,7 +398,7 @@ public class AuthService {
                             account.setEmailVerified(true);
                             account.setLastLoginAt(LocalDateTime.now());
                             UserSummary user = userClient.getUser(account.getUserId()).data();
-                            return authMap(issue(account, user.roles()), false, null, null);
+                            return authMap(issueSingleFactor(account, user.roles()), false, null, null);
                         })
                 .orElseGet(
                         () -> {
@@ -430,7 +430,7 @@ public class AuthService {
         String email = normalizeEmail(text(request, "email"));
         authAccountRepository
                 .findByEmail(email)
-                .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "User not found"));
+                .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "Không tìm thấy tài khoản"));
         emailOtpService.sendOtp(email, "PASSWORD_RESET");
     }
 
@@ -439,15 +439,15 @@ public class AuthService {
         String email = normalizeEmail(text(request, "email"));
         String password = text(request, "newPassword");
         if (!password.equals(text(request, "confirmPassword"))) {
-            throw new BusinessException("AUTH_PASSWORD_MISMATCH", "Passwords do not match");
+            throw new BusinessException("AUTH_PASSWORD_MISMATCH", "Mật khẩu nhập lại không khớp");
         }
         if (!emailOtpService.verifyOtp(email, "PASSWORD_RESET", text(request, "otp"))) {
-            throw new BusinessException("AUTH_OTP_INVALID", "OTP is invalid or expired");
+            throw new BusinessException("AUTH_OTP_INVALID", "Mã OTP không đúng hoặc đã hết hạn");
         }
         AuthAccount account =
                 authAccountRepository
                         .findByEmail(email)
-                        .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "User not found"));
+                        .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "Không tìm thấy tài khoản"));
         account.setPasswordHash(passwordEncoder.encode(password));
         account.setPasswordSet(true);
         revokeRefreshTokens(account.getId());
@@ -462,7 +462,7 @@ public class AuthService {
         AuthAccount account =
                 authAccountRepository
                         .findByUserId(userId)
-                        .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "User not found"));
+                        .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "Không tìm thấy tài khoản"));
         String newPassword = firstText(request, "newPassword", "password");
         if (!StringUtils.hasText(newPassword)) {
             throw new BusinessException("AUTH_NEW_PASSWORD_REQUIRED", "Vui lòng nhập mật khẩu mới");
@@ -617,7 +617,7 @@ public class AuthService {
     public KioskLoginGrant issueKioskLogin(Long userId) {
         AuthAccount account = authAccountRepository.findByUserId(userId).orElseThrow(AuthService::accountInactive);
         UserSummary user = userClient.getUser(account.getUserId()).data();
-        AuthResponse auth = issue(account, user.roles());
+        AuthResponse auth = issueSingleFactor(account, user.roles());
         account.setLastLoginAt(LocalDateTime.now());
         return new KioskLoginGrant(auth, user);
     }
@@ -631,7 +631,7 @@ public class AuthService {
         // Tài khoản bị khoá báo chung "sai thông tin" như login thường, và không gửi OTP.
         if (!"ACTIVE".equalsIgnoreCase(account.getStatus())
                 || !passwordEncoder.matches(text(request, "password"), account.getPasswordHash())) {
-            throw new BusinessException("AUTH_INVALID", "Invalid credentials");
+            throw new BusinessException("AUTH_INVALID", "Email/số điện thoại hoặc mật khẩu không đúng");
         }
         UserSummary user = userClient.getUser(account.getUserId()).data();
         if (!user.roles().contains("ADMIN")) {
@@ -688,7 +688,19 @@ public class AuthService {
         return authAccountRepository
                 .findByEmail(identifier)
                 .or(() -> authAccountRepository.findByPhoneNumber(identifier))
-                .orElseThrow(() -> new BusinessException("AUTH_INVALID", "Invalid credentials"));
+                .orElseThrow(() -> new BusinessException("AUTH_INVALID", "Email/số điện thoại hoặc mật khẩu không đúng"));
+    }
+
+    /// Đăng nhập chỉ một lớp (mật khẩu, OTP email/SĐT, Firebase, QR kiosk): tài khoản ADMIN phải qua
+    /// `/api/admin/auth/login` + OTP 2FA, nên mọi đường này không được cấp token mang quyền ADMIN.
+    private AuthResponse issueSingleFactor(AuthAccount account, Set<String> roles) {
+        if (roles != null && roles.contains("ADMIN")) {
+            throw new BusinessException(
+                    "ADMIN_AUTH_2FA_REQUIRED",
+                    "Tài khoản quản trị chỉ đăng nhập trên trang quản trị web (có mã OTP)",
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        return issue(account, roles);
     }
 
     private AuthResponse issue(AuthAccount account, Set<String> roles) {

@@ -9,6 +9,7 @@ import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.common.media.MediaPurpose;
 import com.huynqb.laundrylocker.common.media.VerifiedMedia;
 import com.huynqb.laundrylocker.common.security.UserRoles;
+import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
@@ -38,6 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+@lombok.extern.slf4j.Slf4j
 @Service
 @RequiredArgsConstructor
 public class DroneParcelIncidentService {
@@ -69,6 +71,7 @@ public class DroneParcelIncidentService {
     private final CloudinaryMediaStorage mediaStorage;
     private final ObjectMapper objectMapper;
     private final OrderRules rules;
+    private final LockerClient lockerClient;
 
     @Value("${app.drone.camera.stream-url-template:}")
     private String cameraStreamUrlTemplate;
@@ -589,6 +592,8 @@ public class DroneParcelIncidentService {
             if (proposal.isRedeliveryOffered()) {
                 incident.setRedeliveryStatus("ACCEPTED");
                 requestRedelivery(incident, order, proposal, customerUserId);
+            } else {
+                closeOrderWithoutRedelivery(incident, order, customerUserId);
             }
             if (proposal.getCompensationAmount() != null && proposal.getCompensationAmount().signum() > 0) {
                 boolean approvalRequired = order.getIncidentApprovalRequired() != null
@@ -846,6 +851,30 @@ public class DroneParcelIncidentService {
         item.setNote(trim(note));
         item.setMetadataJson(metadataJson);
         timelineRepository.save(item);
+    }
+
+    /// Khách chọn phương án không giao lại: đơn gốc kết thúc tại đây và ô nhận đã giữ được nhả — nếu không, ô bị
+    /// giữ mãi cho một kiện sẽ không bao giờ tới. (Có giao lại thì đơn giao lại dùng tiếp ô này.)
+    private void closeOrderWithoutRedelivery(DroneParcelIncident incident, LockerOrder order, Long actorUserId) {
+        if (Set.of("CANCELED", "COMPLETED", "EXPIRED").contains(order.getStatus())) {
+            return;
+        }
+        String previous = order.getStatus();
+        order.setStatus("CANCELED");
+        order.setStaffNote("Đóng đơn do sự cố rơi kiện (" + incident.getIncidentCode()
+                + "); khách chọn phương án không giao lại");
+        Long boxId = order.getReservedBoxId();
+        orderRepository.save(order);
+        if (boxId != null) {
+            try {
+                lockerClient.releaseBox(boxId);
+            } catch (RuntimeException ex) {
+                log.warn("Could not release box {} of order {} after drop incident: {}", boxId, order.getId(),
+                        ex.getMessage());
+            }
+        }
+        addOrderHistory(order.getId(), previous, "CANCELED", actorUserId,
+                "Đóng đơn do sự cố rơi kiện " + incident.getIncidentCode() + " — không giao lại, đã nhả ô nhận");
     }
 
     private void addOrderHistory(Long orderId, String from, String to, Long actor, String note) {

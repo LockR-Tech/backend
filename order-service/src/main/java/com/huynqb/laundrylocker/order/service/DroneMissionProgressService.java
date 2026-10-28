@@ -207,6 +207,7 @@ public class DroneMissionProgressService {
 
     public static String stageLabel(String stage) {
         return switch (stage == null ? "" : stage) {
+            case "LAUNCHING" -> "drone đang khởi phóng";
             case "DEPARTED" -> "drone đã rời trạm";
             case "EN_ROUTE" -> "drone đang trên đường";
             case "APPROACHING" -> "drone sắp tới tủ nhận";

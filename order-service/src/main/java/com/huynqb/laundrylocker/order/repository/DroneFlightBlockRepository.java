@@ -21,6 +21,11 @@ public interface DroneFlightBlockRepository
     @Query("select b.cause, count(b) from DroneFlightBlock b where b.createdAt >= :since group by b.cause")
     List<Object[]> countByCauseSince(@Param("since") LocalDateTime since);
 
+    /// Các trạm liên quan của từng lần chặn từ `since`: [sourceLockerId, destinationLockerId, blockedLockerId].
+    @Query("select b.sourceLockerId, b.destinationLockerId, b.blockedLockerId from DroneFlightBlock b "
+            + "where b.createdAt >= :since")
+    List<Object[]> stationsSince(@Param("since") LocalDateTime since);
+
     /// Lọc tuỳ chọn; `lockerId` khớp tủ gửi, tủ nhận hoặc trạm gây chặn.
     default Page<DroneFlightBlock> search(
             String cause, String action, Long lockerId, String orderCode,

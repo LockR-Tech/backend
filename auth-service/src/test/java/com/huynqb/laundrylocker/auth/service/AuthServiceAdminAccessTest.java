@@ -107,6 +107,25 @@ class AuthServiceAdminAccessTest {
     }
 
     @Test
+    void adminCannotGetTokenFromPasswordOnlyLogin() {
+        BusinessException rejected = assertThrows(BusinessException.class,
+                () -> service.login(new LoginRequest(EMAIL, "secret")));
+
+        assertEquals("ADMIN_AUTH_2FA_REQUIRED", rejected.getCode());
+        verify(jwtService, never()).issue(any(), any(), any());
+    }
+
+    @Test
+    void adminStillGetsTokenAfterTwoFactor() {
+        String tempToken = adminLogin();
+        when(emailOtpService.verifyOtp(EMAIL, "ADMIN_2FA", "123456")).thenReturn(true);
+
+        Map<String, Object> auth = verify2fa(tempToken, "123456");
+
+        assertEquals("access", auth.get("accessToken"));
+    }
+
+    @Test
     void tooManyWrongOtpsInvalidateTempToken() {
         String tempToken = adminLogin();
         when(emailOtpService.verifyOtp(EMAIL, "ADMIN_2FA", "000000")).thenReturn(false);

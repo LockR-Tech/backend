@@ -431,6 +431,7 @@ public class DronePickupService {
                     "DRONE_PICKUP_PARCEL_NOT_VERIFIED",
                     "Confirm the parcel matches the declaration, or report the pickup as failed");
         }
+        assertNearPickupPoint(order, technicianId);
         var verifiedPhoto = pickupPhoto == null
                 ? null
                 : mediaStorage.verify(pickupPhoto, MediaPurpose.DRONE_PICKUP, technicianId);
@@ -457,6 +458,30 @@ public class DronePickupService {
                 "Kỹ thuật viên đã lấy kiện của đơn " + order.getOrderCode()
                         + " và đang mang tới drone để nạp trực tiếp; kiện không cần bỏ vào ô tủ bay.",
                 order, "DRONE_DELIVERY_STATUS_CHANGED");
+    }
+
+    /// "Đã lấy hàng" chỉ hợp lệ khi KTV đang đứng ở điểm lấy hàng: GPS ca trực còn hiệu lực và không xa quá mức admin
+    /// đặt. Không có GPS mới thì yêu cầu cập nhật lại, thay vì tin lời xác nhận từ xa.
+    private void assertNearPickupPoint(LockerOrder order, Long technicianId) {
+        int maxDistance = rules.dronePickupConfirmMaxDistanceMeters();
+        if (maxDistance <= 0 || order.getPickupLatitude() == null || order.getPickupLongitude() == null) {
+            return;
+        }
+        DroneTechnicianPresence presence = presenceRepository.findById(technicianId).orElse(null);
+        LocalDateTime freshAfter = LocalDateTime.now().minusMinutes(rules.droneTechnicianLocationMaxAgeMinutes());
+        if (presence == null || presence.getLatitude() == null || presence.getLongitude() == null
+                || presence.getLocationAt() == null || !presence.getLocationAt().isAfter(freshAfter)) {
+            throw new BusinessException("DRONE_PICKUP_LOCATION_STALE",
+                    "Chưa có vị trí GPS mới của bạn — bấm \"Cập nhật lại GPS\" tại điểm lấy hàng rồi xác nhận lại");
+        }
+        int distance = (int) Math.round(DroneTelemetryService.distanceM(
+                new double[] {order.getPickupLatitude(), order.getPickupLongitude()},
+                presence.getLatitude(), presence.getLongitude()));
+        if (distance > maxDistance) {
+            throw new BusinessException("DRONE_PICKUP_TOO_FAR",
+                    "Bạn đang cách điểm lấy hàng " + distanceLabel(distance) + " (tối đa " + maxDistance
+                            + " m) — tới đúng điểm lấy hàng rồi xác nhận");
+        }
     }
 
     /**

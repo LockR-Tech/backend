@@ -1,13 +1,8 @@
 package com.huynqb.laundrylocker.order.service;
 
-import com.huynqb.laundrylocker.order.client.LockerDroneClient;
-import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
-import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
-import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.DroneParcelIncident;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
-import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.DroneParcelIncidentRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
@@ -31,8 +26,6 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
     private final LockerOrderRepository orderRepository;
     private final OrderStatusHistoryRepository historyRepository;
     private final DroneParcelIncidentRepository incidentRepository;
-    private final DroneMissionRepository missionRepository;
-    private final LockerDroneClient lockerDroneClient;
 
     @Override
     @Transactional
@@ -104,55 +97,12 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             newOrder.setDescription("Giao lại miễn phí từ Hub sau sự cố " + incidentCode + " (đơn cũ: " + oldOrder.getOrderCode() + ")");
             newOrder.setCustomerNote("Đơn giao lại miễn phí cho sự cố rơi kiện " + incidentCode);
 
-            // Bắt đầu từ bước check để nạp hàng:
-            // Kiểm tra drone rảnh (IDLE) tại Hub để gán và chuyển thẳng sang AWAITING_LOADING (check để nạp hàng)
-            DroneUnitDto assignedDrone = null;
-            if (newOrder.getSourceLockerId() != null) {
-                try {
-                    var dronesResp = lockerDroneClient.listDroneUnits(newOrder.getSourceLockerId());
-                    if (dronesResp != null && dronesResp.data() != null) {
-                        assignedDrone = dronesResp.data().stream()
-                                .filter(d -> "IDLE".equalsIgnoreCase(d.status()))
-                                .findFirst()
-                                .orElse(null);
-                    }
-                } catch (Exception ex) {
-                    log.warn("Could not list drone units for source locker {}: {}", newOrder.getSourceLockerId(), ex.getMessage());
-                }
-            }
-
-            if (assignedDrone != null) {
-                try {
-                    lockerDroneClient.transitionDroneStatus(assignedDrone.id(),
-                            new DroneStatusTransitionRequest("IDLE", "RESERVED", "Reserved for redelivery order " + newOrderCode));
-                } catch (Exception ex) {
-                    log.warn("Could not transition drone {} to RESERVED: {}", assignedDrone.id(), ex.getMessage());
-                    assignedDrone = null;
-                }
-            }
-
-            if (assignedDrone != null) {
-                newOrder.setStatus("AWAITING_DISPATCH");
-                newOrder.setDeliveryStage("ACCEPTED");
-            } else {
-                newOrder.setStatus("AWAITING_DISPATCH");
-                newOrder.setDeliveryStage("AWAITING_DISPATCH");
-            }
-
+            // Kiện đã nằm ở Hub (không có điểm lấy hàng, đã "bỏ kiện"): đơn vào hàng chờ chung của đội bay như đơn
+            // gửi tại tủ — KTV drone nào rảnh cũng thấy, tự gán drone ở tủ gửi rồi nạp và phóng như thường.
+            // Không tự giữ drone ở đây: nhiệm vụ phải do chính KTV nhận, nếu không không ai thao tác được.
+            newOrder.setStatus("AWAITING_DISPATCH");
+            newOrder.setDeliveryStage("AWAITING_DISPATCH");
             newOrder = orderRepository.save(newOrder);
-
-            if (assignedDrone != null) {
-                DroneMission mission = new DroneMission();
-                mission.setOrderId(newOrder.getId());
-                mission.setDroneUnitId(assignedDrone.id());
-                mission.setDroneCode(assignedDrone.code());
-                mission.setSourceLockerId(newOrder.getSourceLockerId());
-                mission.setDestinationLockerId(newOrder.getDestinationLockerId());
-                mission.setStatus("AWAITING_LOADING");
-                mission.setAssignedByUserId(customerUserId);
-                missionRepository.save(mission);
-            }
-
             // Ghi nhận lịch sử tạo đơn mới
             OrderStatusHistory newHistory = new OrderStatusHistory();
             newHistory.setOrderId(newOrder.getId());

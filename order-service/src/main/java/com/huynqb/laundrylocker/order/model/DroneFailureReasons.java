@@ -13,6 +13,8 @@ public final class DroneFailureReasons {
 
     /// Admin bật "Tạm dừng bay" (thời tiết xấu, lệnh cấm bay…).
     public static final String WEATHER = "WEATHER";
+    /// Dự báo trên tuyến bay của đơn vượt ngưỡng an toàn (mưa, gió, tầm nhìn) — không cần admin bấm gì.
+    public static final String WEATHER_UNSAFE = "WEATHER_UNSAFE";
     /// Admin tạm dừng bay ở trạm cất cánh hoặc tủ nhận của đơn.
     public static final String STATION_SUSPENDED = "STATION_SUSPENDED";
     /// Drone của nhiệm vụ lỗi/bảo trì/ngừng hoạt động.
@@ -42,6 +44,7 @@ public final class DroneFailureReasons {
 
     private static final Map<String, String> LABELS = Map.ofEntries(
             Map.entry(WEATHER, "Tạm dừng bay do thời tiết hoặc lệnh điều hành"),
+            Map.entry(WEATHER_UNSAFE, "Thời tiết tuyến bay không an toàn"),
             Map.entry(STATION_SUSPENDED, "Trạm bay đang tạm dừng"),
             Map.entry(DRONE_FAULT, "Drone gặp sự cố"),
             Map.entry(NO_DRONE_AVAILABLE, "Tủ gửi không còn drone sẵn sàng"),
@@ -78,11 +81,24 @@ public final class DroneFailureReasons {
     /// 5 khác) — client và báo cáo cũ vẫn đọc cột này.
     public static int legacyCancelCode(String code) {
         return switch (code == null ? "" : code) {
-            case WEATHER -> 1;
+            case WEATHER, WEATHER_UNSAFE -> 1;
             case DRONE_FAULT, NO_DRONE_AVAILABLE, FLIGHT_INCIDENT -> 2;
             case LANDING_PAD_FAULT -> 3;
             case OTHER -> 5;
             default -> 4;
+        };
+    }
+
+    /// Nhãn hiển thị cho mã số lý do KTV chọn khi huỷ trước khi bay (1 thời tiết · 2 drone · 3 bãi đáp ·
+    /// 4 vận hành · 5 khác) — đúng chữ trên nút của app, không phải nhãn sự cố hệ thống.
+    public static String cancelLabel(Integer code) {
+        return switch (code == null ? 0 : code) {
+            case 1 -> "Thời tiết xấu";
+            case 2 -> "Drone lỗi";
+            case 3 -> "Bãi đáp không sẵn sàng";
+            case 4 -> "Lý do vận hành";
+            case 5 -> "Khác";
+            default -> "Không rõ lý do";
         };
     }
 

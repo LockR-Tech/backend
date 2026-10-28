@@ -44,17 +44,71 @@ class DroneDeliverySimulatorTest {
     private DronePositionBroadcaster positionBroadcaster;
     @Mock
     private com.huynqb.laundrylocker.order.client.UserClient userClient;
+    @Mock
+    private DroneTelemetryRegistry telemetryRegistry;
+    @Mock
+    private com.huynqb.laundrylocker.order.repository.DroneDeliverySessionRepository sessionRepository;
 
     private DroneDeliverySimulator simulator(com.huynqb.laundrylocker.order.settings.OrderRules rules) {
         DroneMissionProgressService progress = new DroneMissionProgressService(
                 missionRepository, orderRepository, historyRepository, notificationClient,
                 lockerDroneClient, lockerClient, userClient, rules, null);
-        return new DroneDeliverySimulator(missionRepository, orderRepository, progress, positionBroadcaster, rules);
+        return new DroneDeliverySimulator(missionRepository, orderRepository, progress, positionBroadcaster, rules,
+                telemetryRegistry, sessionRepository);
     }
 
     @Test
     void defaultsDemoStagesToThreeSecondsForFastEndToEndTesting() {
         assertEquals(3000, TestOrderRules.defaults().droneDemoStageDelayMs());
+    }
+
+    @Test
+    void indoorArucoModeWaitsAtApproachingOnlyForADroneThatHasACamera() {
+        DroneDeliverySimulator simulator = simulator(TestOrderRules.of(java.util.Map.of(
+                "app.drone.demo.stage-delay-ms", 5000, "app.drone.demo.indoor-aruco-enabled", true)));
+        DroneMission mission = mission(301L, "APPROACHING", LocalDateTime.now().minusSeconds(6));
+        LockerOrder order = order("APPROACHING");
+        when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(telemetryRegistry.latest("DRONE-09"))
+                .thenReturn(Optional.of(mock(com.huynqb.laundrylocker.order.dto.DroneTelemetryFrame.class)));
+
+        simulator.advanceEligibleMissions(LocalDateTime.now());
+
+        assertEquals("APPROACHING", mission.getStatus(), "drone có Pi: chờ camera nhận diện mã ArUco");
+        verify(missionRepository, never()).save(any());
+    }
+
+    @Test
+    void indoorArucoModeDoesNotStrandADroneWithoutCamera() {
+        DroneDeliverySimulator simulator = simulator(TestOrderRules.of(java.util.Map.of(
+                "app.drone.demo.stage-delay-ms", 5000, "app.drone.demo.indoor-aruco-enabled", true)));
+        DroneMission mission = mission(301L, "APPROACHING", LocalDateTime.now().minusSeconds(6));
+        LockerOrder order = order("APPROACHING");
+        when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(telemetryRegistry.latest("DRONE-09")).thenReturn(Optional.empty());
+
+        simulator.advanceEligibleMissions(LocalDateTime.now());
+
+        assertEquals("ARRIVED", mission.getStatus(), "drone không có camera không bao giờ quét được mã");
+    }
+
+    @Test
+    void orderWithAnArucoSessionNeverAutoCompletesEvenAfterIndoorModeIsTurnedOff() {
+        DroneDeliverySimulator simulator =
+                simulator(TestOrderRules.of(java.util.Map.of("app.drone.demo.stage-delay-ms", 5000)));
+        DroneMission mission = mission(301L, "ARRIVED", LocalDateTime.now().minusMinutes(5));
+        LockerOrder order = order("ARRIVED");
+        when(missionRepository.findByStatusIn(any())).thenReturn(List.of(mission));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(sessionRepository.findFirstByOrderIdOrderByCreatedAtDesc(21L))
+                .thenReturn(Optional.of(new com.huynqb.laundrylocker.order.model.DroneDeliverySession()));
+
+        simulator.advanceEligibleMissions(LocalDateTime.now());
+
+        assertEquals("ARRIVED", order.getDeliveryStage(), "nắp tủ thật chưa đóng thì kiện chưa vào ô");
+        verify(missionRepository, never()).save(any());
     }
 
     @Test

@@ -760,7 +760,7 @@ public class OrderService {
         releaseBoxes(order);
         order.setCompletedAt(LocalDateTime.now());
         order.setPinCode(null);
-        return transition(order, "COMPLETED", userId, order.getReceiveBoxId(), "Customer completed pickup");
+        return transition(order, "COMPLETED", userId, order.getReceiveBoxId(), "Người nhận đã lấy hàng khỏi tủ");
     }
 
     @Transactional
@@ -1186,7 +1186,18 @@ public class OrderService {
                 order.getIntendedReceiveAt(),
                 isPaidOrFree(order),
                 nextAction(order),
-                order.getPaymentStatus());
+                order.getPaymentStatus(),
+                order.getPaidAmount(),
+                amountDue(order));
+    }
+
+    /// Còn phải trả = tổng đơn − đã nhận (không âm); đơn đã PAID thì 0.
+    private static BigDecimal amountDue(LockerOrder order) {
+        if (isPaidOrFree(order)) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal paid = order.getPaidAmount() == null ? BigDecimal.ZERO : order.getPaidAmount();
+        return order.getTotalPrice().subtract(paid).max(BigDecimal.ZERO);
     }
 
     private static boolean isPaidOrFree(LockerOrder order) {

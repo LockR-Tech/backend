@@ -69,6 +69,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DEMO_ALLOWED_USER_IDS = "app.drone.demo.allowed-user-ids";
     public static final String DRONE_DEMO_STAGE_DELAY_MS = "app.drone.demo.stage-delay-ms";
     public static final String DRONE_DEMO_INDOOR_ARUCO_ENABLED = "app.drone.demo.indoor-aruco-enabled";
+    public static final String DRONE_DEMO_INDOOR_HANDHELD_ENABLED = "app.drone.demo.indoor-handheld-enabled";
     public static final String DRONE_DEMO_HOLD_OPEN_SECONDS = "app.drone.demo.hold-open-seconds";
     public static final String DRONE_OPEN_LID_MAX_WAIT_SECONDS = "app.drone.delivery.open-lid-max-wait-seconds";
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
@@ -92,6 +93,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String MAX_VOUCHERS_PER_ORDER = "app.order.max-vouchers-per-order";
     public static final String DRONE_RETURN_MIN_BATTERY = "app.order.drone-return-min-battery-percent";
     public static final String DRONE_PICKUP_REOFFER_COOLDOWN_MINUTES = "app.order.drone-pickup-reoffer-cooldown-minutes";
+    public static final String DRONE_PICKUP_CONFIRM_MAX_DISTANCE = "app.order.drone-pickup-confirm-max-distance-meters";
     // Key thời tiết, nắp tủ, telemetry giữ tên property cũ (trước chỉ đặt được bằng biến môi trường).
     public static final String WEATHER_MAX_WIND_SPEED = "app.drone.weather.max-wind-speed-kmh";
     public static final String WEATHER_MAX_WIND_GUST = "app.drone.weather.max-wind-gust-kmh";
@@ -100,6 +102,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String WEATHER_BLOCK_PRECIPITATION_CODES = "app.drone.weather.block-precipitation-codes";
     public static final String WEATHER_WINDOW_MINUTES = "app.drone.weather.forecast-window-minutes";
     public static final String WEATHER_BLOCK_WHEN_UNAVAILABLE = "app.drone.weather.block-when-unavailable";
+    public static final String WEATHER_AUTO_STATION_PAUSE = "app.drone.weather.auto-station-pause";
     public static final String LID_ACK_TIMEOUT_SECONDS = "app.drone.delivery.lid-ack-timeout-seconds";
     public static final String LID_MOTION_TIMEOUT_SECONDS = "app.drone.delivery.lid-motion-timeout-seconds";
     public static final String LID_MAX_RETRIES = "app.drone.delivery.lid-max-retries";
@@ -299,6 +302,9 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_PICKUP_REOFFER_COOLDOWN_MINUTES, DRONE, "Không mời lại KTV vừa từ chối trong",
                         "KTV vừa từ chối hoặc để quá hạn lời mời lấy hàng tận nhà không được mời lại cùng đơn trong "
                                 + "khoảng này. 0 = mời lại ngay.", 10, 0, 240, "phút"),
+                integer(DRONE_PICKUP_CONFIRM_MAX_DISTANCE, DRONE, "KTV phải ở gần điểm lấy hàng khi xác nhận đã lấy",
+                        "Theo GPS ca trực (cập nhật trong hạn \"vị trí KTV còn hiệu lực\"): xa hơn mức này thì không cho "
+                                + "bấm \"Đã lấy hàng\". 0 = không kiểm (chỉ dùng khi thử nghiệm tại bàn).", 300, 0, 50000, "mét"),
 
                 // === THỜI TIẾT & ĐIỀU KIỆN BAY ===
                 // Chỉnh theo khung drone thật và giấy phép bay. Áp cho đặt đơn, đội bay phóng drone và bảng thời tiết.
@@ -322,6 +328,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 bool(WEATHER_BLOCK_WHEN_UNAVAILABLE, WEATHER, "Chặn bay khi không có dữ liệu thời tiết",
                         "Bật (khuyến nghị): cả Open-Meteo lẫn MET Norway đều không trả lời thì không đặt đơn, không phóng "
                                 + "drone. Tắt: vẫn bay khi không biết trời — chỉ dùng khi đội bay tự quan sát thời tiết.", true),
+                bool(WEATHER_AUTO_STATION_PAUSE, WEATHER, "Tự dừng trạm khi dự báo xấu",
+                        "Bật: mỗi 5 phút hệ thống xét dự báo tại từng trạm có bãi đáp; trạm vượt ngưỡng thì tự tạm dừng "
+                                + "(lý do Thời tiết, ghi vào lịch sử dừng trạm) và tự mở lại khi trời đủ điều kiện. "
+                                + "Lệnh dừng do admin tạo không bị hệ thống mở lại.", true),
 
                 // === KẾT NỐI TỦ & ĐỊNH VỊ DRONE ===
                 integer(LID_ACK_TIMEOUT_SECONDS, DRONE_LINK, "Chờ tủ xác nhận lệnh nắp",
@@ -351,6 +361,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                                 + "việc drone nhả hàng được giả lập theo số giây cấu hình rồi tủ đóng nắp thật, chỉ khi đóng nắp "
                                 + "xong mới chuyển Sẵn sàng lấy hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS, "
                                 + "drone tự báo đã nhả hàng.", false),
+                bool(DRONE_DEMO_INDOOR_HANDHELD_ENABLED, DRONE_DEMO, "Cho phép demo drone cầm tay (bỏ qua bước KTV)",
+                        "Chỉ dùng khi trình diễn trong nhà: khi bật cùng Chế độ B và chỉ có đúng một đơn DEMO đang chờ, "
+                                + "camera thấy đúng mã ô là hệ thống tự tạo nhiệm vụ — KHÔNG cần KTV lấy hàng, nạp và phóng. "
+                                + "Tắt (mặc định): drone phải được KTV phóng theo đúng quy trình mới được mở nắp tủ.", false),
                 integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giả lập drone nhả hàng (giây)",
                         "Chế độ Indoor Demo: sau khi tủ báo nắp trượt đã mở THẬT, hệ thống giả lập drone nhả hàng "
                                 + "trong chừng này giây rồi gửi lệnh đóng nắp thật. Không ảnh hưởng việc mở nắp — nắp luôn "

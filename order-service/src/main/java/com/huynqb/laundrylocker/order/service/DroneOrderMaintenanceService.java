@@ -9,6 +9,7 @@ import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.dto.*;
+import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
 import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
 import com.huynqb.laundrylocker.order.model.DroneFlightBlock;
@@ -826,13 +827,6 @@ public class DroneOrderMaintenanceService {
     }
 
     private String cancelReasonLabel(Integer reasonCode) {
-        return switch (reasonCode == null ? -1 : reasonCode) {
-            case 1 -> "Weather";
-            case 2 -> "Drone fault";
-            case 3 -> "Landing pad unavailable";
-            case 4 -> "Operational reason";
-            case 5 -> "Other";
-            default -> "Unknown";
-        };
+        return "Huỷ trước khi bay: " + DroneFailureReasons.cancelLabel(reasonCode);
     }
 }

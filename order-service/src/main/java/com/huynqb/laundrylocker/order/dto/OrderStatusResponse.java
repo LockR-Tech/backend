@@ -12,5 +12,8 @@ public record OrderStatusResponse(
         LocalDateTime estimatedReadyAt,
         Boolean isPaid,
         String nextAction,
-        String paymentStatus) {
+        String paymentStatus,
+        /// Đã nhận cho đơn (cộng dồn các lần chuyển khoản) và còn phải trả — để màn VietQR báo chuyển thiếu.
+        java.math.BigDecimal paidAmount,
+        java.math.BigDecimal amountDue) {
 }

@@ -484,7 +484,7 @@ public class DroneWeatherService {
         if (gust > limits.maxWindGustKmh()) reasons.add(String.format(Locale.ROOT, "gió giật %.0f km/h", gust));
         if (visibilityBlocks(visibility, limits)) reasons.add(String.format(Locale.ROOT, "tầm nhìn %.0f m", visibility));
         if (reasons.isEmpty()) reasons.add("điều kiện khí tượng vượt ngưỡng vận hành");
-        return "Không thể đặt chuyến bay: " + String.join(", ", reasons) + " trên tuyến trong "
+        return "Thời tiết không cho phép bay: " + String.join(", ", reasons) + " trên tuyến trong "
                 + limits.windowMinutes() + " phút tới.";
     }
 

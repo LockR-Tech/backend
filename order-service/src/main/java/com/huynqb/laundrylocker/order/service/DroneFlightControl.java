@@ -270,6 +270,24 @@ public class DroneFlightControl {
         return counts;
     }
 
+    /// Số lần chặn liên quan tới từng trạm (tủ gửi, tủ nhận hoặc trạm gây chặn) trong `hours` giờ qua; một lần
+    /// chặn chỉ tính một lần cho mỗi trạm.
+    @Transactional(readOnly = true)
+    public Map<Long, Long> blockCountsByStation(int hours) {
+        LocalDateTime since = LocalDateTime.now().minusHours(Math.max(1, Math.min(hours, 24 * 90)));
+        Map<Long, Long> counts = new java.util.TreeMap<>();
+        for (Object[] row : blocks.stationsSince(since)) {
+            java.util.Set<Long> stations = new java.util.HashSet<>();
+            for (Object id : row) {
+                if (id instanceof Number number) {
+                    stations.add(number.longValue());
+                }
+            }
+            stations.forEach(id -> counts.merge(id, 1L, Long::sum));
+        }
+        return counts;
+    }
+
     private static String blankToNull(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }

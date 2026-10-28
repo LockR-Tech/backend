@@ -7,17 +7,22 @@ import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
+import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.DroneUnitDto;
+import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
+import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.dto.LockerLayoutDto;
 import com.huynqb.laundrylocker.order.dto.OpenReportDto;
 import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
 import com.huynqb.laundrylocker.order.model.DroneMission;
+import com.huynqb.laundrylocker.order.model.DroneDeliverySession;
 import com.huynqb.laundrylocker.order.model.DronePickup;
 import com.huynqb.laundrylocker.order.model.DroneFlightBlock;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
+import com.huynqb.laundrylocker.order.repository.DroneDeliverySessionRepository;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.DronePickupRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
@@ -68,6 +73,13 @@ public class DroneDeliveryBlockService {
     private final DroneSourceLockerSelector sourceLockerSelector;
     private final OrderRules rules;
     private final DroneFlightControl flightControl;
+    private final DroneDeliverySessionRepository sessionRepository;
+    private final LockerLookupClient lockerLookupClient;
+    private final DroneWeatherService weatherService;
+
+    /// Phiên giao ArUco kết thúc ở một trong các trạng thái này ⇒ nắp tủ nhận không mở/đóng được, đơn đứng ở ARRIVED.
+    private static final Set<String> LID_FAILED_STATES =
+            Set.of(DroneDeliverySession.LID_OPEN_FAILED, DroneDeliverySession.LID_CLOSE_FAILED);
 
     public enum Verdict {
         /// Không đổi gì (vẫn bình thường, hoặc vẫn bị chặn và chưa quá hạn).
@@ -89,6 +101,7 @@ public class DroneDeliveryBlockService {
         private final Map<Long, LockerLayoutDto> layouts = new HashMap<>();
         private final Map<Long, List<DroneUnitDto>> dronesByLocker = new HashMap<>();
         private final Map<Long, DroneUnitDto> drones = new HashMap<>();
+        private final Map<Long, LockerInfo> lockers = new HashMap<>();
         private List<OpenReportDto> reports;
     }
 
@@ -155,7 +168,8 @@ public class DroneDeliveryBlockService {
             boolean newlyBlocked = order.getDeliveryBlockReason() == null;
             order.setDeliveryBlockReason(cause.reason());
             order.setDeliveryBlockTicketId(cause.ticketId());
-            order.setDeliveryBlockNote(cause.note());
+            order.setDeliveryBlockNote(cause.note() == null || cause.note().length() <= 500
+                    ? cause.note() : cause.note().substring(0, 497) + "...");
             if (newlyBlocked || order.getDeliveryBlockedAt() == null) {
                 order.setDeliveryBlockedAt(now);
             }
@@ -216,6 +230,23 @@ public class DroneDeliveryBlockService {
                     && (mission != null || !reselectSource(order, pickup, snapshot))) {
                 return stationSuspended(currentSource, "Trạm cất cánh");
             }
+            Cause weather = routeWeather(order.getSourceLockerId(), destinationId, snapshot);
+            if (weather != null) {
+                return weather;
+            }
+        } else if ("ARRIVED".equals(order.getDeliveryStage())) {
+            Cause lid = lidFailure(order);
+            if (lid != null) {
+                return lid;
+            }
+        } else {
+            // Trời trên tuyến chuyển xấu khi drone đang bay: không tự đóng đơn (kiện đang trên không, chặn lúc bay
+            // không hết hạn) nhưng báo ngay đội bay, admin và khách để đội bay quyết định hạ cánh / quay về.
+            Cause weather = routeWeather(order.getSourceLockerId(), destinationId, snapshot);
+            if (weather != null) {
+                return new Cause(weather.reason(), null, "Drone đang bay — " + weather.note()
+                        + ". Đội bay theo dõi drone, cho hạ cánh an toàn hoặc quay về trạm nếu cần.");
+            }
         }
         LockerLayoutDto destination = layout(destinationId, snapshot);
         if (!"ACTIVE".equalsIgnoreCase(destination.status())) {
@@ -265,6 +296,63 @@ public class DroneDeliveryBlockService {
         return null;
     }
 
+    /// Thời tiết trên tuyến tủ gửi → tủ nhận không cho bay ⇒ đơn bị chặn với lý do
+    /// riêng (khách được báo; quá hạn chặn thì đóng và hoàn tiền như các sự cố khác). Không tra được thời tiết thì
+    /// không kết luận — giữ nguyên, lúc phóng vẫn kiểm lại.
+    private Cause routeWeather(Long sourceId, Long destinationId, Snapshot snapshot) {
+        if (sourceId == null || destinationId == null) {
+            return null;
+        }
+        LockerInfo source = lockerInfo(sourceId, snapshot);
+        LockerInfo destination = lockerInfo(destinationId, snapshot);
+        if (source == null || destination == null) {
+            return null;
+        }
+        DroneWeatherAssessment weather;
+        try {
+            weather = weatherService.assessRoute(source, destination);
+        } catch (RuntimeException ex) {
+            log.debug("Weather check for route {} → {} failed: {}", sourceId, destinationId, ex.getMessage());
+            return null;
+        }
+        if (weather == null || weather.safe() || weather.unavailable()) {
+            return null;
+        }
+        return new Cause(DroneFailureReasons.WEATHER_UNSAFE, null, weather.message());
+    }
+
+    private LockerInfo lockerInfo(Long lockerId, Snapshot snapshot) {
+        LockerInfo cached = snapshot.lockers.get(lockerId);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            var response = lockerLookupClient.getLockers(List.of(lockerId));
+            List<LockerInfo> found = response == null ? null : response.data();
+            LockerInfo locker = found == null ? null
+                    : found.stream().filter(item -> Objects.equals(item.id(), lockerId)).findFirst().orElse(null);
+            if (locker != null) {
+                snapshot.lockers.put(lockerId, locker);
+            }
+            return locker;
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    /// Drone đã tới tủ nhận nhưng lần mở/đóng nắp gần nhất thất bại: đơn không tự đi tiếp, nên phải hiện là "đang
+    /// gặp sự cố" cho khách và đội bay. Drone quét lại mã mở phiên mới thì sự cố tự hết.
+    private Cause lidFailure(LockerOrder order) {
+        return sessionRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId())
+                .filter(session -> LID_FAILED_STATES.contains(session.getState()))
+                .map(session -> new Cause(DroneFailureReasons.DESTINATION_LOCKER_FAULT, null,
+                        (DroneDeliverySession.LID_OPEN_FAILED.equals(session.getState())
+                                ? "Tủ nhận chưa mở được nắp trượt — đội bay đưa drone quét lại mã ô hoặc báo chuyến bay thất bại"
+                                : "Tủ nhận chưa đóng được nắp trượt sau khi thả hàng — đội bay cần kiểm tra tại tủ")
+                                + (session.getErrorMessage() == null ? "" : " (" + session.getErrorMessage() + ")")))
+                .orElse(null);
+    }
+
     private Cause stationSuspended(Long lockerId, String role) {
         return flightControl.activeSuspension(lockerId)
                 .map(suspension -> new Cause(DroneFailureReasons.STATION_SUSPENDED, null,
@@ -278,6 +366,7 @@ public class DroneDeliveryBlockService {
     private void recordFlightBlock(LockerOrder order, Cause cause) {
         String blockCause = switch (cause.reason()) {
             case DroneFailureReasons.WEATHER -> DroneFlightBlock.FLIGHTS_SUSPENDED;
+            case DroneFailureReasons.WEATHER_UNSAFE -> DroneFlightBlock.WEATHER_UNSAFE;
             case DroneFailureReasons.STATION_SUSPENDED -> DroneFlightBlock.STATION_SUSPENDED;
             default -> null;
         };

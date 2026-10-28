@@ -2836,9 +2836,11 @@ public class LockerService {
                     String type = p.getTechnicianType() != null ? p.getTechnicianType().toUpperCase() : "";
                     if (DRONE_TECHNICIAN.equals(type)) {
                         return activeTechnician(p.getUserId(), DRONE_TECHNICIAN) != null
-                                && !finalBusyDroneTechIds.contains(p.getUserId());
+                                && !finalBusyDroneTechIds.contains(p.getUserId())
+                                && !slaRestricted(p.getUserId());
                     } else {
-                        return activeTechnician(p.getUserId(), LOCKER_TECHNICIAN) != null;
+                        return activeTechnician(p.getUserId(), LOCKER_TECHNICIAN) != null
+                                && !slaRestricted(p.getUserId());
                     }
                 })
                 .sorted(Comparator
@@ -2864,13 +2866,31 @@ public class LockerService {
                         locker,
                         activeTechnician(locker.getAssignedTechnicianId(), LOCKER_TECHNICIAN),
                         distanceMeters(latitude, longitude, locker.getLatitude(), locker.getLongitude())))
-                .filter(candidate -> candidate.technicianId() != null)
+                .filter(candidate -> candidate.technicianId() != null && !slaRestricted(candidate.technicianId()))
                 .sorted(Comparator
                         .comparingDouble(RecoveryCandidate::distanceMeters)
                         .thenComparingLong(candidate -> activeWorkload(candidate.technicianId())))
                 .map(candidate -> new RecoveryAssignment(candidate.technicianId(), candidate.locker().getId()))
                 .findFirst()
                 .orElse(new RecoveryAssignment(null, null));
+    }
+
+    /// KTV đang ở bậc "Hạn chế nhận việc" (đủ số phiếu trễ hạn SLA theo ngưỡng admin) thì không được phân công
+    /// việc mới — cùng cách đếm với trang hiệu suất KTV.
+    private boolean slaRestricted(Long technicianId) {
+        int slaHours = rules.slaHours();
+        LocalDateTime now = LocalDateTime.now();
+        long overdue = reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(technicianId).stream()
+                .filter(r -> !isClosedReport(r.getStatus()))
+                .filter(r -> {
+                    LocalDateTime due = r.getSlaDueAt();
+                    if (due == null && r.getCreatedAt() != null) {
+                        due = r.getCreatedAt().plusHours(slaHours);
+                    }
+                    return due != null && now.isAfter(due);
+                })
+                .count();
+        return overdue >= rules.penaltyThresholds().restricted();
     }
 
     private Long activeTechnician(Long technicianId, String requiredRole) {
@@ -3235,7 +3255,7 @@ public class LockerService {
             logPi.setResult("ONLINE");
             logPi.setActorType("SYSTEM");
             logPi.setActorId("Pi-Bootloader");
-            logPi.setMessage("Bo xu ly Raspberry Pi cam nguon truc tuyen. Tiep nhan tin hieu telemetry.");
+            logPi.setMessage("Bộ xử lý Raspberry Pi đã có nguồn và trực tuyến — bắt đầu nhận telemetry.");
 
             logPi.setCreatedAt(LocalDateTime.now());
             droneIotLogRepository.save(logPi);

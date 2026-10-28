@@ -494,9 +494,32 @@ class DroneLockerCommunicationServiceTest {
         assertTrue(sessions.isEmpty(), "chế độ demo trong nhà đang tắt mà vẫn tạo nhiệm vụ");
     }
 
+    @Test
+    void indoorModeAloneDoesNotLetTheCameraSkipTheTechnicianSteps() {
+        mission.setStatus("CANCELED"); // KTV chưa lấy hàng, chưa nạp, chưa phóng
+        order.setFulfillmentMode("DEMO");
+        lenient().when(missionRepository.findByOrderId(anyLong())).thenReturn(Optional.empty());
+        lenient().when(orderRepository.findByTypeAndStatusNotInOrderByUpdatedAtDesc(eq("DRONE_DELIVERY"), any()))
+                .thenReturn(List.of(order));
+
+        String body = event("MARKER_DETECTED", Map.of("arucoMarkerId", 7, "arucoDictionary", "DICT_4X4_50",
+                "mode", "INDOOR_ARUCO_DEMO"), OffsetDateTime.now());
+        indoorService(true, false).handleIncomingMessage(
+                DroneLockerCommunicationService.DRONE_EVENTS_TOPIC, body, signed(body));
+
+        assertTrue(sessions.isEmpty(), "camera tự tạo nhiệm vụ khi chưa bật demo drone cầm tay");
+        verify(missionRepository, never()).save(any(DroneMission.class));
+    }
+
     private DroneLockerCommunicationService indoorService(boolean enabled) {
+        return indoorService(enabled, enabled);
+    }
+
+    /// `handheld`: cho phép camera tự tạo nhiệm vụ cho đơn DEMO chưa được KTV phóng (mặc định tắt).
+    private DroneLockerCommunicationService indoorService(boolean enabled, boolean handheld) {
         OrderRules demoRules = TestOrderRules.of(Map.of(
-                com.huynqb.laundrylocker.order.settings.OrderSettingsCatalog.DRONE_DEMO_INDOOR_ARUCO_ENABLED, enabled));
+                com.huynqb.laundrylocker.order.settings.OrderSettingsCatalog.DRONE_DEMO_INDOOR_ARUCO_ENABLED, enabled,
+                com.huynqb.laundrylocker.order.settings.OrderSettingsCatalog.DRONE_DEMO_INDOOR_HANDHELD_ENABLED, handheld));
         DroneMissionProgressService progress = new DroneMissionProgressService(missionRepository, orderRepository,
                 historyRepository, notificationClient, lockerDroneClient, lockerClient, userClient, demoRules, mailer);
         DroneLockerCommunicationService demo = new DroneLockerCommunicationService(commLogRepository, orderRepository,

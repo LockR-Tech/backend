@@ -222,7 +222,7 @@ public class DroneDeliveryFailureService {
                 lockerDroneClient.transitionDroneStatus(
                         mission.getDroneUnitId(),
                         new DroneStatusTransitionRequest(
-                                "IN_FLIGHT", "FAULT", "Delivery of order " + order.getOrderCode() + " failed: " + label));
+                                "IN_FLIGHT", "FAULT", "Đơn " + order.getOrderCode() + " giao không hoàn tất: " + label));
             }
         } catch (RuntimeException ex) {
             log.info("Drone {} not released after failed delivery of order {}: {}",

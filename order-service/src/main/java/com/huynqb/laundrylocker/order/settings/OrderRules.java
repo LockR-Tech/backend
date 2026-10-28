@@ -153,6 +153,10 @@ public class OrderRules {
             boolean blockWhenUnavailable) {
     }
 
+    public boolean weatherAutoStationPause() {
+        return settings.getBoolean(WEATHER_AUTO_STATION_PAUSE);
+    }
+
     public WeatherLimits weatherLimits() {
         return new WeatherLimits(
                 settings.getInt(WEATHER_MAX_WIND_SPEED),
@@ -166,6 +170,10 @@ public class OrderRules {
 
     public int droneReturnMinBatteryPercent() {
         return settings.getInt(DRONE_RETURN_MIN_BATTERY);
+    }
+
+    public int dronePickupConfirmMaxDistanceMeters() {
+        return settings.getInt(DRONE_PICKUP_CONFIRM_MAX_DISTANCE);
     }
 
     public int dronePickupReofferCooldownMinutes() {
@@ -303,6 +311,11 @@ public class OrderRules {
 
     public boolean receiverNotifyEmail() {
         return settings.getBoolean(RECEIVER_NOTIFY_EMAIL);
+    }
+
+    /// Demo "drone cầm tay": camera tự tạo nhiệm vụ cho đơn DEMO chưa được KTV phóng. Chỉ có hiệu lực cùng Chế độ B.
+    public boolean droneDemoIndoorHandheldEnabled() {
+        return droneDemoIndoorArucoEnabled() && settings.getBoolean(DRONE_DEMO_INDOOR_HANDHELD_ENABLED);
     }
 
     public boolean droneDemoIndoorArucoEnabled() {

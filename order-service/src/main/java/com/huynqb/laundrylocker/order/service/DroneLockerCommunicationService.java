@@ -601,7 +601,7 @@ public class DroneLockerCommunicationService {
             order = orderRepository.findById(mission.getOrderId()).orElse(null);
             mode = order != null && "DEMO".equalsIgnoreCase(order.getFulfillmentMode())
                     && orderRules.droneDemoIndoorArucoEnabled() ? "INDOOR_ARUCO_DEMO" : "REAL_OUTDOOR";
-        } else if (orderRules.droneDemoIndoorArucoEnabled()) {
+        } else if (orderRules.droneDemoIndoorHandheldEnabled()) {
             List<LockerOrder> demo = orderRepository
                     .findByTypeAndStatusNotInOrderByUpdatedAtDesc("DRONE_DELIVERY", CLOSED_ORDER_STATUSES).stream()
                     .filter(candidate -> "AWAITING_DISPATCH".equals(candidate.getStatus()))
@@ -650,7 +650,7 @@ public class DroneLockerCommunicationService {
      */
     private DroneMission indoorDemoMission(String droneId, Long claimedOrderId, Long claimedLockerId,
             Integer detectedMarkerId, String detectedDict, String mode) {
-        if (!"INDOOR_ARUCO_DEMO".equalsIgnoreCase(mode) || !orderRules.droneDemoIndoorArucoEnabled()
+        if (!"INDOOR_ARUCO_DEMO".equalsIgnoreCase(mode) || !orderRules.droneDemoIndoorHandheldEnabled()
                 || detectedMarkerId == null) {
             return null;
         }
@@ -1102,9 +1102,24 @@ public class DroneLockerCommunicationService {
     }
 
     private void expireOpenRequest(DroneDeliverySession session) {
-        String errorCode = "LOCKER_NO_RESPONSE";
-        String errorMessage = "Tủ không phản hồi lệnh mở nắp sau " + orderRules.droneOpenLidMaxWaitSeconds()
-                + " giây (mất kết nối) — huỷ phiên, drone cần nhận diện lại mã ArUco";
+        long waited = orderRules.droneOpenLidMaxWaitSeconds();
+        String errorCode;
+        String errorMessage;
+        if (unverifiedOpenCommands.remove(session.getOpenCommandId())) {
+            // Tủ CÓ trả lời, chỉ là "đã mở" không kèm xác nhận phần cứng — không phải mất kết nối.
+            errorCode = "LID_UNVERIFIED";
+            errorMessage = "Tủ báo \"đã mở\" nhưng không gửi xác nhận phần cứng (lidConfirmation) — nắp có thể chưa "
+                    + "chạy; kiểm tra motor nắp và cờ LID_BYPASS_PHYSICAL_MOTION trên Pi tủ, rồi cho drone quét lại mã";
+        } else if (lidCommandAttempts.containsKey(session.getOpenCommandId())
+                && lidCommandAttempts.get(session.getOpenCommandId()).acked()) {
+            errorCode = "LOCKER_NO_RESULT";
+            errorMessage = "Tủ đã nhận lệnh nhưng không báo kết quả mở nắp sau " + waited
+                    + " giây — huỷ phiên, drone cần nhận diện lại mã ArUco";
+        } else {
+            errorCode = "LOCKER_NO_RESPONSE";
+            errorMessage = "Tủ không phản hồi lệnh mở nắp sau " + waited + " giây (có thể mất kết nối)"
+                    + " — huỷ phiên, drone cần nhận diện lại mã ArUco";
+        }
         lidCommandAttempts.remove(session.getOpenCommandId());
         session.setState(DroneDeliverySession.LID_OPEN_FAILED);
         session.setErrorCode(errorCode);
@@ -1117,8 +1132,8 @@ public class DroneLockerCommunicationService {
                 "PROCESSED", "TIMEOUT", "FAILED", errorCode, errorMessage, 0, null);
         publishCommand("LID_OPEN_FAILED", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
                 session.getDroneId(), session.getLockerId(), session.getCompartmentId(), errorCode, errorMessage);
-        log.warn("[COMM] Open-lid request {} of session {} expired: locker {} never answered",
-                session.getOpenCommandId(), session.getSessionId(), session.getLockerId());
+        log.warn("[COMM] Open-lid request {} of session {} expired ({}) at locker {}",
+                session.getOpenCommandId(), session.getSessionId(), errorCode, session.getLockerId());
     }
 
     // =========================================================================

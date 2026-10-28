@@ -14,6 +14,7 @@ public interface DroneDeliverySessionRepository extends JpaRepository<DroneDeliv
     Optional<DroneDeliverySession> findByCloseCommandId(String closeCommandId);
 
     Optional<DroneDeliverySession> findFirstByOrderIdAndStateInOrderByCreatedAtDesc(Long orderId, Collection<String> states);
+    Optional<DroneDeliverySession> findFirstByOrderIdOrderByCreatedAtDesc(Long orderId);
 
     Optional<DroneDeliverySession> findFirstByDroneIdAndStateOrderByCreatedAtDesc(String droneId, String state);
 

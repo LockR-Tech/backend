@@ -69,6 +69,8 @@ public class LockerMqttService {
     private final CabinetLayoutLookup layoutLookup;
     private MqttClient client;
     private final ConcurrentHashMap<String, CompletableFuture<JsonNode>> pendingCommands = new ConcurrentHashMap<>();
+    /// Mã lệnh iot-service đã gửi (kèm lúc gửi), giữ ít phút để nhận ra cả kết quả đến muộn của chính lệnh đó.
+    private final ConcurrentHashMap<String, Long> ownCommands = new ConcurrentHashMap<>();
     /// Trạng thái cửa, heartbeat, bản tin cấp phát có thể gọi Feign/DB — xử lý ngoài luồng
     /// callback của Paho để không làm chậm kết quả mở ô đang có người đứng chờ ở tủ.
     private final ExecutorService inbound = Executors.newSingleThreadExecutor(runnable -> {
@@ -185,8 +187,10 @@ public class LockerMqttService {
             log.debug("Received message on {}: {}", topic, payload);
             JsonNode data = objectMapper.readTree(payload);
             if (topic.startsWith("cabinet/") && topic.endsWith("/result")) {
-                completeCommand(data);
-                inbound.execute(() -> onCommandResult(topic, data));
+                boolean own = completeCommand(data);
+                if (!own && !"ACCEPTED".equalsIgnoreCase(text(data, "status"))) {
+                    inbound.execute(() -> onCommandResult(topic, data));
+                }
             } else {
                 inbound.execute(() -> route(topic, data));
             }
@@ -235,15 +239,19 @@ public class LockerMqttService {
         }
     }
 
-    private void completeCommand(JsonNode data) {
+    /// Kết quả của một lệnh iot-service tự gửi (mở/đóng ô cho người dùng, kiosk, KTV, admin) — `true` thì log truy cập đã
+    /// được nơi gửi ghi, không ghi lại thành "nắp trượt drone".
+    private boolean completeCommand(JsonNode data) {
         String commandId = text(data, "commandId");
         if (commandId == null) {
-            return;
+            return false;
         }
+        boolean own = ownCommands.containsKey(commandId);
         CompletableFuture<JsonNode> future = pendingCommands.remove(commandId);
         if (future != null) {
             future.complete(data);
         }
+        return own || future != null;
     }
 
     void route(String topic, JsonNode data) {
@@ -443,6 +451,9 @@ public class LockerMqttService {
             Long lockerId, String command, String commandId, ObjectNode payload) {
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         pendingCommands.put(commandId, future);
+        long sentAt = System.currentTimeMillis();
+        ownCommands.put(commandId, sentAt);
+        ownCommands.values().removeIf(at -> sentAt - at > TimeUnit.MINUTES.toMillis(10));
 
         try {
             MqttMessage message = new MqttMessage(payload.toString().getBytes(StandardCharsets.UTF_8));
