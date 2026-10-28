@@ -142,6 +142,64 @@ public class OrderRules {
         return settings.getBoolean(DRONE_FLIGHTS_SUSPENDED);
     }
 
+    /// Ngưỡng thời tiết đang áp dụng cho đặt đơn, phóng drone và bảng thời tiết.
+    public record WeatherLimits(
+            double maxWindSpeedKmh,
+            double maxWindGustKmh,
+            double minVisibilityMeters,
+            double maxPrecipitationMm,
+            boolean blockPrecipitationCodes,
+            int windowMinutes,
+            boolean blockWhenUnavailable) {
+    }
+
+    public WeatherLimits weatherLimits() {
+        return new WeatherLimits(
+                settings.getInt(WEATHER_MAX_WIND_SPEED),
+                settings.getInt(WEATHER_MAX_WIND_GUST),
+                settings.getInt(WEATHER_MIN_VISIBILITY),
+                settings.getDecimal(WEATHER_MAX_PRECIPITATION).doubleValue(),
+                settings.getBoolean(WEATHER_BLOCK_PRECIPITATION_CODES),
+                settings.getInt(WEATHER_WINDOW_MINUTES),
+                settings.getBoolean(WEATHER_BLOCK_WHEN_UNAVAILABLE));
+    }
+
+    public int droneReturnMinBatteryPercent() {
+        return settings.getInt(DRONE_RETURN_MIN_BATTERY);
+    }
+
+    public int dronePickupReofferCooldownMinutes() {
+        return settings.getInt(DRONE_PICKUP_REOFFER_COOLDOWN_MINUTES);
+    }
+
+    public long lidAckTimeoutSeconds() {
+        return settings.getLong(LID_ACK_TIMEOUT_SECONDS);
+    }
+
+    public long lidMotionTimeoutSeconds() {
+        return settings.getLong(LID_MOTION_TIMEOUT_SECONDS);
+    }
+
+    public int lidMaxRetries() {
+        return settings.getInt(LID_MAX_RETRIES);
+    }
+
+    public long lockerOfflineAfterSeconds() {
+        return settings.getLong(LOCKER_OFFLINE_AFTER_SECONDS);
+    }
+
+    public double telemetryDepartedDistanceM() {
+        return settings.getInt(TELEMETRY_DEPARTED_DISTANCE);
+    }
+
+    public double telemetryApproachDistanceM() {
+        return settings.getInt(TELEMETRY_APPROACH_DISTANCE);
+    }
+
+    public double telemetryArrivalRadiusM() {
+        return settings.getInt(TELEMETRY_ARRIVAL_RADIUS);
+    }
+
     /// Được phóng trong khung [giờ bắt đầu, giờ kết thúc) theo giờ Việt Nam. Khung 0–24,
     /// hoặc cấu hình ngược (bắt đầu ≥ kết thúc), coi như không giới hạn.
     public boolean droneFlightAllowedAt(int hourOfDay) {

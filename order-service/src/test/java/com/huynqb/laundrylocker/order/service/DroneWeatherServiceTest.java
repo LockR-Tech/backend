@@ -213,4 +213,63 @@ class DroneWeatherServiceTest {
         return new LockerInfo(id, 1L, "LK-" + id, "Locker " + id, "ACTIVE", "", latitude, longitude,
                 true, null, 10, 5);
     }
+
+    /// Ngưỡng do admin sửa có hiệu lực ngay: lần kiểm tra sau dùng ngưỡng mới, không trả kết quả đã nhớ theo ngưỡng cũ.
+    @Test
+    void adminWeatherRulesApplyWithoutRestart() throws Exception {
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://weather.test/v1/forecast");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        var settings = com.huynqb.laundrylocker.order.settings.TestOrderRules.settings(Map.of());
+        var rules = new com.huynqb.laundrylocker.order.settings.OrderRules(settings);
+        DroneWeatherService service = new DroneWeatherService(
+                builder.build(), null, rules::weatherLimits, null, java.time.Clock.systemUTC());
+        OffsetDateTime first = OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(2).truncatedTo(ChronoUnit.MINUTES);
+        List<String> times = List.of(first.toString(), first.plusMinutes(15).toString(), first.plusMinutes(30).toString(),
+                first.plusMinutes(45).toString());
+        // Mưa nhỏ 0,2 mm (mã 61) suốt tuyến, gió nhẹ.
+        Map<String, Object> drizzlePoint = point(times, List.of(0.2, 0.2, 0.2, 0.2), List.of(61, 61, 61, 61),
+                List.of(8, 8, 8, 8), List.of(12, 12, 12, 12), List.of(10000, 10000, 10000, 10000));
+        // Tuyến ngắn vẫn lấy mẫu hai đầu: 2 điểm.
+        String drizzle = JSON.writeValueAsString(List.of(drizzlePoint, drizzlePoint));
+        server.expect(requestTo(containsString("forecast_minutely_15=3")))
+                .andRespond(withSuccess(drizzle, MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("forecast_minutely_15=4")))
+                .andRespond(withSuccess(drizzle, MediaType.APPLICATION_JSON));
+
+        var strict = service.assessRoute(locker(3L, 10.70, 106.70), locker(5L, 10.70, 106.70));
+        assertEquals("UNSAFE", strict.status(), "mặc định: có mưa là không bay");
+        assertEquals(30, strict.windowMinutes());
+
+        settings.update(Map.of(
+                "app.drone.weather.max-precipitation-mm", "0.5",
+                "app.drone.weather.block-precipitation-codes", false,
+                "app.drone.weather.forecast-window-minutes", 45), null);
+        var relaxed = service.assessRoute(locker(3L, 10.70, 106.70), locker(5L, 10.70, 106.70));
+
+        assertTrue(relaxed.safe(), relaxed.message());
+        assertEquals(45, relaxed.windowMinutes());
+        assertTrue(relaxed.message().contains("45 phút"));
+        server.verify();
+    }
+
+    /// Admin cho bay khi không có dữ liệu: vẫn báo UNAVAILABLE để đội bay biết, nhưng không chặn.
+    @Test
+    void missingForecastOnlyBlocksWhenAdminRequiresIt() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://weather.test/v1/forecast");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        var settings = com.huynqb.laundrylocker.order.settings.TestOrderRules.settings(
+                Map.of("app.drone.weather.block-when-unavailable", false));
+        var rules = new com.huynqb.laundrylocker.order.settings.OrderRules(settings);
+        DroneWeatherService service = new DroneWeatherService(
+                builder.build(), null, rules::weatherLimits, null, java.time.Clock.systemUTC());
+        server.expect(requestTo(containsString("minutely_15="))).andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        var result = service.assessRoute(locker(3L, 10.70, 106.70), locker(5L, 10.71, 106.71));
+
+        assertEquals("UNAVAILABLE", result.status());
+        assertTrue(result.safe());
+        assertTrue(service.unavailable(OffsetDateTime.now(ZoneOffset.UTC)).safe());
+        settings.update(Map.of("app.drone.weather.block-when-unavailable", true), null);
+        assertFalse(service.unavailable(OffsetDateTime.now(ZoneOffset.UTC)).safe());
+    }
 }

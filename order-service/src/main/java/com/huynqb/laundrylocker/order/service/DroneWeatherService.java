@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.order.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
+import com.huynqb.laundrylocker.order.settings.OrderRules;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * Dự báo thời tiết 30 phút tới dọc tuyến bay (tủ bay → tủ nhận) để quyết định có được bay không.
@@ -34,7 +36,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *       tầm nhìn suy từ tỉ lệ sương mù.</li>
  * </ol>
  * Kết quả có dữ liệu được nhớ 5 phút theo tuyến: khách, KTV và admin xem cùng một tuyến không gọi API lặp lại.
- * Không nguồn nào trả lời ⇒ UNAVAILABLE (đặt đơn và phóng drone vẫn bị chặn — không bay khi không biết trời).
+ * Không nguồn nào trả lời ⇒ UNAVAILABLE; mặc định vẫn chặn đặt đơn và phóng drone (không bay khi không biết trời),
+ * trừ khi admin tắt "Chặn bay khi không có dữ liệu thời tiết".
+ *
+ * <p>Ngưỡng (gió, gió giật, tầm nhìn, lượng mưa, mã mưa/dông, cửa sổ dự báo) đọc từ {@link OrderRules} mỗi lần
+ * đánh giá: admin sửa trên trang Thời tiết & bay là có hiệu lực, không cần khởi động lại.
  */
 @Slf4j
 @Service
@@ -43,7 +49,6 @@ public class DroneWeatherService {
     public static final String OPEN_METEO = "OPEN_METEO";
     public static final String MET_NORWAY = "MET_NORWAY";
 
-    private static final int WINDOW_MINUTES = 30;
     private static final double MAX_SAMPLE_SPACING_METERS = 5_000;
     private static final int MAX_ROUTE_POINTS = 12;
     /// MET Norway: mỗi điểm một request — chỉ lấy đầu, giữa, cuối tuyến.
@@ -53,9 +58,7 @@ public class DroneWeatherService {
 
     private final RestClient openMeteo;
     private final RestClient metNorway;
-    private final double maxWindSpeedKmh;
-    private final double maxWindGustKmh;
-    private final double minVisibilityMeters;
+    private final Supplier<OrderRules.WeatherLimits> limits;
     private final String apiKey;
     private final Clock clock;
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
@@ -69,15 +72,13 @@ public class DroneWeatherService {
             String fallbackUrl,
             @Value("${app.drone.weather.user-agent:LockR-DroneDelivery/1.0 (+https://github.com/LockR-Tech)}")
             String userAgent,
-            @Value("${app.drone.weather.max-wind-speed-kmh:30}") double maxWindSpeedKmh,
-            @Value("${app.drone.weather.max-wind-gust-kmh:40}") double maxWindGustKmh,
-            @Value("${app.drone.weather.min-visibility-meters:1500}") double minVisibilityMeters) {
+            OrderRules rules) {
         this(createClient(builder.clone(), apiUrl, null),
                 fallbackUrl == null || fallbackUrl.isBlank() ? null : createClient(builder.clone(), fallbackUrl, userAgent),
-                maxWindSpeedKmh, maxWindGustKmh, minVisibilityMeters, apiKey, Clock.systemUTC());
+                rules::weatherLimits, apiKey, Clock.systemUTC());
     }
 
-    /// Chỉ Open-Meteo, không dự phòng (test).
+    /// Chỉ Open-Meteo, không dự phòng, ngưỡng cố định (test).
     DroneWeatherService(RestClient restClient, double maxWindSpeedKmh, double maxWindGustKmh, double minVisibilityMeters) {
         this(restClient, null, maxWindSpeedKmh, maxWindGustKmh, minVisibilityMeters, null, Clock.systemUTC());
     }
@@ -90,13 +91,32 @@ public class DroneWeatherService {
             double minVisibilityMeters,
             String apiKey,
             Clock clock) {
+        this(openMeteo, metNorway, fixedLimits(maxWindSpeedKmh, maxWindGustKmh, minVisibilityMeters), apiKey, clock);
+    }
+
+    DroneWeatherService(
+            RestClient openMeteo,
+            RestClient metNorway,
+            Supplier<OrderRules.WeatherLimits> limits,
+            String apiKey,
+            Clock clock) {
         this.openMeteo = openMeteo;
         this.metNorway = metNorway;
-        this.maxWindSpeedKmh = maxWindSpeedKmh;
-        this.maxWindGustKmh = maxWindGustKmh;
-        this.minVisibilityMeters = minVisibilityMeters;
+        this.limits = limits;
         this.apiKey = apiKey;
         this.clock = clock;
+    }
+
+    /// Ngưỡng mặc định của catalog với gió, gió giật, tầm nhìn cho trước.
+    static Supplier<OrderRules.WeatherLimits> fixedLimits(double maxWind, double maxGust, double minVisibility) {
+        OrderRules.WeatherLimits fixed = new OrderRules.WeatherLimits(maxWind, maxGust, minVisibility, 0, true, 30, true);
+        return () -> fixed;
+    }
+
+    /// Không nguồn nào trả lời: chặn hay không theo cấu hình admin.
+    public DroneWeatherAssessment unavailable(OffsetDateTime checkedAt) {
+        OrderRules.WeatherLimits current = limits.get();
+        return DroneWeatherAssessment.unavailable(checkedAt, current.windowMinutes(), current.blockWhenUnavailable());
     }
 
     private static RestClient createClient(RestClient.Builder builder, String url, String userAgent) {
@@ -117,7 +137,7 @@ public class DroneWeatherService {
             return assess(routePoints(source, destination), now);
         } catch (RuntimeException missingCoordinates) {
             log.warn("Drone weather check skipped: {}", missingCoordinates.getMessage());
-            return DroneWeatherAssessment.unavailable(now);
+            return unavailable(now);
         }
     }
 
@@ -138,20 +158,22 @@ public class DroneWeatherService {
             return assess(points, now);
         } catch (RuntimeException missingCoordinates) {
             log.warn("Drone weather check skipped: {}", missingCoordinates.getMessage());
-            return DroneWeatherAssessment.unavailable(now);
+            return unavailable(now);
         }
     }
 
     private DroneWeatherAssessment assess(List<RoutePoint> points, OffsetDateTime now) {
-        String key = String.join(">", points.stream().map(RoutePoint::key).distinct().toList());
+        OrderRules.WeatherLimits current = limits.get();
+        // Ngưỡng nằm trong khoá: admin vừa sửa ngưỡng thì không trả lại kết quả tính theo ngưỡng cũ.
+        String key = String.join(">", points.stream().map(RoutePoint::key).distinct().toList()) + "|" + current;
         Cached cached = cache.get(key);
         if (cached != null && cached.expiresAt().isAfter(now)) {
             return cached.assessment();
         }
 
-        DroneWeatherAssessment result = fromOpenMeteo(points, now);
+        DroneWeatherAssessment result = fromOpenMeteo(points, now, current);
         if (result.unavailable() && metNorway != null) {
-            result = fromMetNorway(points, now);
+            result = fromMetNorway(points, now, current);
         }
         if (!result.unavailable()) {
             cache.put(key, new Cached(result, now.plus(CACHE_TTL)));
@@ -166,36 +188,39 @@ public class DroneWeatherService {
 
     // ------------------------------------------------------------------ Open-Meteo
 
-    private DroneWeatherAssessment fromOpenMeteo(List<RoutePoint> points, OffsetDateTime now) {
+    private DroneWeatherAssessment fromOpenMeteo(List<RoutePoint> points, OffsetDateTime now, OrderRules.WeatherLimits limits) {
         try {
             String latitudes = join(points.stream().map(RoutePoint::latitude).toList());
             String longitudes = join(points.stream().map(RoutePoint::longitude).toList());
+            // Mẫu 15 phút: mẫu đang diễn ra + đủ mẫu phủ cửa sổ dự báo.
+            int samples = (limits.windowMinutes() + 14) / 15 + 1;
             JsonNode response = openMeteo.get()
                     .uri(uri -> uri
                             .queryParam("latitude", latitudes)
                             .queryParam("longitude", longitudes)
                             .queryParam("minutely_15",
                                     "precipitation,weather_code,wind_speed_10m,wind_gusts_10m,visibility,temperature_2m")
-                            .queryParam("forecast_minutely_15", 3)
+                            .queryParam("forecast_minutely_15", samples)
                             .queryParam("timezone", "UTC")
                             .queryParamIfPresent("apikey", Optional.ofNullable(apiKey).filter(key -> !key.isBlank()))
                             .build())
                     .retrieve()
                     .body(JsonNode.class);
-            return assessOpenMeteo(response, points.size(), now);
+            return assessOpenMeteo(response, points.size(), now, limits);
         } catch (Exception exception) {
             logFailure("Open-Meteo", exception);
-            return DroneWeatherAssessment.unavailable(now);
+            return unavailable(now);
         }
     }
 
-    private DroneWeatherAssessment assessOpenMeteo(JsonNode response, int expectedPoints, OffsetDateTime checkedAt) {
+    private DroneWeatherAssessment assessOpenMeteo(
+            JsonNode response, int expectedPoints, OffsetDateTime checkedAt, OrderRules.WeatherLimits limits) {
         if (response == null || (response.isArray() && response.size() != expectedPoints)) {
             log.warn("Open-Meteo returned an unexpected response shape (expected route points={}, actual={})",
                     expectedPoints, response == null ? "null" : response.isArray() ? response.size() : "object");
-            return DroneWeatherAssessment.unavailable(checkedAt);
+            return unavailable(checkedAt);
         }
-        Accumulator acc = new Accumulator();
+        Accumulator acc = new Accumulator(limits);
         for (int pointIndex = 0; pointIndex < expectedPoints; pointIndex++) {
             JsonNode point = response.isArray() ? response.get(pointIndex) : response;
             JsonNode forecast = point.path("minutely_15");
@@ -209,18 +234,18 @@ public class DroneWeatherService {
             if (!times.isArray() || !precipitation.isArray() || !weatherCodes.isArray()
                     || !winds.isArray() || !gusts.isArray() || !visibility.isArray()) {
                 log.warn("Open-Meteo response is missing minutely_15 fields at route point {}", pointIndex);
-                return DroneWeatherAssessment.unavailable(checkedAt);
+                return unavailable(checkedAt);
             }
             for (int i = 0; i < times.size(); i++) {
                 OffsetDateTime forecastAt = parseForecastTime(times.get(i).asText());
-                if (!inWindow(forecastAt, checkedAt, 1)) {
+                if (!inWindow(forecastAt, checkedAt, 1, limits.windowMinutes())) {
                     continue;
                 }
                 if (i >= precipitation.size() || i >= weatherCodes.size() || i >= winds.size()
                         || i >= gusts.size() || i >= visibility.size()
                         || anyMissing(precipitation.get(i), weatherCodes.get(i), winds.get(i), gusts.get(i), visibility.get(i))) {
                     log.warn("Open-Meteo response has missing weather values at route point {}, sample {}", pointIndex, i);
-                    return DroneWeatherAssessment.unavailable(checkedAt);
+                    return unavailable(checkedAt);
                 }
                 Double temperature = temperatures.isArray() && i < temperatures.size() && temperatures.get(i).isNumber()
                         ? temperatures.get(i).asDouble() : null;
@@ -232,16 +257,17 @@ public class DroneWeatherService {
         if (!acc.sawForecast) {
             log.warn("Open-Meteo returned no samples in the 30-minute route window (points={}, checkedAt={})",
                     expectedPoints, checkedAt);
-            return DroneWeatherAssessment.unavailable(checkedAt);
+            return unavailable(checkedAt);
         }
         return acc.result(checkedAt, expectedPoints, OPEN_METEO);
     }
 
     // ------------------------------------------------------------------ MET Norway (dự phòng)
 
-    private DroneWeatherAssessment fromMetNorway(List<RoutePoint> points, OffsetDateTime now) {
+    private DroneWeatherAssessment fromMetNorway(
+            List<RoutePoint> points, OffsetDateTime now, OrderRules.WeatherLimits limits) {
         List<RoutePoint> sampled = sampleForMet(points);
-        Accumulator acc = new Accumulator();
+        Accumulator acc = new Accumulator(limits);
         try {
             for (RoutePoint point : sampled) {
                 JsonNode response = metNorway.get()
@@ -255,13 +281,13 @@ public class DroneWeatherService {
                 JsonNode series = response == null ? null : response.path("properties").path("timeseries");
                 if (series == null || !series.isArray() || series.isEmpty()) {
                     log.warn("MET Norway returned no timeseries");
-                    return DroneWeatherAssessment.unavailable(now);
+                    return unavailable(now);
                 }
                 boolean sawPoint = false;
                 for (JsonNode entry : series) {
                     OffsetDateTime at = parseForecastTime(entry.path("time").asText());
                     // Bản ghi theo giờ: lấy giờ đang diễn ra (bắt đầu trong 60 phút trước) và giờ kế trong cửa sổ.
-                    if (at.isBefore(now.minusMinutes(60)) || at.isAfter(now.plusMinutes(WINDOW_MINUTES))) {
+                    if (at.isBefore(now.minusMinutes(60)) || at.isAfter(now.plusMinutes(limits.windowMinutes()))) {
                         continue;
                     }
                     JsonNode details = entry.path("data").path("instant").path("details");
@@ -285,12 +311,12 @@ public class DroneWeatherService {
                 }
                 if (!sawPoint) {
                     log.warn("MET Norway returned no sample in the current window");
-                    return DroneWeatherAssessment.unavailable(now);
+                    return unavailable(now);
                 }
             }
         } catch (Exception exception) {
             logFailure("MET Norway", exception);
-            return DroneWeatherAssessment.unavailable(now);
+            return unavailable(now);
         }
         return acc.result(now, sampled.size(), MET_NORWAY);
     }
@@ -321,7 +347,8 @@ public class DroneWeatherService {
     // ------------------------------------------------------------------ chung
 
     /// Gộp mẫu dự báo dọc tuyến: lấy giá trị xấu nhất; nhiệt độ/mô tả lấy theo mẫu đầu tiên (đầu tuyến, gần nhất).
-    private final class Accumulator {
+    private static final class Accumulator {
+        final OrderRules.WeatherLimits limits;
         double maximumWind;
         double maximumGust;
         double maximumPrecipitation;
@@ -331,6 +358,10 @@ public class DroneWeatherService {
         boolean sawForecast;
         Double temperature;
         String condition;
+
+        Accumulator(OrderRules.WeatherLimits limits) {
+            this.limits = limits;
+        }
 
         void add(double rain, int code, double wind, double gust, double visible, Double temp, String label) {
             if (!sawForecast) {
@@ -344,19 +375,18 @@ public class DroneWeatherService {
             minimumVisibility = Math.min(minimumVisibility, visible);
             // Mã WMO lớn hơn = thời tiết xấu hơn: giữ mã xấu nhất gặp trên tuyến, kể cả khi vẫn bay được.
             worstCode = Math.max(worstCode, code);
-            if (isRainOrStorm(code) || rain > 0 || wind > maxWindSpeedKmh || gust > maxWindGustKmh
-                    || visible < minVisibilityMeters) {
+            if (rainBlocks(rain, code, limits) || wind > limits.maxWindSpeedKmh() || gust > limits.maxWindGustKmh()
+                    || visibilityBlocks(visible, limits)) {
                 unsafe = true;
             }
         }
 
         DroneWeatherAssessment result(OffsetDateTime checkedAt, int sampledPoints, String provider) {
             String message = unsafe
-                    ? unsafeMessage(maximumPrecipitation, maximumWind, maximumGust, minimumVisibility, worstCode,
-                            maxWindSpeedKmh, maxWindGustKmh, minVisibilityMeters)
-                    : "Dự báo tuyến bay an toàn trong 30 phút tới.";
+                    ? unsafeMessage(maximumPrecipitation, maximumWind, maximumGust, minimumVisibility, worstCode, limits)
+                    : "Dự báo tuyến bay an toàn trong " + limits.windowMinutes() + " phút tới.";
             return new DroneWeatherAssessment(!unsafe, unsafe ? "UNSAFE" : "SAFE", message, checkedAt,
-                    WINDOW_MINUTES, sampledPoints, round1(maximumWind), round1(maximumGust),
+                    limits.windowMinutes(), sampledPoints, round1(maximumWind), round1(maximumGust),
                     round1(maximumPrecipitation), worstCode)
                     .withSource(provider, temperature, condition);
         }
@@ -366,8 +396,8 @@ public class DroneWeatherService {
         return Math.round(value * 10) / 10.0;
     }
 
-    private static boolean inWindow(OffsetDateTime forecastAt, OffsetDateTime now, int graceMinutes) {
-        return !forecastAt.isBefore(now.minusMinutes(graceMinutes)) && !forecastAt.isAfter(now.plusMinutes(WINDOW_MINUTES));
+    private static boolean inWindow(OffsetDateTime forecastAt, OffsetDateTime now, int graceMinutes, int windowMinutes) {
+        return !forecastAt.isBefore(now.minusMinutes(graceMinutes)) && !forecastAt.isAfter(now.plusMinutes(windowMinutes));
     }
 
     private static void logFailure(String provider, Exception exception) {
@@ -422,6 +452,15 @@ public class DroneWeatherService {
         return (weatherCode >= 51 && weatherCode <= 99);
     }
 
+    private static boolean rainBlocks(double precipitation, int code, OrderRules.WeatherLimits limits) {
+        return precipitation > limits.maxPrecipitationMm() || (limits.blockPrecipitationCodes() && isRainOrStorm(code));
+    }
+
+    /// Ngưỡng tầm nhìn 0 = không xét tầm nhìn.
+    private static boolean visibilityBlocks(double visibility, OrderRules.WeatherLimits limits) {
+        return limits.minVisibilityMeters() > 0 && visibility < limits.minVisibilityMeters();
+    }
+
     /// Mã WMO → mô tả tiếng Việt cho khách, KTV, admin.
     static String conditionFromWmo(int code) {
         if (code == 0) return "Trời quang";
@@ -438,15 +477,15 @@ public class DroneWeatherService {
     }
 
     private static String unsafeMessage(
-            double precipitation, double wind, double gust, double visibility, int code,
-            double windLimit, double gustLimit, double visibilityLimit) {
+            double precipitation, double wind, double gust, double visibility, int code, OrderRules.WeatherLimits limits) {
         List<String> reasons = new ArrayList<>();
-        if (precipitation > 0 || isRainOrStorm(code)) reasons.add("có mưa hoặc dông");
-        if (wind > windLimit) reasons.add(String.format(Locale.ROOT, "gió %.0f km/h", wind));
-        if (gust > gustLimit) reasons.add(String.format(Locale.ROOT, "gió giật %.0f km/h", gust));
-        if (visibility < visibilityLimit) reasons.add(String.format(Locale.ROOT, "tầm nhìn %.0f m", visibility));
+        if (rainBlocks(precipitation, code, limits)) reasons.add("có mưa hoặc dông");
+        if (wind > limits.maxWindSpeedKmh()) reasons.add(String.format(Locale.ROOT, "gió %.0f km/h", wind));
+        if (gust > limits.maxWindGustKmh()) reasons.add(String.format(Locale.ROOT, "gió giật %.0f km/h", gust));
+        if (visibilityBlocks(visibility, limits)) reasons.add(String.format(Locale.ROOT, "tầm nhìn %.0f m", visibility));
         if (reasons.isEmpty()) reasons.add("điều kiện khí tượng vượt ngưỡng vận hành");
-        return "Không thể đặt chuyến bay: " + String.join(", ", reasons) + " trên tuyến trong 30 phút tới.";
+        return "Không thể đặt chuyến bay: " + String.join(", ", reasons) + " trên tuyến trong "
+                + limits.windowMinutes() + " phút tới.";
     }
 
     private static double distanceMeters(double lat1, double lon1, double lat2, double lon2) {

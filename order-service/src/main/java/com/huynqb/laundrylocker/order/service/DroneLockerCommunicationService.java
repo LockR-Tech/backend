@@ -99,26 +99,9 @@ public class DroneLockerCommunicationService {
     @Value("${app.drone.delivery.require-signature:true}")
     private boolean requireSignature = true;
 
-    /// Lệnh nắp chưa có kết quả sau chừng này giây thì gửi lại khi tủ báo còn sống (lớn hơn timeout 15 s của Pi).
-    @Value("${app.drone.delivery.lid-command-resend-after-seconds:20}")
-    private long lidResendAfterSeconds = 20;
-
-    /// Tủ chưa xác nhận đã nhận lệnh nắp (ACCEPTED) sau chừng này giây ⇒ gửi lại ĐÚNG commandId cũ.
-    @Value("${app.drone.delivery.lid-ack-timeout-seconds:10}")
-    private long lidAckTimeoutSeconds = 10;
-
-    /// Tủ đã nhận lệnh nhưng chưa báo xong sau chừng này giây (nắp chạy tối đa ~100 s) ⇒ hỏi lại cùng commandId.
-    @Value("${app.drone.delivery.lid-motion-timeout-seconds:150}")
-    private long lidMotionTimeoutSeconds = 150;
-
-    /// Số lần gửi lại tối đa một lệnh nắp khi tủ đang online; hết lượt thì báo lỗi phiên.
-    @Value("${app.drone.delivery.lid-max-retries:5}")
-    private int lidMaxRetries = 5;
-
-    /// Pi gửi heartbeat mỗi 60 s: quá chừng này giây không thấy ⇒ coi tủ mất kết nối, chờ tủ quay lại thay vì
-    /// đốt lượt gửi lại (lệnh gửi lúc tủ offline bị broker bỏ vì Pi dùng clean session).
-    @Value("${app.drone.delivery.locker-offline-after-seconds:90}")
-    private long lockerOfflineAfterSeconds = 90;
+    // Thời gian chờ / số lần gửi lại lệnh nắp và ngưỡng coi tủ mất kết nối đọc từ OrderRules
+    // (admin chỉnh ở nhóm "Kết nối tủ & định vị drone"). Pi gửi heartbeat mỗi 60 s; lệnh gửi lúc tủ offline
+    // bị broker bỏ vì Pi dùng clean session, nên tủ offline thì chờ tủ quay lại thay vì đốt lượt gửi lại.
 
     /// Chặng bay được phép mở nắp: đang tới / đang tiếp cận / đã tới tủ nhận. Lúc cất cánh ở tủ gửi thì không.
     static final List<String> LID_ALLOWED_STAGES = List.of("EN_ROUTE", "APPROACHING", "ARRIVED");
@@ -327,7 +310,7 @@ public class DroneLockerCommunicationService {
                 LocalDateTime previous = lockerSeenAt.put(lockerId, now);
                 // Trước đó đã thấy tủ rồi mất liên lạc quá ngưỡng ⇒ lệnh gửi trong lúc đó bị broker bỏ (clean
                 // session), tủ chắc chắn chưa chạy ⇒ gửi lại ngay là an toàn kể cả với code tủ cũ.
-                reconnected = previous != null && !previous.plusSeconds(lockerOfflineAfterSeconds).isAfter(now);
+                reconnected = previous != null && !previous.plusSeconds(orderRules.lockerOfflineAfterSeconds()).isAfter(now);
             }
             try {
                 resendPendingLidCommands(lockerId, reconnected);
@@ -821,7 +804,7 @@ public class DroneLockerCommunicationService {
             // KHÔNG gửi lại lệnh này nữa: Pi tủ chạy code cũ không chống chạy trùng — gửi lại là motor chạy lại,
             // đẩy nắp đã ở cuối hành trình. Chờ hết thời gian chạy nắp; tủ thật (code mới) vẫn có thể trả lời.
             unverifiedOpenCommands.add(commandId);
-            lidCommandAttempts.put(commandId, new LidCommandAttempt(LocalDateTime.now(), lidMaxRetries, true));
+            lidCommandAttempts.put(commandId, new LidCommandAttempt(LocalDateTime.now(), orderRules.lidMaxRetries(), true));
             return;
         }
         lidCommandAttempts.remove(commandId);
@@ -1033,9 +1016,9 @@ public class DroneLockerCommunicationService {
         boolean acked = DroneDeliverySession.LID_OPENING.equals(session.getState()) || (last != null && last.acked());
         LocalDateTime lastSentAt = last != null ? last.sentAt() : session.getUpdatedAt();
         // Chưa từng thấy tủ này gửi ACK: có thể là code cũ (không chống chạy trùng) ⇒ đợi đủ thời gian chạy nắp.
-        long waitSeconds = acked ? lidMotionTimeoutSeconds
-                : reconnected || ackCapableLockers.contains(session.getLockerId()) ? lidAckTimeoutSeconds
-                : lidMotionTimeoutSeconds;
+        long waitSeconds = acked ? orderRules.lidMotionTimeoutSeconds()
+                : reconnected || ackCapableLockers.contains(session.getLockerId()) ? orderRules.lidAckTimeoutSeconds()
+                : orderRules.lidMotionTimeoutSeconds();
         if (lastSentAt != null && lastSentAt.plusSeconds(waitSeconds).isAfter(now)) {
             return; // tủ có thể đang nhận / đang chạy nắp
         }
@@ -1049,7 +1032,7 @@ public class DroneLockerCommunicationService {
                     + "iot trên Pi tủ và tắt trình giả lập simulate_demo_cabinet.py rồi thử lại");
             return;
         }
-        if (retry >= lidMaxRetries) {
+        if (retry >= orderRules.lidMaxRetries()) {
             failLidCommand(session, open, acked ? "LID_MOTION_TIMEOUT" : "LOCKER_NO_ACK",
                     acked ? "Tủ đã nhận lệnh nhưng không báo nắp chạy xong sau " + (retry + 1) + " lần hỏi"
                             : "Tủ không xác nhận nhận lệnh sau " + (retry + 1) + " lần gửi");
@@ -1075,7 +1058,7 @@ public class DroneLockerCommunicationService {
 
     private boolean isLockerOnline(Long lockerId, LocalDateTime now) {
         LocalDateTime seen = lockerId == null ? null : lockerSeenAt.get(lockerId);
-        return seen != null && seen.plusSeconds(lockerOfflineAfterSeconds).isAfter(now);
+        return seen != null && seen.plusSeconds(orderRules.lockerOfflineAfterSeconds()).isAfter(now);
     }
 
     /// Hết lượt gửi lại khi tủ vẫn online: dừng phiên, báo drone (không thả hàng) và để lại dấu vết cho admin.

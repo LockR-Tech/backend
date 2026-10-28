@@ -33,6 +33,7 @@ public class LockerSettingsCatalog implements SettingsCatalog {
     public static final String CELL_DIMENSIONS_STANDARD = "app.locker.cell-dimensions-standard";
     public static final String CELL_DIMENSIONS_XL = "app.locker.cell-dimensions-xl";
     public static final String DRONE_LOW_BATTERY_PERCENT = "app.locker.drone-low-battery-percent";
+    public static final String TECHNICIAN_LOCATION_MAX_AGE_MINUTES = "app.locker.technician-location-max-age-minutes";
 
     private static final String MAINTENANCE = "Bảo trì & SLA";
     private static final String CELLS = "Ô tủ";
@@ -95,6 +96,9 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                         "Chỉ để hiển thị trên app (dài × rộng × cao).", "30 × 80 × 40 cm", List.of()).asPublic(),
 
                 integer(DRONE_LOW_BATTERY_PERCENT, DRONE, "Pin tối thiểu để drone cất cánh",
-                        "Drone có pin ≤ ngưỡng này không được chuyển sang IN_FLIGHT.", 20, 0, 100, "%").asPublic());
+                        "Drone có pin ≤ ngưỡng này không được chuyển sang IN_FLIGHT.", 20, 0, 100, "%").asPublic(),
+                integer(TECHNICIAN_LOCATION_MAX_AGE_MINUTES, MAINTENANCE, "Vị trí KTV còn hiệu lực khi phân công kiện rơi",
+                        "Khi drone báo rơi kiện, hệ thống giao việc cho KTV trong ca ở gần nhất; vị trí KTV cũ hơn mức này "
+                                + "thì không được xét.", 60, 1, 1440, "phút"));
     }
 }

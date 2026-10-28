@@ -34,6 +34,10 @@ public class PaymentRules {
         return BigDecimal.valueOf(settings.getLong(TOPUP_MIN_AMOUNT));
     }
 
+    public BigDecimal withdrawMinAmount() {
+        return BigDecimal.valueOf(settings.getLong(WITHDRAW_MIN_AMOUNT));
+    }
+
     public BigDecimal topupMaxAmount() {
         return BigDecimal.valueOf(Math.max(settings.getLong(TOPUP_MIN_AMOUNT), settings.getLong(TOPUP_MAX_AMOUNT)));
     }

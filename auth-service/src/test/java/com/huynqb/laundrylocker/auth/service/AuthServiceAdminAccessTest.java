@@ -113,7 +113,8 @@ class AuthServiceAdminAccessTest {
         when(emailOtpService.verifyOtp(EMAIL, "ADMIN_2FA", "123456")).thenReturn(true);
 
         BusinessException last = null;
-        for (int i = 0; i < AuthService.ADMIN_2FA_MAX_ATTEMPTS; i++) {
+        // Mặc định catalog: 5 lần (`app.auth.admin-2fa-max-attempts`).
+        for (int i = 0; i < 5; i++) {
             last = assertThrows(BusinessException.class, () -> verify2fa(tempToken, "000000"));
             assertEquals("ADMIN_AUTH_OTP_INVALID", last.getCode());
         }

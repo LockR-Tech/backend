@@ -90,6 +90,23 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String INCIDENT_APPROVAL_REQUIRED = "app.order.incident-approval-required";
     public static final String INCIDENT_DISPUTE_ALLOWED = "app.order.incident-dispute-allowed";
     public static final String MAX_VOUCHERS_PER_ORDER = "app.order.max-vouchers-per-order";
+    public static final String DRONE_RETURN_MIN_BATTERY = "app.order.drone-return-min-battery-percent";
+    public static final String DRONE_PICKUP_REOFFER_COOLDOWN_MINUTES = "app.order.drone-pickup-reoffer-cooldown-minutes";
+    // Key thời tiết, nắp tủ, telemetry giữ tên property cũ (trước chỉ đặt được bằng biến môi trường).
+    public static final String WEATHER_MAX_WIND_SPEED = "app.drone.weather.max-wind-speed-kmh";
+    public static final String WEATHER_MAX_WIND_GUST = "app.drone.weather.max-wind-gust-kmh";
+    public static final String WEATHER_MIN_VISIBILITY = "app.drone.weather.min-visibility-meters";
+    public static final String WEATHER_MAX_PRECIPITATION = "app.drone.weather.max-precipitation-mm";
+    public static final String WEATHER_BLOCK_PRECIPITATION_CODES = "app.drone.weather.block-precipitation-codes";
+    public static final String WEATHER_WINDOW_MINUTES = "app.drone.weather.forecast-window-minutes";
+    public static final String WEATHER_BLOCK_WHEN_UNAVAILABLE = "app.drone.weather.block-when-unavailable";
+    public static final String LID_ACK_TIMEOUT_SECONDS = "app.drone.delivery.lid-ack-timeout-seconds";
+    public static final String LID_MOTION_TIMEOUT_SECONDS = "app.drone.delivery.lid-motion-timeout-seconds";
+    public static final String LID_MAX_RETRIES = "app.drone.delivery.lid-max-retries";
+    public static final String LOCKER_OFFLINE_AFTER_SECONDS = "app.drone.delivery.locker-offline-after-seconds";
+    public static final String TELEMETRY_DEPARTED_DISTANCE = "app.drone.telemetry.departed-distance-m";
+    public static final String TELEMETRY_APPROACH_DISTANCE = "app.drone.telemetry.approach-distance-m";
+    public static final String TELEMETRY_ARRIVAL_RADIUS = "app.drone.telemetry.arrival-radius-m";
 
     private static final String PRICING = "Giá & phí";
     private static final String DEADLINES = "Thời hạn & tự động hoá";
@@ -100,6 +117,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     private static final String RECEIVER = "Thông báo cho người nhận";
     private static final String INCIDENT = "Sự cố & bồi thường";
     private static final String VOUCHER = "Mã giảm giá";
+    private static final String WEATHER = "Thời tiết & điều kiện bay";
+    private static final String DRONE_LINK = "Kết nối tủ & định vị drone";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -274,6 +293,57 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_MAX_DECLARED_VALUE, DRONE, "Giá trị khai báo tối đa của kiện drone",
                         "Kiện có giá trị khai báo cao hơn không được nhận.", 2_000_000, 0, 1_000_000_000, "VND")
                         .asPublic(),
+                integer(DRONE_RETURN_MIN_BATTERY, DRONE, "Pin tối thiểu để ra lệnh drone quay về",
+                        "Khi báo rơi kiện, KTV chỉ yêu cầu drone đang bay quay về tủ gửi nếu pin còn từ mức này trở lên; "
+                                + "thấp hơn thì drone tự hạ cánh an toàn theo autopilot.", 15, 0, 100, "%"),
+                integer(DRONE_PICKUP_REOFFER_COOLDOWN_MINUTES, DRONE, "Không mời lại KTV vừa từ chối trong",
+                        "KTV vừa từ chối hoặc để quá hạn lời mời lấy hàng tận nhà không được mời lại cùng đơn trong "
+                                + "khoảng này. 0 = mời lại ngay.", 10, 0, 240, "phút"),
+
+                // === THỜI TIẾT & ĐIỀU KIỆN BAY ===
+                // Chỉnh theo khung drone thật và giấy phép bay. Áp cho đặt đơn, đội bay phóng drone và bảng thời tiết.
+                integer(WEATHER_MAX_WIND_SPEED, WEATHER, "Tốc độ gió tối đa",
+                        "Dự báo gió (10 m) trên tuyến vượt mức này thì không bay.", 30, 1, 150, "km/h"),
+                integer(WEATHER_MAX_WIND_GUST, WEATHER, "Gió giật tối đa",
+                        "Dự báo gió giật trên tuyến vượt mức này thì không bay. Nguồn dự phòng MET Norway không có gió "
+                                + "giật ở Việt Nam nên ước tính bằng 1,5 × tốc độ gió.", 40, 1, 200, "km/h"),
+                integer(WEATHER_MIN_VISIBILITY, WEATHER, "Tầm nhìn tối thiểu",
+                        "Tầm nhìn dự báo thấp hơn mức này (sương mù, mưa dày) thì không bay. 0 = không xét tầm nhìn.",
+                        1500, 0, 50_000, "mét"),
+                decimal(WEATHER_MAX_PRECIPITATION, WEATHER, "Lượng mưa tối đa",
+                        "Lượng mưa dự báo mỗi 15 phút trên tuyến vượt mức này thì không bay. 0 = có mưa là không bay.",
+                        "0", "0", "50", "mm"),
+                bool(WEATHER_BLOCK_PRECIPITATION_CODES, WEATHER, "Chặn khi dự báo có mưa hoặc dông",
+                        "Bật: dự báo mưa phùn, mưa, mưa rào, dông (mã WMO 51–99) là không bay dù lượng mưa dưới ngưỡng. "
+                                + "Tắt: chỉ xét lượng mưa.", true),
+                integer(WEATHER_WINDOW_MINUTES, WEATHER, "Xét dự báo trong",
+                        "Khoảng thời gian dự báo được xét tính từ lúc kiểm tra — nên ≥ thời gian một chuyến bay.",
+                        30, 15, 120, "phút"),
+                bool(WEATHER_BLOCK_WHEN_UNAVAILABLE, WEATHER, "Chặn bay khi không có dữ liệu thời tiết",
+                        "Bật (khuyến nghị): cả Open-Meteo lẫn MET Norway đều không trả lời thì không đặt đơn, không phóng "
+                                + "drone. Tắt: vẫn bay khi không biết trời — chỉ dùng khi đội bay tự quan sát thời tiết.", true),
+
+                // === KẾT NỐI TỦ & ĐỊNH VỊ DRONE ===
+                integer(LID_ACK_TIMEOUT_SECONDS, DRONE_LINK, "Chờ tủ xác nhận lệnh nắp",
+                        "Tủ chưa trả ACCEPTED cho lệnh mở/đóng nắp sau chừng này giây thì gửi lại đúng lệnh cũ. "
+                                + "0 = gửi lại ở lượt quét kế tiếp.", 10, 0, 300, "giây"),
+                integer(LID_MOTION_TIMEOUT_SECONDS, DRONE_LINK, "Chờ nắp chạy xong",
+                        "Tủ đã nhận lệnh nhưng chưa báo nắp chạy xong sau chừng này giây thì hỏi lại (nắp chạy tối đa "
+                                + "~100 giây, nên đặt lớn hơn). 0 = hỏi lại ở lượt quét kế tiếp.", 150, 0, 900, "giây"),
+                integer(LID_MAX_RETRIES, DRONE_LINK, "Số lần gửi lại lệnh nắp tối đa",
+                        "Hết số lần này mà tủ vẫn không phản hồi thì phiên giao báo lỗi, drone được báo không thả hàng.",
+                        5, 0, 50, "lần"),
+                integer(LOCKER_OFFLINE_AFTER_SECONDS, DRONE_LINK, "Coi tủ mất kết nối sau",
+                        "Không thấy heartbeat của tủ quá chừng này giây thì chờ tủ quay lại thay vì gửi lại lệnh nắp. "
+                                + "Pi gửi heartbeat mỗi 60 giây.", 90, 30, 3600, "giây"),
+                integer(TELEMETRY_DEPARTED_DISTANCE, DRONE_LINK, "Drone đã rời tủ gửi khi cách",
+                        "Telemetry báo drone cách tủ gửi quá mức này thì chuyển chặng sang 'Đang bay' "
+                                + "(tuyến ngắn thì lấy ¼ chiều dài tuyến).", 30, 5, 1000, "mét"),
+                integer(TELEMETRY_APPROACH_DISTANCE, DRONE_LINK, "Drone đang tiếp cận khi còn cách",
+                        "Còn cách tủ nhận dưới mức này thì chuyển chặng sang 'Đang tiếp cận' "
+                                + "(tuyến ngắn thì lấy ⅓ chiều dài tuyến).", 150, 10, 5000, "mét"),
+                integer(TELEMETRY_ARRIVAL_RADIUS, DRONE_LINK, "Drone đã tới tủ nhận trong bán kính",
+                        "Drone đã đáp và cách tủ nhận không quá mức này thì coi là đã tới.", 30, 2, 500, "mét"),
 
                 // === MÔ PHỎNG & THỬ NGHIỆM DRONE (DEMO) ===
                 bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE_DEMO, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng (Indoor Demo)",

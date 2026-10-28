@@ -48,7 +48,7 @@ class KioskQrLoginServiceTest {
     @BeforeEach
     void setUp() {
         clock = new MutableClock(Instant.parse("2026-10-11T08:00:00Z"));
-        service = new KioskQrLoginService(authService);
+        service = new KioskQrLoginService(authService, com.huynqb.laundrylocker.auth.settings.TestAuthRules.defaults());
         service.setClock(clock);
     }
 

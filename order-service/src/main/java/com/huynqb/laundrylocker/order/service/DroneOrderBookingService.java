@@ -16,6 +16,7 @@ import com.huynqb.laundrylocker.order.dto.DroneDeliveryQuoteResponse;
 import com.huynqb.laundrylocker.order.dto.DroneWeatherAssessment;
 import com.huynqb.laundrylocker.order.dto.DroneLockerPointResponse;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
+import com.huynqb.laundrylocker.order.model.DroneFlightBlock;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
@@ -71,14 +72,17 @@ public class DroneOrderBookingService {
     /// Mã giảm giá (kiểm theo TỦ GỬI) + điểm thưởng; đơn còn 0đ được ghi đã thanh toán ngay.
     private final OrderBenefitService benefits;
     private final PaidOrderEffects paidEffects;
+    /// Trạm đang dừng bay + lịch sử chặn bay.
+    private final DroneFlightControl flightControl;
 
     /// Báo trước cho người gửi: kiện sẽ đi qua tủ gửi nào, bao xa, phí bao nhiêu. Không giữ gì.
     @Transactional(readOnly = true)
     public DroneDeliveryQuoteResponse quote(DroneDeliveryQuoteRequest request) {
-        assertFlightsOpen();
+        assertFlightsOpen(null);
         int weight = validateWeight(request.parcelWeightGrams());
         DroneSourceLockerSelector.Selection selection = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
+        flightControl.assertStationsOpen(null, routeContext(null, selection), selection.destination().id());
         DroneWeatherAssessment weather = weatherService.assessJourney(
                 request.pickupLatitude(), request.pickupLongitude(), selection.source(), selection.destination());
         return new DroneDeliveryQuoteResponse(
@@ -102,7 +106,8 @@ public class DroneOrderBookingService {
 
         String fulfillmentMode = resolveFulfillmentMode(request.fulfillmentMode(), userId);
         userClient.getUser(userId);
-        assertFlightsOpen();
+        assertFlightsOpen(new DroneFlightControl.Context(
+                null, null, userId, null, request.destinationLockerId()));
         assertOpenOrderLimit(userId);
         int weight = validateWeight(request.parcelWeightGrams());
         String category = validateParcel(request);
@@ -118,9 +123,12 @@ public class DroneOrderBookingService {
 
         DroneSourceLockerSelector.Selection route = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
+        DroneFlightControl.Context context = routeContext(userId, route);
+        flightControl.assertStationsOpen(DroneFlightBlock.BOOKING, context, route.destination().id());
         DroneWeatherAssessment weather = weatherService.assessJourney(
                 request.pickupLatitude(), request.pickupLongitude(), route.source(), route.destination());
         if (!weather.safe()) {
+            flightControl.recordWeather(DroneFlightBlock.BOOKING, context, weather);
             String code = "UNAVAILABLE".equals(weather.status())
                     ? "DRONE_WEATHER_UNAVAILABLE"
                     : "DRONE_WEATHER_UNSAFE";
@@ -220,11 +228,19 @@ public class DroneOrderBookingService {
 
     // ------------------------------------------------------------------ rules
 
-    /// Không nhận đơn mới khi admin tạm dừng bay (thời tiết, sự cố).
-    private void assertFlightsOpen() {
+    /// Không nhận đơn mới khi admin tạm dừng bay (thời tiết, sự cố). `context` null = chỉ báo giá, không ghi lịch sử.
+    private void assertFlightsOpen(DroneFlightControl.Context context) {
         if (rules.droneFlightsSuspended()) {
+            if (context != null) {
+                flightControl.recordSuspended(DroneFlightBlock.BOOKING, context);
+            }
             throw new BusinessException("DRONE_FLIGHTS_SUSPENDED", "Drone delivery is temporarily suspended");
         }
+    }
+
+    /// Đơn chưa tạo: chỉ có người đặt và hai tủ của tuyến.
+    private static DroneFlightControl.Context routeContext(Long userId, DroneSourceLockerSelector.Selection route) {
+        return new DroneFlightControl.Context(null, null, userId, route.source().id(), route.destination().id());
     }
 
     /// Mỗi đơn drone chưa giao xong giữ một ô ở tủ nhận và một lượt KTV.

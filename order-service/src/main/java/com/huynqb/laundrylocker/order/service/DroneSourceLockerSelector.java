@@ -22,6 +22,7 @@ import java.util.Set;
  * <p>Một tủ phục vụ được khi: đang hoạt động, có bãi đáp đang sẵn sàng, còn ít nhất một drone dùng
  * được (không lỗi, không bảo trì), nằm trong bán kính lấy hàng, và tới tủ nhận không quá tầm bay.
  * Ô DRONE chỉ dùng để NHẬN hàng: KTV nạp kiện thẳng lên drone, nên tủ bay không cần ô trống nào.
+ * Trạm admin đang tạm dừng bay ({@link DroneFlightControl}) không được chọn làm tủ gửi.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,6 +34,7 @@ public class DroneSourceLockerSelector {
     private final LockerLookupClient lockerLookupClient;
     private final LockerDroneClient lockerDroneClient;
     private final OrderRules rules;
+    private final DroneFlightControl flightControl;
 
     /// Tủ gửi được chọn kèm các khoảng cách (mét, đường chim bay).
     public record Selection(LockerInfo source, LockerInfo destination, int pickupDistanceMeters, int routeDistanceMeters) {
@@ -85,7 +87,9 @@ public class DroneSourceLockerSelector {
                     "No drone locker within " + maxPickupMeters + " m of the pickup location");
         }
 
+        Set<Long> suspended = flightControl.activeSuspensions().keySet();
         boolean anyWithinRoute = false;
+        boolean anySuspended = false;
         for (Candidate candidate : nearby) {
             int routeMeters = meters(
                     new double[] {candidate.locker().latitude(), candidate.locker().longitude()}, destination);
@@ -93,6 +97,10 @@ public class DroneSourceLockerSelector {
                 continue;
             }
             anyWithinRoute = true;
+            if (suspended.contains(candidate.locker().id())) {
+                anySuspended = true;
+                continue;
+            }
             if (serviceable(candidate.locker().id())) {
                 return new Selection(candidate.locker(), destination, candidate.pickupMeters(), routeMeters);
             }
@@ -102,6 +110,11 @@ public class DroneSourceLockerSelector {
                     "DRONE_ROUTE_TOO_FAR",
                     "The destination locker is beyond the drone range of " + maxRouteMeters
                             + " m from every locker near the pickup location");
+        }
+        if (anySuspended) {
+            throw new BusinessException(
+                    "DRONE_STATION_SUSPENDED",
+                    "Các trạm bay gần điểm lấy hàng đang tạm dừng hoặc chưa sẵn sàng. Vui lòng thử lại sau.");
         }
         throw new BusinessException(
                 "DRONE_NO_SOURCE_LOCKER",

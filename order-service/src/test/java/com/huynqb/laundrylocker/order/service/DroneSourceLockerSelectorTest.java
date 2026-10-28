@@ -18,7 +18,7 @@ class DroneSourceLockerSelectorTest {
     private final LockerDroneClient drones = mock(LockerDroneClient.class);
     private final OrderRules rules = mock(OrderRules.class);
     private final DroneSourceLockerSelector selector = new DroneSourceLockerSelector(
-            lookup, drones, rules);
+            lookup, drones, rules, mock(DroneFlightControl.class));
 
     @Test
     void onlyIdleActiveDronesWithKnownSufficientBatteryCanServeANewPickup() {
@@ -57,6 +57,38 @@ class DroneSourceLockerSelectorTest {
         BusinessException err = assertThrows(
                 BusinessException.class, () -> selector.select(10.70, 106.70, 5L, null));
         assertEquals("LANDING_PAD_NOT_READY", err.getCode());
+    }
+
+    /// Trạm đang dừng bay không làm tủ gửi: chọn trạm kế tiếp; mọi trạm trong tầm đều dừng thì báo đúng lý do.
+    @Test
+    void suspendedStationsAreSkippedAsSource() {
+        DroneFlightControl flightControl = mock(DroneFlightControl.class);
+        DroneSourceLockerSelector withStops = new DroneSourceLockerSelector(lookup, drones, rules, flightControl);
+        when(rules.droneMaxPickupMeters()).thenReturn(5000);
+        when(rules.droneMaxRouteMeters()).thenReturn(10000);
+        when(rules.droneMinPreflightBatteryPercent()).thenReturn(20);
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(
+                station(1L, 10.7000, 106.7000), station(2L, 10.7050, 106.7050), station(9L, 10.7200, 106.7200))));
+        for (long id : new long[] {1L, 2L}) {
+            when(drones.getLockerLayout(id)).thenReturn(ApiResponse.ok(new LockerLayoutDto(id, "S", "S", "ACTIVE", true, "OK")));
+            when(drones.listDroneUnits(id)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
+        }
+        when(flightControl.activeSuspensions()).thenReturn(java.util.Map.of(1L, new com.huynqb.laundrylocker.order.model.DroneStationSuspension()));
+
+        var selection = withStops.select(10.7001, 106.7001, 9L, null);
+        assertEquals(2L, selection.source().id());
+
+        when(flightControl.activeSuspensions()).thenReturn(java.util.Map.of(
+                1L, new com.huynqb.laundrylocker.order.model.DroneStationSuspension(),
+                2L, new com.huynqb.laundrylocker.order.model.DroneStationSuspension()));
+        var error = assertThrows(BusinessException.class,
+                () -> withStops.select(10.7001, 106.7001, 9L, null));
+        assertEquals("DRONE_STATION_SUSPENDED", error.getCode());
+    }
+
+    private static LockerInfo station(Long id, double lat, double lng) {
+        return new LockerInfo(
+                id, 1L, "S" + id, "Trạm " + id, "ACTIVE", null, lat, lng, true, null, 4, 4);
     }
 
     private DroneUnitDto drone(String status, Integer battery, boolean active) {

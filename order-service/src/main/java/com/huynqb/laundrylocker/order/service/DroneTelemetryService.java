@@ -10,8 +10,8 @@ import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
+import com.huynqb.laundrylocker.order.settings.OrderRules;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -45,9 +45,8 @@ public class DroneTelemetryService {
     private final LockerDroneClient lockerDroneClient;
     private final DroneTelemetryRegistry registry;
     private final TransactionTemplate transactions;
-    private final double departedDistanceM;
-    private final double approachDistanceM;
-    private final double arrivalRadiusM;
+    /// Bán kính đã rời / đang tiếp cận / đã tới — admin chỉnh ở nhóm "Kết nối tủ & định vị drone".
+    private final OrderRules rules;
 
     /// Toạ độ tủ không đổi trong lúc bay; nhớ lại để không gọi locker-service mỗi giây.
     private final Map<Long, double[]> lockerCoordinates = new ConcurrentHashMap<>();
@@ -63,9 +62,7 @@ public class DroneTelemetryService {
             LockerDroneClient lockerDroneClient,
             DroneTelemetryRegistry registry,
             TransactionTemplate transactions,
-            @Value("${app.drone.telemetry.departed-distance-m:30}") double departedDistanceM,
-            @Value("${app.drone.telemetry.approach-distance-m:150}") double approachDistanceM,
-            @Value("${app.drone.telemetry.arrival-radius-m:30}") double arrivalRadiusM) {
+            OrderRules rules) {
         this.missionRepository = missionRepository;
         this.orderRepository = orderRepository;
         this.progressService = progressService;
@@ -74,9 +71,7 @@ public class DroneTelemetryService {
         this.lockerDroneClient = lockerDroneClient;
         this.registry = registry;
         this.transactions = transactions;
-        this.departedDistanceM = departedDistanceM;
-        this.approachDistanceM = approachDistanceM;
-        this.arrivalRadiusM = arrivalRadiusM;
+        this.rules = rules;
     }
 
     /// Xử lý một bản tin đã qua kiểm chữ ký. Không ném lỗi ra ngoài: hỏng một bản tin
@@ -155,8 +150,9 @@ public class DroneTelemetryService {
         double fromSource = distanceM(route.source(), frame);
         double toDestination = distanceM(route.destination(), frame);
         // Tuyến ngắn hơn ngưỡng mặc định thì co ngưỡng theo chiều dài tuyến.
-        double departed = Math.min(departedDistanceM, route.lengthM() / 4);
-        double approach = Math.max(arrivalRadiusM, Math.min(approachDistanceM, route.lengthM() / 3));
+        double arrivalRadiusM = rules.telemetryArrivalRadiusM();
+        double departed = Math.min(rules.telemetryDepartedDistanceM(), route.lengthM() / 4);
+        double approach = Math.max(arrivalRadiusM, Math.min(rules.telemetryApproachDistanceM(), route.lengthM() / 3));
         return switch (stage == null ? "" : stage) {
             case "DEPARTED" -> fromSource >= departed;
             case "EN_ROUTE" -> toDestination <= approach;

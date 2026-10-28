@@ -25,4 +25,16 @@ public class AuthRules {
     public int tempTokenTtlSeconds() {
         return settings.getInt(TEMP_TOKEN_TTL_SECONDS);
     }
+
+    public int admin2faMaxAttempts() {
+        return settings.getInt(ADMIN_2FA_MAX_ATTEMPTS);
+    }
+
+    public int kioskQrSessionTtlSeconds() {
+        return settings.getInt(KIOSK_QR_SESSION_TTL_SECONDS);
+    }
+
+    public int kioskQrMaxConfirmAttempts() {
+        return settings.getInt(KIOSK_QR_MAX_CONFIRM_ATTEMPTS);
+    }
 }

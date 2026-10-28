@@ -15,6 +15,7 @@ import com.huynqb.laundrylocker.payment.repository.RefundRepository;
 import com.huynqb.laundrylocker.payment.repository.WalletRepository;
 import com.huynqb.laundrylocker.payment.repository.WalletTransactionRepository;
 import com.huynqb.laundrylocker.payment.repository.WithdrawalRepository;
+import com.huynqb.laundrylocker.payment.settings.PaymentRules;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +43,7 @@ public class WalletService {
     private final RefundRepository refundRepository;
     private final PaymentReferenceResolver resolver;
     private final WalletEvents walletEvents;
+    private final PaymentRules rules;
 
     @Transactional
     public Wallet getOrCreate(Long userId) {
@@ -427,8 +429,11 @@ public class WalletService {
     @Transactional
     public WithdrawResponse withdraw(Long userId, WithdrawRequest request) {
         requirePositive(request.amount());
-        if (request.amount().compareTo(BigDecimal.valueOf(10000)) < 0) {
-            throw new BusinessException("WITHDRAW_MIN_AMOUNT", "Số tiền rút tối thiểu là 10.000 VND");
+        BigDecimal minimum = rules.withdrawMinAmount();
+        if (request.amount().compareTo(minimum) < 0) {
+            throw new BusinessException("WITHDRAW_MIN_AMOUNT",
+                    "Số tiền rút tối thiểu là " + String.format(java.util.Locale.ROOT, "%,d", minimum.longValue()).replace(',', '.')
+                            + " VND");
         }
         BigDecimal withdrawable = getWithdrawableBalance(userId);
         if (request.amount().compareTo(withdrawable) > 0) {

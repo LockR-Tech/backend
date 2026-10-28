@@ -77,6 +77,10 @@ public class LockerRules {
         return settings.getInt(DRONE_LOW_BATTERY_PERCENT);
     }
 
+    public int technicianLocationMaxAgeMinutes() {
+        return settings.getInt(TECHNICIAN_LOCATION_MAX_AGE_MINUTES);
+    }
+
     public String cellDimensionsStandard() {
         return settings.getString(CELL_DIMENSIONS_STANDARD);
     }

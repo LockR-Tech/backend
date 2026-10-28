@@ -55,8 +55,6 @@ import java.util.Set;
 public class DronePickupService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
-    /// Người vừa từ chối hoặc để lời mời quá hạn không bị mời lại cùng lần lấy hàng trong khoảng này.
-    static final int REOFFER_COOLDOWN_MINUTES = 10;
     private static final List<String> HOLDING = List.of(DronePickup.OFFERED, DronePickup.ACCEPTED);
     private static final List<String> ACTIVE_MISSION = List.of(
             "AWAITING_LOADING", "READY_TO_LAUNCH", "LAUNCHING", "DEPARTED", "EN_ROUTE", "APPROACHING", "ARRIVED", "DROP_REPORTED");
@@ -303,7 +301,8 @@ public class DronePickupService {
             return false;
         }
         LocalDateTime freshAfter = now.minusMinutes(rules.droneTechnicianLocationMaxAgeMinutes());
-        LocalDateTime cooldownAfter = now.minusMinutes(REOFFER_COOLDOWN_MINUTES);
+        // Người vừa từ chối hoặc để lời mời quá hạn không bị mời lại cùng lần lấy hàng trong khoảng này.
+        LocalDateTime cooldownAfter = now.minusMinutes(rules.dronePickupReofferCooldownMinutes());
         Set<Long> recentlyPassed = new HashSet<>();
         for (DronePickupOffer offer : offerRepository.findByPickupId(pickup.getId())) {
             if (SKIP_AFTER.contains(offer.getStatus())

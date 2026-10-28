@@ -42,6 +42,7 @@ public class DroneWeatherQueryService {
     private final LockerOrderRepository orderRepository;
     private final LockerLookupClient lockerLookupClient;
     private final DroneWeatherService weatherService;
+    private final DroneFlightControl flightControl;
 
     public DroneWeatherViews.RouteWeather forOrder(Long orderId) {
         LockerOrder order = orderRepository.findById(orderId)
@@ -62,7 +63,7 @@ public class DroneWeatherQueryService {
         // Kiện chưa rời nhà người gửi: xét cả chặng nhà → tủ bay như lúc đặt đơn; đã lấy rồi thì chỉ còn tuyến bay.
         boolean beforePickup = AWAITING_PICKUP_STAGES.contains(order.getDeliveryStage());
         DroneWeatherAssessment weather = source == null || destination == null
-                ? DroneWeatherAssessment.unavailable(OffsetDateTime.now(ZoneOffset.UTC))
+                ? weatherService.unavailable(OffsetDateTime.now(ZoneOffset.UTC))
                 : beforePickup
                         ? weatherService.assessJourney(order.getPickupLatitude(), order.getPickupLongitude(), source, destination)
                         : weatherService.assessRoute(source, destination);
@@ -82,8 +83,9 @@ public class DroneWeatherQueryService {
         return FLIGHT_ENDED_DELIVERY_STAGES.contains(stage);
     }
 
-    /// Tủ đang hoạt động, có bãi đáp và toạ độ — sắp theo tên.
+    /// Tủ đang hoạt động, có bãi đáp và toạ độ — sắp theo tên — kèm lệnh dừng bay của từng trạm.
     public List<DroneWeatherViews.LockerWeather> droneLockers() {
+        var suspended = flightControl.activeSuspensions();
         return lockers(null).stream()
                 .filter(locker -> "ACTIVE".equalsIgnoreCase(locker.status()))
                 .filter(locker -> Boolean.TRUE.equals(locker.landingPad()))
@@ -91,7 +93,8 @@ public class DroneWeatherQueryService {
                 .sorted(Comparator.comparing(locker -> locker.name() == null ? "" : locker.name()))
                 .map(locker -> new DroneWeatherViews.LockerWeather(
                         locker.id(), locker.code(), locker.name(), locker.address(),
-                        locker.latitude(), locker.longitude(), weatherService.assessLocker(locker)))
+                        locker.latitude(), locker.longitude(), weatherService.assessLocker(locker),
+                        DroneFlightControl.view(suspended.get(locker.id()))))
                 .toList();
     }
 

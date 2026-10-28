@@ -31,7 +31,7 @@ class DroneWeatherQueryServiceTest {
     private final LockerLookupClient lockerLookupClient = mock(LockerLookupClient.class);
     private final DroneWeatherService weatherService = mock(DroneWeatherService.class);
     private final DroneWeatherQueryService queryService =
-            new DroneWeatherQueryService(orderRepository, lockerLookupClient, weatherService);
+            new DroneWeatherQueryService(orderRepository, lockerLookupClient, weatherService, mock(DroneFlightControl.class));
 
     @Test
     void fetches30MinWeatherWhileOrderIsInActiveFlight() {
