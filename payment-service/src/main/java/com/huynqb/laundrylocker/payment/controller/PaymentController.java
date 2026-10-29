@@ -237,10 +237,13 @@ public class PaymentController {
             @RequestParam(required = false) BigDecimal percentage,
             @RequestParam String incidentCode,
             @RequestParam(required = false) String reason,
+            @RequestParam(required = false, defaultValue = "false") boolean refundShippingFee,
             @RequestParam(required = false) Long actorUserId) {
+        // `percentage` giữ để order-service bản cũ còn gọi được; lý do phiếu không in tỷ lệ chính sách nữa.
         return ApiResponse.ok(
                 "COMPENSATION_REFUND_CREATED", "Compensation refund created",
-                paymentService.createCompensationRefund(orderId, amount, percentage, incidentCode, reason, actorUserId));
+                paymentService.createCompensationRefund(
+                        orderId, amount, incidentCode, reason, refundShippingFee, actorUserId));
     }
 
     @GetMapping("/internal/payments/{id}")

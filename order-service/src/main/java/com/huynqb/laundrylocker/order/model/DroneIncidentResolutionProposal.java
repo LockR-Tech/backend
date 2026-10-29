@@ -32,6 +32,9 @@ public class DroneIncidentResolutionProposal {
     private String policyVersion;
     @Column(name = "override_reason", length = 1000)
     private String overrideReason;
+    /// Nội dung phương án gửi khách; bắt buộc với MANUAL_RESOLUTION (V35).
+    @Column(name = "resolution_note", length = 1000)
+    private String resolutionNote;
     @Column(name = "proposed_by_user_id", nullable = false)
     private Long proposedByUserId;
     @Column(nullable = false, length = 40)

@@ -94,7 +94,7 @@ class DroneSourceLockerSelectorTest {
         when(rules.droneMaxRouteMeters()).thenReturn(10000);
         when(rules.droneMinRouteMeters()).thenReturn(200);
         when(rules.droneMinPreflightBatteryPercent()).thenReturn(20);
-        // Tủ 1 cùng toạ độ tủ nhận 9 (lab), tủ 2 cách ~1,1 km.
+        // Tủ 1 cùng toạ độ tủ nhận 9 (lab), tủ 2 cách ~1,1 km; điểm lấy hàng cách tủ nhận ~490 m.
         when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(
                 station(1L, 10.8411, 106.8097), station(2L, 10.8511, 106.8097), station(9L, 10.8411, 106.8097))));
         for (long id : new long[] {1L, 2L}) {
@@ -102,16 +102,32 @@ class DroneSourceLockerSelectorTest {
             when(drones.listDroneUnits(id)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
         }
 
-        var farther = selector.select(10.8412, 106.8098, 9L, null);
+        var farther = selector.select(10.8455, 106.8097, 9L, null);
         assertEquals(2L, farther.source().id(), "bỏ tủ sát tủ nhận, chọn tủ xa hơn");
         assertTrue(farther.routeDistanceMeters() >= 200);
 
-        var tooShort = assertThrows(BusinessException.class, () -> selector.select(10.8412, 106.8098, 9L, 2L));
+        var tooShort = assertThrows(BusinessException.class, () -> selector.select(10.8455, 106.8097, 9L, 2L));
         assertEquals("DRONE_ROUTE_TOO_SHORT", tooShort.getCode());
 
-        var demo = selector.select(10.8412, 106.8098, 9L, 2L, true);
+        var demo = selector.select(10.8455, 106.8097, 9L, 2L, true);
         assertEquals(1L, demo.source().id());
         assertEquals(0, demo.routeDistanceMeters());
+    }
+
+    /// Tủ nhận sát nơi gửi (dưới quãng bay tối thiểu) thì không giao bằng drone — kể cả khi có tủ bay xa hơn
+    /// làm quãng bay "đủ" (test 2026-10-29: tủ nhận cách người gửi 13 m vẫn đặt được, drone bay 1,6 km).
+    @Test
+    void destinationTooCloseToThePickupIsRejectedEvenWithAFartherSource() {
+        when(rules.droneMaxPickupMeters()).thenReturn(5000);
+        when(rules.droneMaxRouteMeters()).thenReturn(10000);
+        when(rules.droneMinRouteMeters()).thenReturn(200);
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(
+                station(1L, 10.8411, 106.8097), station(2L, 10.8511, 106.8097), station(9L, 10.8411, 106.8097))));
+
+        var error = assertThrows(BusinessException.class, () -> selector.select(10.8412, 106.8098, 9L, null));
+        assertEquals("DRONE_ROUTE_TOO_SHORT", error.getCode());
+        assertTrue(error.getMessage().contains("điểm lấy hàng"));
+        verifyNoInteractions(drones);
     }
 
     private static LockerInfo station(Long id, double lat, double lng) {

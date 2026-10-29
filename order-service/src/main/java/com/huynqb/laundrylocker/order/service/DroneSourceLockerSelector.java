@@ -80,6 +80,16 @@ public class DroneSourceLockerSelector {
         int maxRouteMeters = rules.droneMaxRouteMeters();
         int minRouteMeters = allowShortRoute ? 0 : rules.droneMinRouteMeters();
 
+        // Tủ nhận sát nơi gửi thì không giao bằng drone, dù có tủ bay xa hơn để "đủ" quãng bay: trước đây hệ
+        // thống chọn tủ bay cách 1,6 km rồi bay ngược về tủ cách người gửi 13 m (test 2026-10-29).
+        int pickupToDestination = meters(pickup, destination);
+        if (minRouteMeters > 0 && pickupToDestination < minRouteMeters) {
+            throw new BusinessException(
+                    "DRONE_ROUTE_TOO_SHORT",
+                    "Tủ nhận chỉ cách điểm lấy hàng " + pickupToDestination + " m (dưới " + minRouteMeters
+                            + " m) — không cần giao bằng drone, hãy gửi thẳng vào tủ nhận");
+        }
+
         // Tủ có bãi đáp, có toạ độ, khác tủ nhận — xếp gần điểm lấy hàng nhất trước.
         List<Candidate> nearby = lockers.stream()
                 .filter(locker -> !Objects.equals(locker.id(), destinationLockerId))

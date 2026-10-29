@@ -326,7 +326,15 @@ public class DroneOrderMaintenanceService {
         String note = requireReasonNote(request);
 
         String oldStatus = order.getStatus();
-        releaseReservationIfHeld(mission.getDroneUnitId());
+        if (Integer.valueOf(DRONE_FAULT_CANCEL_REASON).equals(request.reasonCode())) {
+            // Huỷ vì drone lỗi: drone không được về IDLE để nhận đơn tiếp (test 2026-10-29); locker-service mở
+            // phiếu lỗi drone kèm lý do.
+            faultReservedDrone(mission.getDroneUnitId(),
+                    "Huỷ đơn " + order.getOrderCode() + " trước khi bay: drone lỗi"
+                            + (note == null ? "" : " · " + note));
+        } else {
+            releaseReservationIfHeld(mission.getDroneUnitId());
+        }
         if (order.getReservedBoxId() != null) {
             lockerClient.releaseBox(order.getReservedBoxId());
         }
@@ -770,6 +778,19 @@ public class DroneOrderMaintenanceService {
         DroneUnitDto drone = fetchDrone(droneUnitId);
         if ("RESERVED".equals(drone.status())) {
             transitionDroneStatus(droneUnitId, "RESERVED", "IDLE", null);
+        } else if ("IN_FLIGHT".equals(drone.status())) {
+            throw new BusinessException(
+                    "DRONE_ALREADY_IN_FLIGHT", "An in-flight drone cannot be released by pre-launch cancellation");
+        }
+    }
+
+    /// Mã lý do "Drone lỗi" của hộp huỷ trước khi bay (`DroneFailureReasons.cancelLabel`).
+    static final int DRONE_FAULT_CANCEL_REASON = 2;
+
+    private void faultReservedDrone(Long droneUnitId, String reason) {
+        DroneUnitDto drone = fetchDrone(droneUnitId);
+        if ("RESERVED".equals(drone.status())) {
+            transitionDroneStatus(droneUnitId, "RESERVED", "FAULT", reason);
         } else if ("IN_FLIGHT".equals(drone.status())) {
             throw new BusinessException(
                     "DRONE_ALREADY_IN_FLIGHT", "An in-flight drone cannot be released by pre-launch cancellation");

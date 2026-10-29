@@ -41,6 +41,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -213,6 +214,92 @@ class PaymentServiceMoneyRulesTest {
         assertEquals("PAID", PaymentService.orderRefundStatus(List.of(refund("COMPLETED", 5000)), paid));
         assertEquals("REFUNDED", PaymentService.orderRefundStatus(List.of(refund("COMPLETED", 15000)), paid));
         assertEquals("PAID", PaymentService.orderRefundStatus(List.of(refund("REJECTED", 15000)), paid));
+    }
+
+    /// Phiếu bồi thường sự cố (RF-CMP-…) là tiền đền kiện, không phải trả lại tiền đơn: không làm đơn
+    /// REFUND_PENDING / REFUNDED (test 2026-10-29: chi bồi thường làm đơn hiện "Đã hoàn tiền").
+    @Test
+    void compensationPayoutsDoNotCountAsRefundsOfTheOrder() {
+        BigDecimal paid = BigDecimal.valueOf(8000);
+        RefundRecord pendingCompensation = refund("PENDING", 150000);
+        pendingCompensation.setTransactionId("RF-CMP-DPI-136-1793250234358-1793250472222");
+        RefundRecord paidCompensation = refund("COMPLETED", 150000);
+        paidCompensation.setTransactionId("RF-CMP-DPI-136-1793250234358-1793250472222");
+
+        assertEquals("PAID", PaymentService.orderRefundStatus(List.of(pendingCompensation), paid));
+        assertEquals("PAID", PaymentService.orderRefundStatus(List.of(paidCompensation), paid));
+        assertEquals("REFUNDED", PaymentService.orderRefundStatus(
+                List.of(paidCompensation, refund("COMPLETED", 8000)), paid));
+        assertEquals("DPI-136-1793250234358",
+                PaymentService.incidentCodeOf("RF-CMP-DPI-136-1793250234358-1793250472222"));
+        assertNull(PaymentService.incidentCodeOf("RF-PAY-55-1"));
+        assertEquals("150.000đ", PaymentService.formatVnd(BigDecimal.valueOf(150000)));
+    }
+
+    /// Có hoàn phí giao: phiếu bồi thường giữ nguyên lý do order-service gửi, phí giao thành phiếu hoàn
+    /// đơn thường riêng (trước đây cờ này bị bỏ qua, phí không được hoàn).
+    @Test
+    void compensationWithShippingFeeAlsoQueuesARefundOfThePaidFee() {
+        payments.add(completed(8000));
+        java.util.List<RefundRecord> saved = new java.util.ArrayList<>();
+        when(refundRepository.save(any(RefundRecord.class))).thenAnswer(invocation -> {
+            RefundRecord record = invocation.getArgument(0);
+            saved.add(record);
+            return record;
+        });
+        when(refundRepository.findByPaymentIdIn(any())).thenAnswer(invocation -> List.copyOf(saved));
+        when(refundRepository.findByOrderId(55L)).thenAnswer(invocation -> List.copyOf(saved));
+
+        service.createCompensationRefund(55L, BigDecimal.valueOf(150000), "DPI-1-1",
+                "Giao lại kèm bồi thường một phần — kiện hư hại nhẹ.", true, 11L);
+
+        assertEquals(2, saved.size());
+        assertTrue(saved.get(0).getTransactionId().startsWith("RF-CMP-DPI-1-1-"));
+        assertEquals("[Bồi thường sự cố DPI-1-1] Giao lại kèm bồi thường một phần — kiện hư hại nhẹ.",
+                saved.get(0).getReason());
+        assertEquals(0, BigDecimal.valueOf(8000).compareTo(saved.get(1).getAmount()));
+        assertEquals("RF-PAY-55-1", saved.get(1).getTransactionId());
+        verify(orderClient).updatePaymentStatus(eq(55L), eq("REFUND_PENDING"), any(), eq(11L));
+    }
+
+    @Test
+    void compensationWithoutShippingFeeLeavesTheOrderPaymentStatusAlone() {
+        payments.add(completed(8000));
+        when(refundRepository.save(any(RefundRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createCompensationRefund(55L, BigDecimal.valueOf(360000), "DPI-2-1", "Bồi thường — kiện thất lạc.",
+                false, 11L);
+
+        verify(refundRepository, times(1)).save(any(RefundRecord.class));
+        verify(orderClient, never()).updatePaymentStatus(any(), any(), any(), any());
+    }
+
+    /// Duyệt phiếu bồi thường ⇒ báo order-service PAID để sự cố được đóng (trước đây sự cố đứng mãi ở
+    /// "đang chi trả").
+    @Test
+    void approvingACompensationPayoutReportsItPaidToTheIncident() {
+        com.huynqb.laundrylocker.payment.client.DroneIncidentClient incidents =
+                org.mockito.Mockito.mock(com.huynqb.laundrylocker.payment.client.DroneIncidentClient.class);
+        ReflectionTestUtils.setField(service, "droneIncidentClient", incidents);
+        RefundRecord pending = refund("PENDING", 150000);
+        pending.setId(4L);
+        pending.setOrderId(55L);
+        pending.setPaymentId(50L);
+        pending.setTransactionId("RF-CMP-DPI-136-1793250234358-1793250472222");
+        when(refundRepository.findById(4L)).thenReturn(Optional.of(pending));
+        when(refundRepository.save(any(RefundRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(refundRepository.findByOrderId(55L)).thenReturn(List.of(pending));
+        when(repository.findById(any())).thenReturn(Optional.empty());
+
+        service.adminApproveRefund(4L, 11L, null);
+
+        org.mockito.ArgumentCaptor<com.huynqb.laundrylocker.payment.dto.internal.IncidentCompensationUpdate> update =
+                org.mockito.ArgumentCaptor.forClass(com.huynqb.laundrylocker.payment.dto.internal.IncidentCompensationUpdate.class);
+        verify(incidents).updateCompensation(eq("DPI-136-1793250234358"), update.capture());
+        assertEquals("PAID", update.getValue().status());
+        assertEquals("RF-CMP-DPI-136-1793250234358-1793250472222", update.getValue().reference());
+        // Chỉ là chi bồi thường: đơn vẫn PAID.
+        verify(orderClient).updatePaymentStatus(eq(55L), eq("PAID"), any(), eq(11L));
     }
 
     /// Duyệt hoàn một phần: đơn trở về PAID (không REFUNDED — không trả lại mã giảm giá/điểm đã dùng),

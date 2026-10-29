@@ -14,6 +14,8 @@ public interface DroneParcelIncidentRepository extends JpaRepository<DroneParcel
     Optional<DroneParcelIncident> findByIncidentCode(String incidentCode);
     Optional<DroneParcelIncident> findByOrderId(Long orderId);
     Optional<DroneParcelIncident> findByIdempotencyKey(String idempotencyKey);
+    /// Sự cố mà đơn này là đơn giao lại của nó.
+    Optional<DroneParcelIncident> findFirstByRedeliveryOrderId(Long redeliveryOrderId);
     List<DroneParcelIncident> findAllByOrderByCreatedAtDesc();
     List<DroneParcelIncident> findAllByOrderByUpdatedAtDesc();
     List<DroneParcelIncident> findByReportedByUserIdOrRecoveryAssignedToUserIdOrderByCreatedAtDesc(

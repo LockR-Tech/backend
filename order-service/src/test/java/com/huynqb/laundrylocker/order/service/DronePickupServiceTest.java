@@ -27,6 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -131,6 +134,42 @@ class DronePickupServiceTest {
         org.junit.jupiter.api.Assertions.assertEquals(1, offered);
         org.junit.jupiter.api.Assertions.assertEquals(DronePickup.OFFERED, waiting.getStatus());
         org.junit.jupiter.api.Assertions.assertEquals(TECHNICIAN_ID, waiting.getTechnicianId());
+    }
+
+    /// KTV ngoài bán kính lấy hàng không được mời, kể cả ở nhánh dự phòng vị trí cũ (test 2026-10-29: mời
+    /// KTV có vị trí cũ 2 ngày, cách 15,9 km).
+    @Test
+    void offerPendingNeverInvitesATechnicianBeyondThePickupRadius() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        when(rules.droneTechnicianLocationMaxAgeMinutes()).thenReturn(10);
+        when(rules.droneMaxPickupMeters()).thenReturn(5000);
+
+        LockerOrder order = order(31L, "AWAITING_DISPATCH", "AWAITING_DISPATCH");
+        order.setType("DRONE_DELIVERY");
+        order.setPickupLatitude(10.8418);
+        order.setPickupLongitude(106.8094);
+        DronePickup waiting = pickup(31L, DronePickup.SEARCHING);
+        waiting.setId(98L);
+        when(pickupRepository.findByStatusInOrderByCreatedAtAsc(List.of(DronePickup.SEARCHING)))
+                .thenReturn(List.of(waiting));
+        when(orderRepository.findByIdForUpdate(31L)).thenReturn(Optional.of(order));
+        when(pickupRepository.findByOrderIdForUpdate(31L)).thenReturn(Optional.of(waiting));
+        when(offerRepository.findByPickupId(98L)).thenReturn(List.of());
+
+        com.huynqb.laundrylocker.order.model.DroneTechnicianPresence far =
+                new com.huynqb.laundrylocker.order.model.DroneTechnicianPresence();
+        far.setUserId(TECHNICIAN_ID);
+        far.setOnDuty(true);
+        far.setLatitude(10.7769); // Quận 1, ~15 km
+        far.setLongitude(106.7009);
+        far.setLocationAt(now.minusDays(2));
+        when(presenceRepository.findByOnDutyTrue()).thenReturn(List.of(far));
+
+        int offered = service.offerPending(now);
+
+        org.junit.jupiter.api.Assertions.assertEquals(0, offered);
+        org.junit.jupiter.api.Assertions.assertEquals(DronePickup.SEARCHING, waiting.getStatus());
+        verify(presenceRepository, never()).findByUserIdForUpdate(any());
     }
 
     @Test

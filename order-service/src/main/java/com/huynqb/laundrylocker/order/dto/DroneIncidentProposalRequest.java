@@ -11,6 +11,8 @@ public record DroneIncidentProposalRequest(
         Boolean redeliveryOffered,
         @PositiveOrZero BigDecimal compensationAmount,
         Boolean refundShippingFee,
-        @Size(max = 1000) String overrideReason) {
+        @Size(max = 1000) String overrideReason,
+        /// Nội dung phương án gửi khách; bắt buộc với MANUAL_RESOLUTION.
+        @Size(max = 1000) String resolutionNote) {
 }
 

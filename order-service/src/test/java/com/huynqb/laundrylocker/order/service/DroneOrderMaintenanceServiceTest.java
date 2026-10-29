@@ -484,6 +484,31 @@ class DroneOrderMaintenanceServiceTest {
         verify(flightControl).recordSuspended(eq(com.huynqb.laundrylocker.order.model.DroneFlightBlock.LAUNCH), any());
     }
 
+    /// Huỷ trước khi bay vì "Drone lỗi" ⇒ drone sang FAULT (kèm lý do để locker-service mở phiếu lỗi), không
+    /// về IDLE để nhận đơn tiếp (test 2026-10-29: DRONE-03 vẫn IDLE).
+    @Test
+    void cancelBecauseTheDroneIsFaultyMarksItFaultInsteadOfIdle() {
+        DroneOrderMaintenanceService service = newService();
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = inFlightMission("READY_TO_LAUNCH");
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)));
+        when(lockerDroneClient.transitionDroneStatus(eq(9L), any()))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "FAULT", 87, true)));
+
+        service.cancel(21L, 99L, new CancelDroneOrderRequest(2, "Lỗi GPS"));
+
+        org.mockito.ArgumentCaptor<DroneStatusTransitionRequest> transition =
+                org.mockito.ArgumentCaptor.forClass(DroneStatusTransitionRequest.class);
+        verify(lockerDroneClient).transitionDroneStatus(eq(9L), transition.capture());
+        assertEquals("RESERVED", transition.getValue().expectedStatus());
+        assertEquals("FAULT", transition.getValue().status());
+        assertTrue(transition.getValue().reason().contains("drone lỗi"));
+        assertEquals("CANCELED", order.getStatus());
+    }
+
     @Test
     void cancelBeforeLoadingKeepsTheSourceCellThatStillHoldsTheParcel() {
         DroneOrderMaintenanceService service = newService();

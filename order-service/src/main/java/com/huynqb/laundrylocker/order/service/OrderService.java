@@ -50,6 +50,12 @@ public class OrderService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Set<String> CANCELABLE = Set.of("INITIALIZED", "RESERVED", "WAITING", "AWAITING_DISPATCH");
+
+    /// Đóng phần giao lại của sự cố rơi kiện khi đơn giao lại hoàn tất. `@Lazy` cắt vòng phụ thuộc; null trong
+    /// unit test dựng OrderService bằng tay.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private DroneParcelIncidentService droneParcelIncidentService;
     private static final Set<String> PIN_RESETTABLE = Set.of("INITIALIZED", "STORING", "RETURNED");
 
     /// Bước admin được đổi tay (trạng thái hiện tại → đích). Đơn đã COMPLETED/CANCELED là đóng hẳn.
@@ -2030,6 +2036,9 @@ public class OrderService {
         publishStatusChanged(saved, oldStatus);
         if (justCompleted) {
             publishCompletedAfterCommit(saved);
+            if ("DRONE_DELIVERY".equalsIgnoreCase(saved.getType()) && droneParcelIncidentService != null) {
+                closeIncidentRedeliveryAfterCommit(saved.getId());
+            }
         }
         notifyStatus(saved, oldStatus);
         return toResponse(saved);
@@ -2534,6 +2543,27 @@ public class OrderService {
     /// nhận (loyalty cộng điểm) chống trùng theo orderId. Phát sau khi giao dịch commit để đơn bị
     /// rollback không sinh sự kiện. Số tiền chỉ nằm ở sự kiện này, không thêm vào
     /// order.status.changed (sự kiện đó dùng cho cập nhật realtime trên app/web).
+    /// Sau khi đơn hoàn tất đã commit: lỗi khi đóng sự cố không được làm rollback việc khách đã lấy hàng.
+    private void closeIncidentRedeliveryAfterCommit(Long orderId) {
+        Runnable close = () -> {
+            try {
+                droneParcelIncidentService.onRedeliveryOrderCompleted(orderId);
+            } catch (RuntimeException ex) {
+                log.warn("Could not close redelivery of incident for order {}: {}", orderId, ex.getMessage());
+            }
+        };
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            close.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                close.run();
+            }
+        });
+    }
+
     private void publishCompletedAfterCommit(LockerOrder order) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("orderId", order.getId());

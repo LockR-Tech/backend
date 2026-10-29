@@ -68,7 +68,11 @@ public final class OrderDetailViews {
         add(result, "CREATED", "Đơn được tạo", order.getCreatedAt());
         add(result, "PAID", "Đã thanh toán", order.getPaidAt());
         add(result, "DROP_OPENED", "Ô được mở để bỏ hàng", order.getDropOpenedAt());
-        add(result, "PARCEL_DROPPED", "Kiện đã được bỏ vào tủ gửi", order.getParcelDroppedAt());
+        // Đơn drone lấy hàng tận nhà: mốc này là lúc KTV nhận kiện, không có bước bỏ vào tủ gửi.
+        boolean homePickup = drone && order.getPickupLatitude() != null;
+        add(result, "PARCEL_DROPPED",
+                homePickup ? "Kỹ thuật viên đã nhận kiện tại nơi gửi" : "Kiện đã được bỏ vào tủ gửi",
+                order.getParcelDroppedAt());
         add(result, "STORED", drone ? "Kiện đã vào ô tủ nhận" : "Hàng đã vào ô, chờ lấy",
                 firstReached(history, drone ? "READY_FOR_PICKUP" : "STORING"));
         add(result, "DELEGATED", "Đã ủy quyền lấy hộ", order.getDelegatedAt());

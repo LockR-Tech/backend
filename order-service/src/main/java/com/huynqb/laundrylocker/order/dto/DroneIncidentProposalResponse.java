@@ -7,6 +7,7 @@ public record DroneIncidentProposalResponse(
         Long id, Integer version, String resolutionType, boolean redeliveryOffered,
         BigDecimal compensationAmount, boolean refundShippingFee, String policyVersion,
         String overrideReason, Long proposedByUserId, String status,
-        String customerResponseNote, LocalDateTime respondedAt, LocalDateTime createdAt) {
+        String customerResponseNote, LocalDateTime respondedAt, LocalDateTime createdAt,
+        String resolutionNote) {
 }
 

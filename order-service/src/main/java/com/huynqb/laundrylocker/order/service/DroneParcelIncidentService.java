@@ -441,15 +441,57 @@ public class DroneParcelIncidentService {
         requireAdmin(roles);
         DroneParcelIncident incident = locked(incidentId);
         requireState(incident.getRedeliveryStatus(), Set.of("PREPARING", "IN_PROGRESS"), "REDELIVERY_NOT_IN_PROGRESS");
+        markRedeliveryCompleted(incident, adminUserId, "Admin xác nhận đã giao lại hàng thành công cho khách hàng");
+        return toResponse(incident);
+    }
+
+    /// Đơn giao lại của một sự cố vừa hoàn tất (khách lấy hàng) ⇒ đóng phần giao lại của sự cố. Trước đây
+    /// sự cố đứng ở "đang chuẩn bị giao lại" cho tới khi admin bấm tay (test 2026-10-29). Không phải đơn giao
+    /// lại ⇒ không làm gì. Gọi sau commit của đơn (afterCommit) nên cần giao dịch mới.
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void onRedeliveryOrderCompleted(Long redeliveryOrderId) {
+        incidentRepository.findFirstByRedeliveryOrderId(redeliveryOrderId).ifPresent(found -> {
+            DroneParcelIncident incident = locked(found.getId());
+            if (!Set.of("PREPARING", "IN_PROGRESS").contains(incident.getRedeliveryStatus())) {
+                return;
+            }
+            markRedeliveryCompleted(incident, null,
+                    "Khách đã nhận hàng của đơn giao lại #" + redeliveryOrderId);
+        });
+    }
+
+    private void markRedeliveryCompleted(DroneParcelIncident incident, Long actorUserId, String note) {
+        String previous = incident.getRedeliveryStatus();
         incident.setRedeliveryStatus("COMPLETED");
-        if (!Set.of("ACCEPTED", "AWAITING_APPROVAL", "PAYMENT_PENDING", "PROCESSING").contains(incident.getCompensationStatus())) {
-            incident.setStatus("RESOLVED");
-            incident.setResolvedAt(LocalDateTime.now());
+        incident.setParcelStatus("REDELIVERED");
+        incidentRepository.save(incident);
+        timeline(incident, "REDELIVERY_COMPLETED", previous, "COMPLETED", actorUserId, note, null);
+        resolveIfSettled(incident, actorUserId);
+    }
+
+    /// Sự cố đã chọn phương án (khách đồng ý) và không còn phần giao lại / chi trả nào dở ⇒ RESOLVED.
+    /// Gom một chỗ để mọi nhánh (giao lại xong, chi trả xong, thoả thuận riêng không còn việc) đóng được sự
+    /// cố — trước đây thiếu nhánh nên sự cố kẹt RESOLUTION_IN_PROGRESS vĩnh viễn.
+    private void resolveIfSettled(DroneParcelIncident incident, Long actorUserId) {
+        if (!"RESOLUTION_IN_PROGRESS".equals(incident.getStatus())) {
+            return;
+        }
+        boolean redeliveryOpen = Set.of("AWAITING_CUSTOMER_ACCEPTANCE", "ACCEPTED", "PREPARING", "IN_PROGRESS")
+                .contains(incident.getRedeliveryStatus());
+        boolean compensationOpen = Set.of("AWAITING_CUSTOMER_ACCEPTANCE", "ACCEPTED", "AWAITING_APPROVAL",
+                        "PAYMENT_PENDING", "PROCESSING", "PAYMENT_FAILED", "DISPUTED")
+                .contains(incident.getCompensationStatus());
+        if (redeliveryOpen || compensationOpen) {
+            return;
+        }
+        incident.setStatus("RESOLVED");
+        incident.setResolvedAt(LocalDateTime.now());
+        if ("PAID".equals(incident.getCompensationStatus()) && !"REDELIVERED".equals(incident.getParcelStatus())) {
+            incident.setParcelStatus("COMPENSATED");
         }
         incidentRepository.save(incident);
-        timeline(incident, "REDELIVERY_COMPLETED", "IN_PROGRESS", "COMPLETED", adminUserId,
-                "Đã hoàn tất giao lại hàng thành công cho khách hàng", null);
-        return toResponse(incident);
+        timeline(incident, "INCIDENT_RESOLVED", "RESOLUTION_IN_PROGRESS", "RESOLVED", actorUserId,
+                "Đã hoàn tất phương án xử lý", null);
     }
 
     @Transactional
@@ -537,6 +579,17 @@ public class DroneParcelIncidentService {
             throw new BusinessException("RESOLUTION_CONTENT_INVALID",
                     "Resolution type does not match redelivery and compensation values");
         }
+        // Thỏa thuận riêng: khách phải đọc được thoả thuận là gì trước khi bấm Đồng ý (test 2026-10-29 khách
+        // chỉ thấy "Nhân viên liên hệ xử lý riêng").
+        // Web admin bản trước gửi nội dung thoả thuận qua ô "Lý do điều chỉnh / Ghi chú thỏa thuận"
+        // (`overrideReason`) ⇒ dùng ô đó khi không có `resolutionNote`.
+        String resolutionNote = StringUtils.hasText(request.resolutionNote())
+                ? request.resolutionNote()
+                : "MANUAL_RESOLUTION".equals(type) ? request.overrideReason() : null;
+        if ("MANUAL_RESOLUTION".equals(type) && !StringUtils.hasText(resolutionNote)) {
+            throw new BusinessException("RESOLUTION_NOTE_REQUIRED",
+                    "Thỏa thuận riêng cần ghi rõ nội dung thoả thuận gửi khách");
+        }
         int version = proposalRepository.findFirstByIncidentIdOrderByProposalVersionDesc(incidentId)
                 .map(value -> value.getProposalVersion() + 1).orElse(1);
         DroneIncidentResolutionProposal proposal = new DroneIncidentResolutionProposal();
@@ -549,6 +602,7 @@ public class DroneParcelIncidentService {
         proposal.setPolicyVersion(StringUtils.hasText(order.getIncidentPolicyVersion())
                 ? order.getIncidentPolicyVersion() : "LEGACY");
         proposal.setOverrideReason(trim(request.overrideReason()));
+        proposal.setResolutionNote(trim(resolutionNote));
         proposal.setProposedByUserId(adminUserId);
         proposal.setStatus("AWAITING_CUSTOMER_ACCEPTANCE");
         proposalRepository.save(proposal);
@@ -613,6 +667,10 @@ public class DroneParcelIncidentService {
         proposalRepository.save(proposal);
         incidentRepository.save(incident);
         timeline(incident, "CUSTOMER_" + decision, null, incident.getStatus(), customerUserId, request.note(), null);
+        if ("ACCEPT".equals(decision)) {
+            // Thoả thuận riêng không giao lại, không bồi thường qua hệ thống ⇒ không còn bước nào, đóng luôn.
+            resolveIfSettled(incident, customerUserId);
+        }
         return toResponse(incident);
     }
 
@@ -653,14 +711,12 @@ public class DroneParcelIncidentService {
         if (StringUtils.hasText(request.reference())) {
             incident.setCompensationReference(request.reference().trim());
         }
-        if ("PAID".equals(next) && !Set.of("ACCEPTED", "PREPARING", "IN_PROGRESS")
-                .contains(incident.getRedeliveryStatus())) {
-            incident.setStatus("RESOLVED");
-            incident.setResolvedAt(LocalDateTime.now());
-        }
         incidentRepository.save(incident);
         timeline(incident, "COMPENSATION_" + next, previous, next, null, request.detail(),
                 json(Map.of("reference", request.reference() == null ? "" : request.reference())));
+        if ("PAID".equals(next)) {
+            resolveIfSettled(incident, null);
+        }
         return toResponse(incident);
     }
 
@@ -686,7 +742,8 @@ public class DroneParcelIncidentService {
                         value.getId(), value.getProposalVersion(), value.getResolutionType(),
                         value.isRedeliveryOffered(), value.getCompensationAmount(), value.isRefundShippingFee(),
                         value.getPolicyVersion(), value.getOverrideReason(), value.getProposedByUserId(),
-                        value.getStatus(), value.getCustomerResponseNote(), value.getRespondedAt(), value.getCreatedAt()))
+                        value.getStatus(), value.getCustomerResponseNote(), value.getRespondedAt(), value.getCreatedAt(),
+                        value.getResolutionNote()))
                 .toList();
         String recoveryTechName = null;
         String recoveryTechPhone = null;

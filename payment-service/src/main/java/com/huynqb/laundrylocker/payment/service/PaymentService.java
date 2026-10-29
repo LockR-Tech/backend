@@ -51,6 +51,12 @@ public class PaymentService {
     private final SepayService sepayService;
     /// Hạn mức nạp ví, phương thức đang bật, tự hoàn tất tiền mặt… admin cấu hình (ADR-0005).
     private final PaymentRules rules;
+    /// Báo kết quả chi bồi thường sự cố về order-service; null trong unit test không cần nó.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.huynqb.laundrylocker.payment.client.DroneIncidentClient droneIncidentClient;
+
+    /// Tiền tố mã phiếu bồi thường sự cố rơi kiện: `RF-CMP-<mã sự cố>-<millis>`.
+    static final String COMPENSATION_PREFIX = "RF-CMP-";
 
     @Transactional
     public PaymentResponse create(CreatePaymentRequest request) {
@@ -444,6 +450,7 @@ public class PaymentService {
     /// Tiền đơn đã thu trừ phần đã hoàn hoặc đang chờ hoàn.
     BigDecimal refundableAmount(Long orderId) {
         BigDecimal claimed = refundRepository.findByOrderId(orderId).stream()
+                .filter(r -> !isCompensation(r))
                 .filter(r -> "PENDING".equals(r.getStatus()) || "COMPLETED".equals(r.getStatus()))
                 .map(RefundRecord::getAmount)
                 .filter(java.util.Objects::nonNull)
@@ -453,13 +460,46 @@ public class PaymentService {
 
     /// Trạng thái thanh toán của đơn sau khi admin duyệt/từ chối một yêu cầu hoàn:
     /// còn yêu cầu chờ ⇒ REFUND_PENDING; đã hoàn đủ số đã thu ⇒ REFUNDED (order-service trả lại mã
-    /// giảm giá và điểm đã dùng); hoàn một phần hoặc bị từ chối ⇒ PAID.
+    /// giảm giá và điểm đã dùng); hoàn một phần hoặc bị từ chối ⇒ PAID. Phiếu bồi thường sự cố (RF-CMP-…) là
+    /// tiền Lock.R đền cho kiện, không phải trả lại tiền đơn ⇒ không tính vào đây (trước đây chi bồi thường
+    /// làm đơn hiện "Đã hoàn tiền" dù phí giao chưa hoàn).
     static String orderRefundStatus(List<RefundRecord> refunds, BigDecimal paid) {
-        if (refunds.stream().anyMatch(r -> "PENDING".equals(r.getStatus()))) {
+        if (refunds.stream().anyMatch(r -> "PENDING".equals(r.getStatus()) && !isCompensation(r))) {
             return "REFUND_PENDING";
         }
-        BigDecimal refunded = completedRefunds(refunds, false);
+        BigDecimal refunded = completedRefunds(refunds, true);
         return refunded.signum() > 0 && refunded.compareTo(paid) >= 0 ? "REFUNDED" : "PAID";
+    }
+
+    static boolean isCompensation(RefundRecord refund) {
+        return refund.getTransactionId() != null && refund.getTransactionId().startsWith(COMPENSATION_PREFIX);
+    }
+
+    /// `RF-CMP-DPI-136-1793250234358-1793250472222` ⇒ `DPI-136-1793250234358` (bỏ tiền tố và mốc tạo phiếu).
+    static String incidentCodeOf(String transactionId) {
+        if (transactionId == null || !transactionId.startsWith(COMPENSATION_PREFIX)) {
+            return null;
+        }
+        String rest = transactionId.substring(COMPENSATION_PREFIX.length());
+        int cut = rest.lastIndexOf('-');
+        return cut > 0 ? rest.substring(0, cut) : rest;
+    }
+
+    /// Phiếu bồi thường vừa được duyệt (PAID) hoặc từ chối (PAYMENT_FAILED) ⇒ báo order-service cập nhật sự
+    /// cố. Lỗi gọi không làm hỏng việc duyệt: admin xem được ở log, sự cố vẫn đứng ở "đang chi trả".
+    private void notifyIncidentCompensation(RefundRecord refund, String status, String detail) {
+        String incidentCode = incidentCodeOf(refund.getTransactionId());
+        if (incidentCode == null || droneIncidentClient == null) {
+            return;
+        }
+        try {
+            droneIncidentClient.updateCompensation(incidentCode,
+                    new com.huynqb.laundrylocker.payment.dto.internal.IncidentCompensationUpdate(
+                            status, refund.getTransactionId(), detail));
+        } catch (Exception ex) {
+            log.warn("Could not report compensation {} of incident {} to order-service: {}",
+                    status, incidentCode, ex.getMessage());
+        }
     }
 
     /// Tổng các khoản đã hoàn xong; `excludeCompensation` bỏ khoản bồi thường sự cố (RF-CMP-…).
@@ -716,6 +756,7 @@ public class PaymentService {
                 + (StringUtils.hasText(saved.getBankTransferRef()) ? " — Mã GD: " + saved.getBankTransferRef() : "");
         syncOrderRefundStatus(refund.getOrderId(), note, adminUserId);
         publishRefunded(refund.getOrderId());
+        notifyIncidentCompensation(saved, "PAID", note);
 
         PaymentRecord payment = repository.findById(refund.getPaymentId()).orElse(null);
         Long targetUserId = payment != null ? payment.getUserId() : null;
@@ -756,6 +797,7 @@ public class PaymentService {
         RefundRecord saved = refundRepository.save(refund);
 
         syncOrderRefundStatus(refund.getOrderId(), "Từ chối hoàn tiền: " + reason, adminUserId);
+        notifyIncidentCompensation(saved, "PAYMENT_FAILED", "Từ chối chi bồi thường: " + reason);
 
         PaymentRecord payment = repository.findById(refund.getPaymentId()).orElse(null);
         Long targetUserId = payment != null ? payment.getUserId() : null;
@@ -810,7 +852,9 @@ public class PaymentService {
                     || payment.getAmount().signum() <= 0) {
                 continue;
             }
+            // Phiếu bồi thường sự cố gắn cùng payment nhưng không phải là hoàn tiền đơn.
             boolean alreadyRefunded = refundRepository.findByPaymentIdIn(List.of(payment.getId())).stream()
+                    .filter(refund -> !isCompensation(refund))
                     .anyMatch(refund -> "COMPLETED".equals(refund.getStatus()) || "PENDING".equals(refund.getStatus()));
             if (alreadyRefunded) {
                 continue;
@@ -843,9 +887,14 @@ public class PaymentService {
         return new com.huynqb.laundrylocker.payment.dto.internal.OrderRefundResult(orderId, total, count);
     }
 
+    /// Phiếu chi bồi thường sự cố rơi kiện (order-service gọi khi khách đồng ý phương án có bồi thường).
+    /// `reason` do order-service dựng đủ ý (tình trạng kiện, phương án, cách tính); ở đây chỉ gắn mã sự cố.
+    /// `refundShippingFee` ⇒ hoàn thêm phí giao đã thu bằng phiếu hoàn đơn thường (RF-…), tách khỏi phiếu
+    /// bồi thường để trạng thái thanh toán của đơn phản ánh đúng việc phí đã được trả lại hay chưa.
     @Transactional
     public com.huynqb.laundrylocker.payment.dto.internal.CompensationRefundResult createCompensationRefund(
-            Long orderId, BigDecimal amount, BigDecimal percentage, String incidentCode, String reason, Long actorUserId) {
+            Long orderId, BigDecimal amount, String incidentCode, String reason, boolean refundShippingFee,
+            Long actorUserId) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException("REFUND_AMOUNT_INVALID", "Số tiền bồi thường phải lớn hơn 0");
         }
@@ -859,22 +908,11 @@ public class PaymentService {
         Long paymentId = payment != null ? payment.getId() : 0L;
         Long customerUserId = payment != null ? payment.getUserId() : actorUserId;
 
-        // Xây dựng lý do bồi thường: [Bồi thường sự cố {incidentCode}] Hoàn {percentage}%, số tiền: {amount} đ. Lý do: {reason}
-        StringBuilder compReason = new StringBuilder();
-        compReason.append("[Bồi thường sự cố");
-        if (StringUtils.hasText(incidentCode)) {
-            compReason.append(" ").append(incidentCode.trim());
-        }
-        compReason.append("] ");
-        if (percentage != null && percentage.compareTo(BigDecimal.ZERO) > 0) {
-            compReason.append("Hoàn ").append(percentage.stripTrailingZeros().toPlainString()).append("%, ");
-        }
-        compReason.append("số tiền: ").append(String.format(Locale.ROOT, "%,d", amount.longValue())).append(" đ.");
-        if (StringUtils.hasText(reason)) {
-            compReason.append(" Lý do: ").append(reason.trim());
-        }
+        String code = StringUtils.hasText(incidentCode) ? incidentCode.trim() : String.valueOf(orderId);
+        String compReason = "[Bồi thường sự cố " + code + "] "
+                + (StringUtils.hasText(reason) ? reason.trim() : "Bồi thường " + formatVnd(amount) + ".");
 
-        String transactionId = "RF-CMP-" + (incidentCode != null ? incidentCode : orderId) + "-" + System.currentTimeMillis();
+        String transactionId = COMPENSATION_PREFIX + code + "-" + System.currentTimeMillis();
 
         RefundRecord refund = new RefundRecord();
         refund.setPaymentId(paymentId);
@@ -882,7 +920,7 @@ public class PaymentService {
         refund.setUserId(customerUserId);
         refund.setAmount(amount);
         refund.setStatus("PENDING");
-        refund.setReason(compReason.toString());
+        refund.setReason(compReason);
         refund.setProcessedByUserId(actorUserId);
         refund.setTransactionId(transactionId);
 
@@ -915,14 +953,24 @@ public class PaymentService {
 
         RefundRecord saved = refundRepository.save(refund);
 
-        try {
-            orderClient.updatePaymentStatus(orderId, "REFUND_PENDING", "Đã tạo phiếu hoàn tiền bồi thường sự cố", actorUserId);
-        } catch (Exception ex) {
-            log.warn("Could not update order payment status to REFUND_PENDING: {}", ex.getMessage());
+        BigDecimal feeRefunded = BigDecimal.ZERO;
+        if (refundShippingFee) {
+            feeRefunded = refundOrder(orderId,
+                    "Hoàn phí giao drone theo phương án xử lý sự cố " + code, actorUserId).refundedAmount();
+            if (feeRefunded != null && feeRefunded.signum() > 0) {
+                syncOrderRefundStatus(orderId,
+                        "Đã tạo yêu cầu hoàn phí giao " + formatVnd(feeRefunded) + " (sự cố " + code + ")", actorUserId);
+            }
         }
 
         return new com.huynqb.laundrylocker.payment.dto.internal.CompensationRefundResult(
                 saved.getId(), orderId, amount, transactionId, saved.getStatus(), hasBankAccount);
+    }
+
+    /// 150000 ⇒ "150.000đ".
+    static String formatVnd(BigDecimal amount) {
+        return String.format(Locale.ROOT, "%,d", amount.setScale(0, java.math.RoundingMode.HALF_UP).longValue())
+                .replace(',', '.') + "đ";
     }
 
     @Transactional(readOnly = true)

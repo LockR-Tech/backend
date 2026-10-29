@@ -172,6 +172,22 @@ class DroneRefundServiceTest {
         }
     }
 
+    /// Phiếu hoàn nói vì sao đơn đóng (test 2026-10-29: mọi phiếu chỉ ghi "Đơn drone … bị huỷ").
+    @Test
+    void refundReasonSaysWhyTheDroneOrderClosed() {
+        LockerOrder failed = order("CANCELED", "PAID");
+        failed.setFailureReason("WEATHER");
+        failed.setStaffNote("Gió vượt ngưỡng");
+        assertEquals("Đơn drone ORD-21 giao không hoàn tất: Tạm dừng bay do thời tiết hoặc lệnh điều hành (Gió vượt ngưỡng)",
+                DroneRefundService.refundReason(failed));
+
+        LockerOrder canceled = order("CANCELED", "PAID");
+        canceled.setCancelReason(2);
+        assertEquals("Đơn drone ORD-21 bị huỷ trước khi bay: Drone lỗi", DroneRefundService.refundReason(canceled));
+
+        assertEquals("Đơn drone ORD-21 bị huỷ", DroneRefundService.refundReason(order("CANCELED", "PAID")));
+    }
+
     private LockerOrder order(String status, String paymentStatus) {
         LockerOrder order = new LockerOrder();
         order.setId(21L);

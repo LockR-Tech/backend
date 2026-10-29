@@ -5,6 +5,7 @@ import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.PaymentRefundClient;
 import com.huynqb.laundrylocker.order.dto.OrderRefundResult;
+import com.huynqb.laundrylocker.order.model.DroneFailureReasons;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
@@ -104,8 +105,20 @@ public class DroneRefundService {
         return true;
     }
 
-    private static String refundReason(LockerOrder order) {
-        return ("DRONE_DELIVERY".equals(order.getType()) ? "Đơn drone " : "Đơn ") + order.getOrderCode() + " bị huỷ";
+    /// Lý do ghi trên phiếu hoàn (admin duyệt, khách đọc): nói đơn đóng vì sao — trước đây chỉ "bị huỷ" cho
+    /// mọi trường hợp (thời tiết, drone lỗi, thất bại khi bay, khách huỷ).
+    static String refundReason(LockerOrder order) {
+        String head = ("DRONE_DELIVERY".equals(order.getType()) ? "Đơn drone " : "Đơn ") + order.getOrderCode();
+        String why;
+        if (order.getFailureReason() != null) {
+            why = " giao không hoàn tất: " + DroneFailureReasons.label(order.getFailureReason());
+        } else if (order.getCancelReason() != null) {
+            why = " bị huỷ trước khi bay: " + DroneFailureReasons.cancelLabel(order.getCancelReason());
+        } else {
+            why = " bị huỷ";
+        }
+        String note = order.getStaffNote();
+        return head + why + (note == null || note.isBlank() ? "" : " (" + note.trim() + ")");
     }
 
     /// Đơn đã PAID, hoặc đang nợ phụ thu cân lệch (UNPAID) nhưng đã trả phần phí ban đầu.

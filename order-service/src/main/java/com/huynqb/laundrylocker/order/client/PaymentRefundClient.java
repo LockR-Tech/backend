@@ -27,5 +27,6 @@ public interface PaymentRefundClient {
             @RequestParam(value = "percentage", required = false) BigDecimal percentage,
             @RequestParam("incidentCode") String incidentCode,
             @RequestParam(value = "reason", required = false) String reason,
+            @RequestParam(value = "refundShippingFee", required = false) boolean refundShippingFee,
             @RequestParam(value = "actorUserId", required = false) Long actorUserId);
 }

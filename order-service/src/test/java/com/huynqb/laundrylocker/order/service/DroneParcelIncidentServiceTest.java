@@ -111,12 +111,12 @@ class DroneParcelIncidentServiceTest {
         BusinessException error = assertThrows(BusinessException.class,
                 () -> service.propose(7L, 1L,
                         new DroneIncidentProposalRequest("COMPENSATION_ONLY", false,
-                                new BigDecimal("601.00"), false, null)));
+                                new BigDecimal("601.00"), false, null, null)));
         assertEquals("COMPENSATION_OVERRIDE_REASON_REQUIRED", error.getCode());
 
         service.propose(7L, 1L,
                 new DroneIncidentProposalRequest("COMPENSATION_ONLY", false,
-                        new BigDecimal("600.00"), false, null));
+                        new BigDecimal("600.00"), false, null, null));
 
         ArgumentCaptor<DroneIncidentResolutionProposal> proposal =
                 ArgumentCaptor.forClass(DroneIncidentResolutionProposal.class);
@@ -334,6 +334,87 @@ class DroneParcelIncidentServiceTest {
         assertNull(incident.getCompensationReference());
         verify(compensationGateway).submit(7L, 21L, 55L, new BigDecimal("600.00"),
                 false, "drone-incident-compensation-7-v3");
+    }
+
+    @Test
+    void manualResolutionMustTellTheCustomerWhatWasAgreed() {
+        DroneParcelIncident incident = incident("VERIFIED");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.propose(7L, 1L, new DroneIncidentProposalRequest(
+                        "MANUAL_RESOLUTION", false, BigDecimal.ZERO, false, null, "  ")));
+
+        assertEquals("RESOLUTION_NOTE_REQUIRED", error.getCode());
+        verify(proposalRepository, never()).save(any());
+    }
+
+    /// Thoả thuận riêng không giao lại, không chi qua hệ thống: khách đồng ý là xong — trước đây sự cố
+    /// kẹt RESOLUTION_IN_PROGRESS vĩnh viễn (test 2026-10-29, DPI-142).
+    @Test
+    void acceptingAManualResolutionWithNothingLeftResolvesTheIncident() {
+        DroneParcelIncident incident = incident("CLOSED");
+        incident.setStatus("AWAITING_CUSTOMER_RESPONSE");
+        LockerOrder order = policyOrder();
+        order.setUserId(55L);
+        order.setStatus("AWAITING_DISPATCH");
+        DroneIncidentResolutionProposal proposal = new DroneIncidentResolutionProposal();
+        proposal.setProposalVersion(2);
+        proposal.setResolutionType("MANUAL_RESOLUTION");
+        proposal.setStatus("AWAITING_CUSTOMER_ACCEPTANCE");
+        proposal.setCompensationAmount(BigDecimal.ZERO);
+        proposal.setResolutionNote("Hoàn tiền mặt tại quầy theo thoả thuận qua điện thoại");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(proposalRepository.findFirstByIncidentIdOrderByProposalVersionDesc(7L)).thenReturn(Optional.of(proposal));
+
+        service.customerRespond(7L, 55L, new DroneIncidentCustomerResponseRequest("ACCEPT", null));
+
+        assertEquals("RESOLVED", incident.getStatus());
+        assertNotNull(incident.getResolvedAt());
+        assertEquals("CANCELED", order.getStatus());
+    }
+
+    /// Phiếu chi bồi thường đã được admin duyệt (payment báo PAID) ⇒ sự cố không còn việc gì ⇒ RESOLVED.
+    @Test
+    void paidCompensationResolvesTheIncidentAndMarksTheParcelCompensated() {
+        DroneParcelIncident incident = incident("VERIFIED");
+        incident.setStatus("RESOLUTION_IN_PROGRESS");
+        incident.setCompensationStatus("PROCESSING");
+        incident.setParcelStatus("LOST");
+        when(incidentRepository.findByIncidentCode("DPI-21-1")).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        service.updateCompensation("DPI-21-1", new com.huynqb.laundrylocker.order.dto.IncidentCompensationUpdateRequest(
+                "PAID", "RF-CMP-DPI-21-1-1", "Admin đã chuyển khoản"));
+
+        assertEquals("PAID", incident.getCompensationStatus());
+        assertEquals("RESOLVED", incident.getStatus());
+        assertEquals("COMPENSATED", incident.getParcelStatus());
+    }
+
+    /// Đơn giao lại hoàn tất ⇒ phần giao lại của sự cố xong; còn chờ chi bồi thường thì chưa đóng sự cố.
+    @Test
+    void completedRedeliveryOrderClosesRedeliveryButWaitsForPendingCompensation() {
+        DroneParcelIncident incident = incident("CLOSED");
+        incident.setStatus("RESOLUTION_IN_PROGRESS");
+        incident.setRedeliveryStatus("PREPARING");
+        incident.setRedeliveryOrderId(90L);
+        incident.setCompensationStatus("PROCESSING");
+        when(incidentRepository.findFirstByRedeliveryOrderId(90L)).thenReturn(Optional.of(incident));
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+
+        service.onRedeliveryOrderCompleted(90L);
+
+        assertEquals("COMPLETED", incident.getRedeliveryStatus());
+        assertEquals("REDELIVERED", incident.getParcelStatus());
+        assertEquals("RESOLUTION_IN_PROGRESS", incident.getStatus());
+
+        incident.setRedeliveryStatus("PREPARING");
+        incident.setCompensationStatus("NOT_REQUIRED");
+        service.onRedeliveryOrderCompleted(90L);
+        assertEquals("RESOLVED", incident.getStatus());
     }
 
     @Test

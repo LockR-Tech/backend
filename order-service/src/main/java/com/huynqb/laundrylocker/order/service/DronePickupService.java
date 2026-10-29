@@ -312,22 +312,31 @@ public class DronePickupService {
             }
         }
         double[] pickupPoint = {order.getPickupLatitude(), order.getPickupLongitude()};
+        // KTV ở xa hơn bán kính lấy hàng tận nhà thì không mời (test 2026-10-29: mời người cách 15,9 km).
+        int maxDistanceMeters = rules.droneMaxPickupMeters();
         List<Candidate> candidates = presenceRepository.findByOnDutyTrue().stream()
                 .filter(presence -> presence.getLatitude() != null && presence.getLongitude() != null)
                 .filter(presence -> presence.getLocationAt() != null && presence.getLocationAt().isAfter(freshAfter))
                 .filter(presence -> !recentlyPassed.contains(presence.getUserId()))
                 .map(presence -> new Candidate(presence.getUserId(), (int) Math.round(DroneTelemetryService.distanceM(
                         pickupPoint, presence.getLatitude(), presence.getLongitude()))))
+                .filter(candidate -> maxDistanceMeters <= 0 || candidate.distanceMeters() <= maxDistanceMeters)
                 .sorted(Comparator.comparingInt(Candidate::distanceMeters).thenComparing(Candidate::technicianId))
                 .toList();
-        if (candidates.isEmpty()) {
+        boolean freshPassedNearby = presenceRepository.findByOnDutyTrue().stream()
+                .anyMatch(presence -> recentlyPassed.contains(presence.getUserId())
+                        && presence.getLocationAt() != null && presence.getLocationAt().isAfter(freshAfter));
+        if (candidates.isEmpty() && !freshPassedNearby) {
             // Khi KTV dang trong ca truc nhung chua co toa do moi trong 10 phut (KTV cho lenh tai tram,
             // thiet bi o che do cho), uu tien dieu phoi cho KTV on-duty san co thay vi de don ket o SEARCHING.
+            // Vẫn giữ trong bán kính; có KTV vị trí mới vừa bỏ lời mời thì chờ hết thời gian chờ mời lại
+            // người đó thay vì mời người vị trí cũ (có thể đã ở rất xa).
             candidates = presenceRepository.findByOnDutyTrue().stream()
                     .filter(presence -> presence.getLatitude() != null && presence.getLongitude() != null)
                     .filter(presence -> !recentlyPassed.contains(presence.getUserId()))
                     .map(presence -> new Candidate(presence.getUserId(), (int) Math.round(DroneTelemetryService.distanceM(
                             pickupPoint, presence.getLatitude(), presence.getLongitude()))))
+                    .filter(candidate -> maxDistanceMeters <= 0 || candidate.distanceMeters() <= maxDistanceMeters)
                     .sorted(Comparator.comparingInt(Candidate::distanceMeters).thenComparing(Candidate::technicianId))
                     .toList();
         }
