@@ -418,7 +418,8 @@ public class DroneDeliveryBlockService {
         DroneSourceLockerSelector.Selection selection;
         try {
             selection = sourceLockerSelector.select(
-                    order.getPickupLatitude(), order.getPickupLongitude(), order.getDestinationLockerId(), previous);
+                    order.getPickupLatitude(), order.getPickupLongitude(), order.getDestinationLockerId(), previous,
+                    rules.droneShortRouteAllowed(order.getFulfillmentMode()));
         } catch (BusinessException noAlternative) {
             return false;
         } catch (RuntimeException lookupFailed) {

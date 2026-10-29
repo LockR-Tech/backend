@@ -74,7 +74,8 @@ class DroneOrderBookingBenefitsTest {
         when(weatherService.assessJourney(org.mockito.ArgumentMatchers.eq(10.77), org.mockito.ArgumentMatchers.eq(106.70), any(), any())).thenReturn(new DroneWeatherAssessment(
                 true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",
                 java.time.OffsetDateTime.now(), 30, 3, 10, 15, 0, 0));
-        when(sourceLockerSelector.select(10.77, 106.70, 5L, null)).thenReturn(new DroneSourceLockerSelector.Selection(
+        // Đơn thường: không được bay quãng ngắn (allowShortRoute = false).
+        when(sourceLockerSelector.select(10.77, 106.70, 5L, null, false)).thenReturn(new DroneSourceLockerSelector.Selection(
                 OrderBenefitServiceTest.locker(7L, "TU07", "Tủ Thư viện"),
                 OrderBenefitServiceTest.locker(5L, "TU05", "Tủ Ký túc xá"), 300, 2000));
         when(lockerCellClient.findAvailable(5L, null, "DRONE"))

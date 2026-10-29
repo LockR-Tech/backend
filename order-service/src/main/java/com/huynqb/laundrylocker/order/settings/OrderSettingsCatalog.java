@@ -45,6 +45,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_FLIGHT_START_HOUR = "app.order.drone-flight-start-hour";
     public static final String DRONE_FLIGHT_END_HOUR = "app.order.drone-flight-end-hour";
     public static final String DRONE_MAX_ROUTE_METERS = "app.order.drone-max-route-meters";
+    public static final String DRONE_MIN_ROUTE_METERS = "app.order.drone-min-route-meters";
     public static final String DRONE_MAX_OPEN_ORDERS = "app.order.drone-max-open-orders-per-user";
     public static final String DRONE_MAX_PARCEL_LENGTH = "app.order.drone-max-parcel-length-cm";
     public static final String DRONE_MAX_PARCEL_WIDTH = "app.order.drone-max-parcel-width-cm";
@@ -281,6 +282,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_MAX_ROUTE_METERS, DRONE, "Tầm bay tối đa giữa hai tủ",
                         "Khoảng cách đường chim bay tủ gửi → tủ nhận vượt mức này thì không đặt được đơn. "
                                 + "0 = không giới hạn.", 5000, 0, 100_000, "mét").asPublic(),
+                integer(DRONE_MIN_ROUTE_METERS, DRONE, "Quãng bay tối thiểu giữa hai tủ",
+                        "Tủ gửi cách tủ nhận dưới mức này thì không được chọn làm tủ gửi — hai tủ cùng chỗ thì "
+                                + "khách gửi thẳng vào tủ, không cần drone. Ngoại lệ: đơn DEMO khi bật Indoor Demo "
+                                + "ArUco (quay demo trong phòng). 0 = không giới hạn.", 200, 0, 10_000, "mét").asPublic(),
                 integer(DRONE_MAX_PICKUP_METERS, DRONE, "Bán kính lấy hàng tận nhà",
                         "Điểm lấy hàng phải cách một tủ có bãi đáp không quá mức này (đường chim bay).",
                         5000, 100, 100_000, "mét").asPublic(),

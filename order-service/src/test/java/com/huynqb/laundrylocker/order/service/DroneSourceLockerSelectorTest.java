@@ -86,6 +86,34 @@ class DroneSourceLockerSelectorTest {
         assertEquals("DRONE_STATION_SUSPENDED", error.getCode());
     }
 
+    /// Tủ gửi cùng chỗ với tủ nhận thì không có gì để bay: chọn tủ khác đủ xa; không còn tủ nào thì báo
+    /// DRONE_ROUTE_TOO_SHORT. Demo trong phòng (đơn DEMO + Indoor Demo ArUco) vẫn được bay giữa hai tủ sát nhau.
+    @Test
+    void sourceTooCloseToTheDestinationIsSkippedUnlessShortRoutesAreAllowed() {
+        when(rules.droneMaxPickupMeters()).thenReturn(5000);
+        when(rules.droneMaxRouteMeters()).thenReturn(10000);
+        when(rules.droneMinRouteMeters()).thenReturn(200);
+        when(rules.droneMinPreflightBatteryPercent()).thenReturn(20);
+        // Tủ 1 cùng toạ độ tủ nhận 9 (lab), tủ 2 cách ~1,1 km.
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(
+                station(1L, 10.8411, 106.8097), station(2L, 10.8511, 106.8097), station(9L, 10.8411, 106.8097))));
+        for (long id : new long[] {1L, 2L}) {
+            when(drones.getLockerLayout(id)).thenReturn(ApiResponse.ok(new LockerLayoutDto(id, "S", "S", "ACTIVE", true, "OK")));
+            when(drones.listDroneUnits(id)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
+        }
+
+        var farther = selector.select(10.8412, 106.8098, 9L, null);
+        assertEquals(2L, farther.source().id(), "bỏ tủ sát tủ nhận, chọn tủ xa hơn");
+        assertTrue(farther.routeDistanceMeters() >= 200);
+
+        var tooShort = assertThrows(BusinessException.class, () -> selector.select(10.8412, 106.8098, 9L, 2L));
+        assertEquals("DRONE_ROUTE_TOO_SHORT", tooShort.getCode());
+
+        var demo = selector.select(10.8412, 106.8098, 9L, 2L, true);
+        assertEquals(1L, demo.source().id());
+        assertEquals(0, demo.routeDistanceMeters());
+    }
+
     private static LockerInfo station(Long id, double lat, double lng) {
         return new LockerInfo(
                 id, 1L, "S" + id, "Trạm " + id, "ACTIVE", null, lat, lng, true, null, 4, 4);
