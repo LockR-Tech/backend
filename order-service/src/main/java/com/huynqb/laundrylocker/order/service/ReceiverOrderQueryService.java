@@ -173,8 +173,9 @@ public class ReceiverOrderQueryService {
                 order.getFailureReason() == null ? null : order.getFailedAt(),
                 order.getParcelReturnedAt(),
                 drone && active ? DroneDeliveryQueryService.etaMinutes(order.getDeliveryStage()) : null,
-                // Màn theo dõi drone chỉ mở cho người gửi và tài khoản người nhận của đơn.
-                drone && active && userId.equals(order.getReceiverUserId()),
+                // Màn theo dõi drone chỉ mở cho người gửi và tài khoản người nhận của đơn — cả khi đơn đã xong,
+                // để xem lại hành trình bay.
+                drone && userId.equals(order.getReceiverUserId()),
                 drone ? DroneDeliveryQueryService.stageChanges(reversed(history)) : List.of(),
                 order.getCreatedAt(),
                 order.getPaidAt(),
