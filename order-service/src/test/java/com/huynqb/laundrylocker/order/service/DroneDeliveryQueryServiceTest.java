@@ -229,6 +229,56 @@ class DroneDeliveryQueryServiceTest {
         return mission;
     }
 
+    private void lockersAt(double sourceLat, double sourceLng, double destinationLat, double destinationLng) {
+        when(references.lockers(any())).thenReturn(Lookup.of(Map.of(
+                1L, new LockerInfo(1L, 1L, "SRC", "Tủ gửi", "ACTIVE", "A", sourceLat, sourceLng, true, null, 4, 2),
+                5L, new LockerInfo(5L, 1L, "DST", "Tủ nhận", "ACTIVE", "B", destinationLat, destinationLng, true, null, 4, 2))));
+    }
+
+    @Test
+    void demoFlightReportsTheSameInterpolatedPointTheLiveMapShows() {
+        lockersAt(10.0, 106.0, 11.0, 107.0);
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order()));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission(77L)));
+
+        DroneDeliveryOrderResponse response = service.get(21L, 44L);
+
+        // EN_ROUTE bắt đầu ở 25 % quãng đường; nhiệm vụ chưa có updatedAt ⇒ vừa vào chặng.
+        assertEquals(10.25, response.currentLatitude(), 1e-9);
+        assertEquals(106.25, response.currentLongitude(), 1e-9);
+    }
+
+    @Test
+    void depositedParcelIsLocatedAtTheDestinationLocker() {
+        lockersAt(10.0, 106.0, 11.0, 107.0);
+        LockerOrder order = order();
+        order.setStatus("STORING");
+        order.setDeliveryStage("READY_FOR_PICKUP");
+        DroneMission mission = mission(77L);
+        mission.setStatus("DEPOSITED");
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+
+        DroneDeliveryOrderResponse response = service.get(21L, 44L);
+
+        assertEquals(11.0, response.currentLatitude(), 1e-9);
+        assertEquals(107.0, response.currentLongitude(), 1e-9);
+    }
+
+    @Test
+    void realDroneWithoutTelemetryHasNoGuessedPosition() {
+        lockersAt(10.0, 106.0, 11.0, 107.0);
+        LockerOrder order = order();
+        order.setFulfillmentMode("STANDARD");
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission(77L)));
+
+        DroneDeliveryOrderResponse response = service.get(21L, 44L);
+
+        assertNull(response.currentLatitude());
+        assertNull(response.currentLongitude());
+    }
+
     private LockerOrder order() {
         LockerOrder order = new LockerOrder();
         order.setId(21L);
