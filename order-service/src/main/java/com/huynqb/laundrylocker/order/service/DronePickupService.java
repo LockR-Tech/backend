@@ -119,6 +119,11 @@ public class DronePickupService {
                             "DRONE_TECHNICIAN_HAS_ACTIVE_PICKUP",
                             "Finish or report the pickup you accepted before going off duty");
                 }
+                // Ra ca trước rồi mới trả lời mời: lượt mời kế tiếp không được coi người vừa ra ca là còn trong ca
+                // (nếu không, người đó — vị trí mới, vừa "bỏ" lời mời — chặn nhánh dự phòng mời người vị trí cũ).
+                presence.setOnDuty(false);
+                presence.setDutyChangedAt(now);
+                presenceRepository.saveAndFlush(presence);
                 for (DronePickup offered : pickupRepository
                         .findByTechnicianIdAndStatusInOrderByCreatedAtDesc(technicianId, List.of(DronePickup.OFFERED))) {
                     declineLocked(lockOrder(offered.getOrderId()), technicianId, "ra ca");
