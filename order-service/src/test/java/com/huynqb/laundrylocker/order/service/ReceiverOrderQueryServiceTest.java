@@ -411,6 +411,18 @@ class ReceiverOrderQueryServiceTest {
     }
 
     @Test
+    void completedDroneOrderStillLetsTheReceiverReviewTheFlight() {
+        callerPhone("0901234567");
+        LockerOrder order = droneOrder("COMPLETED", "READY_FOR_PICKUP");
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+
+        ReceiverOrderDetailResponse detail = service.detail(55L, 21L);
+
+        assertTrue(detail.droneTrackingAvailable());
+        assertNull(detail.etaMinutes(), "đơn đã xong không còn ETA");
+    }
+
+    @Test
     void failedDroneOrderExplainsWhyInPlainVietnamese() {
         callerPhone("0901234567");
         LockerOrder order = droneOrder("CANCELED", "FAILED");
@@ -425,7 +437,8 @@ class ReceiverOrderQueryServiceTest {
         assertEquals("Tạm dừng bay do thời tiết hoặc lệnh điều hành", detail.failureReasonLabel());
         assertNull(detail.pickupPin());
         assertNull(detail.etaMinutes());
-        assertFalse(detail.droneTrackingAvailable());
+        // Đơn đã kết thúc vẫn mở được màn hành trình để người nhận xem lại chuyến bay.
+        assertTrue(detail.droneTrackingAvailable());
         assertEquals(List.of("FAILED", "PARCEL_RETURNED"),
                 detail.timeline().stream().map(OrderMilestone::code).toList());
     }
