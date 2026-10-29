@@ -148,6 +148,21 @@ class DronePickupServiceTest {
         assertFalse(service.busy(TECHNICIAN_ID));
     }
 
+    /// Báo rơi kiện đã đóng nhiệm vụ; việc thu hồi giao người khác nên KTV phóng chuyến đó vẫn nhận việc mới.
+    @Test
+    void droppedParcelMissionDoesNotKeepTechnicianBusy() {
+        when(pickupRepository.findByTechnicianIdAndStatusInOrderByCreatedAtDesc(
+                eq(TECHNICIAN_ID), anyCollection())).thenReturn(List.of());
+        when(missionRepository.findByAssignedByUserIdAndStatusIn(eq(TECHNICIAN_ID), anyCollection()))
+                .thenAnswer(invocation -> {
+                    Collection<String> statuses = invocation.getArgument(1);
+                    assertFalse(statuses.contains("DROP_REPORTED"));
+                    return List.of();
+                });
+
+        assertFalse(service.busy(TECHNICIAN_ID));
+    }
+
     private static DronePickup pickup(Long orderId, String status) {
         DronePickup pickup = new DronePickup();
         pickup.setOrderId(orderId);
