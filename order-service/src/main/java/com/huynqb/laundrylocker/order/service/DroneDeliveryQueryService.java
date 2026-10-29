@@ -7,6 +7,7 @@ import com.huynqb.laundrylocker.order.dto.DroneDeliveryOrderResponse;
 import com.huynqb.laundrylocker.order.dto.DroneJourneyEventResponse;
 import com.huynqb.laundrylocker.order.dto.DroneLockerPointResponse;
 import com.huynqb.laundrylocker.order.dto.admin.BoxInfo;
+import com.huynqb.laundrylocker.order.dto.DroneTelemetryFrame;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.dto.admin.OrderPaymentSummary;
 import com.huynqb.laundrylocker.order.model.DroneMission;
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -242,6 +244,7 @@ public class DroneDeliveryQueryService {
         UserSummary customer = users.get(order.getUserId());
         UserSummary receiver = users.get(receiverUserId);
         List<DroneJourneyEventResponse> events = journeyEvents(history, users);
+        double[] position = currentPosition(order, mission, lockers.get(sourceId), lockers.get(destinationId));
 
         return new DroneDeliveryOrderResponse(
                 order.getId(), order.getOrderCode(), order.getUserId(), receiverUserId,
@@ -289,8 +292,8 @@ public class DroneDeliveryQueryService {
                 mission == null ? null : mission.getWeightSurcharge(),
                 amountDue(order),
                 liveTracking(order, mission),
-                null,
-                null,
+                position == null ? null : position[0],
+                position == null ? null : position[1],
                 order.getParcelLengthCm(), order.getParcelWidthCm(), order.getParcelHeightCm(),
                 order.getParcelCategory(), order.getParcelDeclaredValue(), order.getParcelFragile(),
                 order.getRouteDistanceMeters(),
@@ -401,6 +404,36 @@ public class DroneDeliveryQueryService {
                 "CANCELED".equals(order.getStatus()) ? order.getStaffNote() : null,
                 order.getFailedAt(),
                 null);
+    }
+
+    /// Vị trí drone hiện tại cho khách, admin và KTV — cùng số với luồng STOMP `/topic/deliveries/{id}/position`:
+    /// drone thật còn gửi telemetry có GPS ⇒ toạ độ telemetry mới nhất; đơn DEMO đang bay ⇒ điểm nội suy đang phát;
+    /// kiện đã vào ô ⇒ toạ độ tủ nhận. Chưa cất cánh, hoặc drone thật mất tín hiệu ⇒ null (không đoán).
+    private double[] currentPosition(LockerOrder order, DroneMission mission, LockerInfo source, LockerInfo destination) {
+        if (mission == null) {
+            return null;
+        }
+        String status = mission.getStatus();
+        if (DroneMissionProgressService.IN_FLIGHT_STAGES.contains(status)) {
+            if (mission.getDroneCode() != null && telemetry.isLive(mission.getDroneCode())) {
+                DroneTelemetryFrame frame = telemetry.latest(mission.getDroneCode()).orElse(null);
+                if (frame != null && frame.hasPosition()) {
+                    return new double[] {frame.lat(), frame.lng()};
+                }
+            }
+            if ("DEMO".equalsIgnoreCase(order.getFulfillmentMode())) {
+                return DronePositionBroadcaster.interpolate(status, mission.getUpdatedAt(), LocalDateTime.now(),
+                        rules.droneDemoStageDelayMs(), coordinates(source), coordinates(destination));
+            }
+            return null;
+        }
+        return "DEPOSITED".equals(status) ? coordinates(destination) : null;
+    }
+
+    private static double[] coordinates(LockerInfo locker) {
+        return locker == null || locker.latitude() == null || locker.longitude() == null
+                ? null
+                : new double[] {locker.latitude(), locker.longitude()};
     }
 
     private boolean liveTracking(LockerOrder order, DroneMission mission) {
