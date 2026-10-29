@@ -78,10 +78,18 @@ public class DroneOrderBookingService {
     /// Báo trước cho người gửi: kiện sẽ đi qua tủ gửi nào, bao xa, phí bao nhiêu. Không giữ gì.
     @Transactional(readOnly = true)
     public DroneDeliveryQuoteResponse quote(DroneDeliveryQuoteRequest request) {
+        return quote(request, null);
+    }
+
+    /// `userId` để biết đơn sắp đặt có là DEMO không (quãng bay ngắn chỉ cho demo trong phòng).
+    @Transactional(readOnly = true)
+    public DroneDeliveryQuoteResponse quote(DroneDeliveryQuoteRequest request, Long userId) {
         assertFlightsOpen(null);
         int weight = validateWeight(request.parcelWeightGrams());
+        String mode = userId == null ? "STANDARD" : resolveFulfillmentMode(null, userId);
         DroneSourceLockerSelector.Selection selection = sourceLockerSelector.select(
-                request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
+                request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null,
+                rules.droneShortRouteAllowed(mode));
         flightControl.assertStationsOpen(null, routeContext(null, selection), selection.destination().id());
         DroneWeatherAssessment weather = weatherService.assessJourney(
                 request.pickupLatitude(), request.pickupLongitude(), selection.source(), selection.destination());
@@ -122,7 +130,8 @@ public class DroneOrderBookingService {
         }
 
         DroneSourceLockerSelector.Selection route = sourceLockerSelector.select(
-                request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null);
+                request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null,
+                rules.droneShortRouteAllowed(fulfillmentMode));
         DroneFlightControl.Context context = routeContext(userId, route);
         flightControl.assertStationsOpen(DroneFlightBlock.BOOKING, context, route.destination().id());
         DroneWeatherAssessment weather = weatherService.assessJourney(

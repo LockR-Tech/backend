@@ -46,6 +46,15 @@ public class DroneSourceLockerSelector {
      */
     public Selection select(double pickupLatitude, double pickupLongitude, Long destinationLockerId,
             Long excludedSourceLockerId) {
+        return select(pickupLatitude, pickupLongitude, destinationLockerId, excludedSourceLockerId, false);
+    }
+
+    /**
+     * @param allowShortRoute bỏ qua quãng bay tối thiểu — chỉ cho đơn DEMO khi bật Indoor Demo ArUco
+     *                        ({@link OrderRules#droneShortRouteAllowed}).
+     */
+    public Selection select(double pickupLatitude, double pickupLongitude, Long destinationLockerId,
+            Long excludedSourceLockerId, boolean allowShortRoute) {
         List<LockerInfo> lockers = allLockers();
         LockerInfo destination = lockers.stream()
                 .filter(locker -> Objects.equals(locker.id(), destinationLockerId))
@@ -69,6 +78,7 @@ public class DroneSourceLockerSelector {
         double[] pickup = {pickupLatitude, pickupLongitude};
         int maxPickupMeters = rules.droneMaxPickupMeters();
         int maxRouteMeters = rules.droneMaxRouteMeters();
+        int minRouteMeters = allowShortRoute ? 0 : rules.droneMinRouteMeters();
 
         // Tủ có bãi đáp, có toạ độ, khác tủ nhận — xếp gần điểm lấy hàng nhất trước.
         List<Candidate> nearby = lockers.stream()
@@ -89,11 +99,17 @@ public class DroneSourceLockerSelector {
 
         Set<Long> suspended = flightControl.activeSuspensions().keySet();
         boolean anyWithinRoute = false;
+        boolean anyTooClose = false;
         boolean anySuspended = false;
         for (Candidate candidate : nearby) {
             int routeMeters = meters(
                     new double[] {candidate.locker().latitude(), candidate.locker().longitude()}, destination);
             if (maxRouteMeters > 0 && routeMeters > maxRouteMeters) {
+                continue;
+            }
+            // Tủ gửi sát tủ nhận: không có gì để bay — thử tủ khác xa hơn.
+            if (minRouteMeters > 0 && routeMeters < minRouteMeters) {
+                anyTooClose = true;
                 continue;
             }
             anyWithinRoute = true;
@@ -104,6 +120,12 @@ public class DroneSourceLockerSelector {
             if (serviceable(candidate.locker().id())) {
                 return new Selection(candidate.locker(), destination, candidate.pickupMeters(), routeMeters);
             }
+        }
+        if (!anyWithinRoute && anyTooClose) {
+            throw new BusinessException(
+                    "DRONE_ROUTE_TOO_SHORT",
+                    "Tủ nhận quá gần tủ gửi (dưới " + minRouteMeters + " m) — không cần giao bằng drone, hãy gửi "
+                            + "thẳng vào tủ nhận");
         }
         if (!anyWithinRoute) {
             throw new BusinessException(

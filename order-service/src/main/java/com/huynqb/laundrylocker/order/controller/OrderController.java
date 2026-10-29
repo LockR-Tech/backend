@@ -81,8 +81,9 @@ public class OrderController {
     /// Trước khi đặt: từ điểm lấy hàng này tới tủ nhận kia thì drone cất cánh ở tủ nào, phí bao nhiêu.
     @PostMapping("/api/orders/drone-deliveries/quote")
     public ApiResponse<DroneDeliveryQuoteResponse> quoteDroneDelivery(
-            @Valid @RequestBody DroneDeliveryQuoteRequest request) {
-        return ApiResponse.ok(droneOrderBookingService.quote(request));
+            @Valid @RequestBody DroneDeliveryQuoteRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        return ApiResponse.ok(droneOrderBookingService.quote(request, userId));
     }
 
     @PostMapping("/api/orders/{orderId}/extend-rental")
