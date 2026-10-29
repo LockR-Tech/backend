@@ -36,8 +36,14 @@ public class DronePositionBroadcaster {
     private final AdminReferenceResolver references;
     private final DronePositionClient positionClient;
 
-    /// Toạ độ tủ không đổi trong lúc bay; nhớ lại để không gọi locker-service mỗi giây.
-    private final Map<Long, double[]> lockerCoordinates = new ConcurrentHashMap<>();
+    /// Nhớ toạ độ tủ để không gọi locker-service mỗi giây, nhưng chỉ trong một phút: admin dời tủ
+    /// (sửa toạ độ) thì chuyến bay mô phỏng kế tiếp phải bay tới chỗ mới mà không cần khởi động lại.
+    static final long LOCKER_COORDINATES_TTL_MS = 60_000;
+
+    private final Map<Long, CachedCoordinates> lockerCoordinates = new ConcurrentHashMap<>();
+
+    private record CachedCoordinates(double[] coordinates, long fetchedAtMs) {
+    }
 
     /// Lỗi tra toạ độ hay lỗi gửi đều bị nuốt: bản đồ chỉ là phần hiển thị, không được
     /// làm chậm hay làm hỏng việc đẩy chặng.
@@ -66,18 +72,11 @@ public class DronePositionBroadcaster {
             return null;
         }
 
-        double inStage = 0;
-        if (mission.getUpdatedAt() != null && stageDelayMs > 0) {
-            long elapsed = Duration.between(mission.getUpdatedAt(), now).toMillis();
-            inStage = Math.max(0, Math.min(1, (double) elapsed / stageDelayMs));
-        }
-        double progress = range[0] + (range[1] - range[0]) * inStage;
-        double lat = source[0] + (destination[0] - source[0]) * progress;
-        double lng = source[1] + (destination[1] - source[1]) * progress;
+        double[] point = interpolate(mission.getStatus(), mission.getUpdatedAt(), now, stageDelayMs, source, destination);
         return new DronePositionUpdate(
                 mission.getStatus().toLowerCase(),
-                lat,
-                lng,
+                point[0],
+                point[1],
                 bearing(source, destination),
                 etaMinutes(mission.getStatus()),
                 null,
@@ -85,20 +84,43 @@ public class DronePositionBroadcaster {
                 System.currentTimeMillis());
     }
 
+    /// Điểm drone DEMO trên đoạn thẳng tủ gửi → tủ nhận: phần quãng đường của chặng + thời gian đã trôi
+    /// trong chặng. Dùng chung cho luồng STOMP và API chi tiết đơn, để bản đồ và ô toạ độ cùng một số.
+    /// null khi chặng không phải chặng bay.
+    static double[] interpolate(
+            String stage, LocalDateTime stageStartedAt, LocalDateTime now, long stageDelayMs,
+            double[] source, double[] destination) {
+        double[] range = STAGE_PROGRESS.get(stage);
+        if (range == null || source == null || destination == null) {
+            return null;
+        }
+        double inStage = 0;
+        if (stageStartedAt != null && stageDelayMs > 0) {
+            long elapsed = Duration.between(stageStartedAt, now).toMillis();
+            inStage = Math.max(0, Math.min(1, (double) elapsed / stageDelayMs));
+        }
+        double progress = range[0] + (range[1] - range[0]) * inStage;
+        return new double[] {
+            source[0] + (destination[0] - source[0]) * progress,
+            source[1] + (destination[1] - source[1]) * progress
+        };
+    }
+
     private double[] coordinates(Long lockerId) {
         if (lockerId == null) {
             return null;
         }
-        double[] cached = lockerCoordinates.get(lockerId);
-        if (cached != null) {
-            return cached;
+        long nowMs = System.currentTimeMillis();
+        CachedCoordinates cached = lockerCoordinates.get(lockerId);
+        if (cached != null && nowMs - cached.fetchedAtMs() < LOCKER_COORDINATES_TTL_MS) {
+            return cached.coordinates();
         }
         LockerInfo locker = references.lockers(List.of(lockerId)).get(lockerId);
         if (locker == null || locker.latitude() == null || locker.longitude() == null) {
             return null;
         }
         double[] coordinates = {locker.latitude(), locker.longitude()};
-        lockerCoordinates.put(lockerId, coordinates);
+        lockerCoordinates.put(lockerId, new CachedCoordinates(coordinates, nowMs));
         return coordinates;
     }
 
