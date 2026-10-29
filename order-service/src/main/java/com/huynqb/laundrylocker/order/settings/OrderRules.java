@@ -228,6 +228,16 @@ public class OrderRules {
         return settings.getInt(DRONE_MAX_ROUTE_METERS);
     }
 
+    /// Quãng bay ngắn nhất giữa tủ gửi và tủ nhận; 0 = không giới hạn.
+    public int droneMinRouteMeters() {
+        return settings.getInt(DRONE_MIN_ROUTE_METERS);
+    }
+
+    /// Đơn DEMO được bay giữa hai tủ sát nhau (quay demo trong phòng) chỉ khi bật Indoor Demo ArUco.
+    public boolean droneShortRouteAllowed(String fulfillmentMode) {
+        return droneDemoIndoorArucoEnabled() && "DEMO".equalsIgnoreCase(fulfillmentMode);
+    }
+
     /// 0 = không giới hạn số đơn drone đang mở của một khách.
     public int droneMaxOpenOrdersPerUser() {
         return settings.getInt(DRONE_MAX_OPEN_ORDERS);
