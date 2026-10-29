@@ -56,8 +56,10 @@ public class DronePickupService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final List<String> HOLDING = List.of(DronePickup.OFFERED, DronePickup.ACCEPTED);
+    /// Không gồm DROP_REPORTED: báo rơi kiện đã đóng nhiệm vụ (endedAt) và chuyển drone sang FAULT; việc thu hồi
+    /// giao cho người khác qua sự cố. Tính cả nó thì KTV bị khoá tới khi sự cố đóng mà tab Điều phối không hiện lý do.
     private static final List<String> ACTIVE_MISSION = List.of(
-            "AWAITING_LOADING", "READY_TO_LAUNCH", "LAUNCHING", "DEPARTED", "EN_ROUTE", "APPROACHING", "ARRIVED", "DROP_REPORTED");
+            "AWAITING_LOADING", "READY_TO_LAUNCH", "LAUNCHING", "DEPARTED", "EN_ROUTE", "APPROACHING", "ARRIVED");
     private static final Set<String> SKIP_AFTER =
             Set.of(DronePickupOffer.DECLINED, DronePickupOffer.EXPIRED, DronePickupOffer.RELEASED);
 
