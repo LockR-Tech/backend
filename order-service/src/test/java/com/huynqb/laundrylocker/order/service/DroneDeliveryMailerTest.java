@@ -57,6 +57,57 @@ class DroneDeliveryMailerTest {
     }
 
     @Test
+    void dropReportAfterLaunchTellsBothSidesButNeverQuotesTheInternalReason() {
+        LockerOrder order = order();
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
+
+        DroneDeliveryMailer.Outcome outcome = mailer.parcelDropReported(order, "DPI-21-1", true);
+
+        assertTrue(outcome.senderReached());
+        assertTrue(outcome.receiverReached());
+        ArgumentCaptor<GuestNotification.Request> sent = ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient, times(2)).notifyGuest(sent.capture());
+        List<GuestNotification.Request> mails = sent.getAllValues();
+        assertEquals("gui@gmail.com", mails.get(0).email());
+        assertTrue(mails.get(0).subject().contains("gặp sự cố"));
+        assertTrue(mails.get(0).emailBody().contains("Mã sự cố: DPI-21-1"), mails.get(0).emailBody());
+        assertTrue(mails.get(0).emailHtml().contains("CẬP NHẬT SỰ CỐ"));
+        assertEquals("nhan@gmail.com", mails.get(1).email());
+        assertTrue(mails.get(1).emailBody().contains("Liên hệ người gửi: 0901000111"), mails.get(1).emailBody());
+    }
+
+    @Test
+    void dropReportBeforeLaunchOnlyTellsTheSender() {
+        LockerOrder order = order();
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
+
+        DroneDeliveryMailer.Outcome outcome = mailer.parcelDropReported(order, "DPI-21-1", false);
+
+        assertTrue(outcome.senderReached());
+        assertEquals(false, outcome.receiverReached());
+        verify(notificationClient, times(1)).notifyGuest(any());
+    }
+
+    @Test
+    void acceptedPlanWithoutRedeliveryTellsTheReceiverTheParcelWillNotArrive() {
+        LockerOrder order = order();
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
+
+        mailer.incidentResolutionAccepted(order, "DPI-21-1", "Bồi thường", null, true);
+
+        ArgumentCaptor<GuestNotification.Request> sent = ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient, times(2)).notifyGuest(sent.capture());
+        assertTrue(sent.getAllValues().get(1).subject().contains("sẽ không được giao"));
+
+        mailer.incidentResolutionAccepted(order, "DPI-21-1", "Giao lại miễn phí", "ORD-22", true);
+        verify(notificationClient, times(4)).notifyGuest(sent.capture());
+        assertTrue(sent.getAllValues().get(sent.getAllValues().size() - 1).subject().contains("ORD-22"));
+    }
+
+    @Test
     void destinationWithBoxNamesTheBoxNumberPrintedOnTheDoorNotTheInternalId() {
         LockerOrder order = order();
         when(lockerCellClient.getCell(301L))

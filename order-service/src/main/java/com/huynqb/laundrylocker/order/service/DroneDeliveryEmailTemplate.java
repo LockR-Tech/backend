@@ -46,6 +46,28 @@ final class DroneDeliveryEmailTemplate {
                 "#EA580C");
     }
 
+    /// Sự cố trong lúc giao (rơi kiện, tạm dừng giữa chuyến, phương án xử lý): đơn chưa kết thúc nhưng người gửi /
+    /// người nhận đã được báo "đang trên đường" nên phải biết chuyện gì đang xảy ra.
+    static String incident(
+            String recipientName,
+            String orderCode,
+            String headline,
+            String introduction,
+            List<Detail> details,
+            String footer) {
+        String rows = details.stream().map(DroneDeliveryEmailTemplate::row).reduce("", String::concat);
+        return render(
+                recipientName,
+                orderCode,
+                "CẬP NHẬT SỰ CỐ",
+                headline,
+                introduction,
+                rows,
+                footer,
+                "#7C2D12",
+                "#EA580C");
+    }
+
     private static String render(
             String recipientName,
             String orderCode,

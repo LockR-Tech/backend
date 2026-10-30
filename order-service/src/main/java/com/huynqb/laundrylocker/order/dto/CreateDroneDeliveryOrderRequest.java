@@ -58,6 +58,7 @@ public record CreateDroneDeliveryOrderRequest(
         /// Số điểm thưởng muốn dùng (tuỳ chọn); loyalty-service kẹp theo quy tắc admin.
         Integer pointsToUse) {
 
-    /// Số điện thoại 9–15 chữ số, cho phép dấu `+` đầu.
-    public static final String PHONE = "^[+]?[0-9]{9,15}$";
+    /// Số điện thoại Việt Nam: `0` hoặc `+84`/`84` rồi 9 chữ số, chữ số đầu khác 0 (`0901234567`, `+84901234567`).
+    /// Trước đây nhận mọi dãy 9–15 chữ số nên lọt cả "123456789" (test 2026-10-29).
+    public static final String PHONE = "^(?:0|\\+?84)[1-9][0-9]{8}$";
 }

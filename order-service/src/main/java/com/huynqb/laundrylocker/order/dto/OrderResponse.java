@@ -96,5 +96,7 @@ public record OrderResponse(
         boolean overtimeCapped,
         /// Ô của đơn (đang có hàng) bị báo sự cố, chờ KTV: phí quá giờ dừng từ mốc này, chưa thu tiền /
         /// chưa mở ô bằng mã. Null = không có sự cố đang mở.
-        LocalDateTime boxIncidentOpenedAt) {
+        LocalDateTime boxIncidentOpenedAt,
+        /// Đơn drone lấy hàng tận nhà, KTV chưa cầm kiện: mã người gửi đọc cho KTV. Null các trường hợp khác.
+        String dronePickupCode) {
 }

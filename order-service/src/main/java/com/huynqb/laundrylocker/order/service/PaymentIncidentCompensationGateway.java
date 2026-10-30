@@ -109,6 +109,7 @@ public class PaymentIncidentCompensationGateway implements IncidentCompensationG
             return "Bồi thường";
         }
         return switch (type) {
+            case "FREE_REDELIVERY" -> "Giao lại miễn phí";
             case "REDELIVERY_PARTIAL_COMPENSATION" -> "Giao lại kèm bồi thường một phần";
             case "COMPENSATION_ONLY" -> "Bồi thường";
             case "MANUAL_RESOLUTION" -> "Thỏa thuận riêng";
@@ -116,7 +117,7 @@ public class PaymentIncidentCompensationGateway implements IncidentCompensationG
         };
     }
 
-    private static String parcelLabel(DroneParcelIncident incident) {
+    static String parcelLabel(DroneParcelIncident incident) {
         if (incident == null) {
             return null;
         }

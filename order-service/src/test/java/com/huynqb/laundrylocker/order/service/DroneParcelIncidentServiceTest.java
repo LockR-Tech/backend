@@ -417,6 +417,68 @@ class DroneParcelIncidentServiceTest {
         assertEquals("RESOLVED", incident.getStatus());
     }
 
+    /// Đơn giao lại còn chờ điều phối ⇒ admin không được bấm "đã giao lại thành công" (test 2026-10-29: nút hiện
+    /// ngay khi đơn giao lại #144 còn AWAITING_DISPATCH).
+    @Test
+    void adminCannotCloseRedeliveryWhileTheRedeliveryOrderIsStillOpen() {
+        DroneParcelIncident incident = incident("CLOSED");
+        incident.setStatus("RESOLUTION_IN_PROGRESS");
+        incident.setRedeliveryStatus("PREPARING");
+        incident.setRedeliveryOrderId(90L);
+        LockerOrder redelivery = new LockerOrder();
+        redelivery.setId(90L);
+        redelivery.setStatus("AWAITING_DISPATCH");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(90L)).thenReturn(Optional.of(redelivery));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.completeRedelivery(7L, 1L, "ADMIN"));
+        assertEquals("REDELIVERY_ORDER_NOT_COMPLETED", error.getCode());
+        assertEquals("PREPARING", incident.getRedeliveryStatus());
+
+        redelivery.setStatus("COMPLETED");
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+        service.completeRedelivery(7L, 1L, "ADMIN");
+        assertEquals("COMPLETED", incident.getRedeliveryStatus());
+    }
+
+    /// Không điều khiển drone từ xa được (DEMO / telemetry cũ): bước quay về không còn là ngõ cụt.
+    @Test
+    void adminConfirmsTheDroneIsBackWhenReturnNeededManualHandling() {
+        DroneParcelIncident incident = incident("SEARCHING");
+        incident.setStatus("MANUAL_INTERVENTION_REQUIRED");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        service.confirmDroneReturned(7L, 1L, null);
+
+        assertEquals("COMPLETED", incident.getReturnFlightStatus());
+        assertEquals("INVESTIGATING", incident.getStatus());
+        BusinessException again = assertThrows(BusinessException.class,
+                () -> service.confirmDroneReturned(7L, 1L, null));
+        assertEquals("RETURN_FLIGHT_ALREADY_CLOSED", again.getCode());
+    }
+
+    /// Gửi phương án ⇒ thư cho người gửi (khách phải vào app đồng ý / yêu cầu xem xét).
+    @Test
+    void proposalIsEmailedToTheSender() {
+        DroneDeliveryMailer mailer = mock(DroneDeliveryMailer.class);
+        when(mailer.incidentProposal(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new DroneDeliveryMailer.Outcome(true, false));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "mailer", mailer);
+        DroneParcelIncident incident = incident("VERIFIED");
+        incident.setParcelCondition("MINOR_DAMAGE");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+        when(proposalRepository.findFirstByIncidentIdOrderByProposalVersionDesc(7L)).thenReturn(Optional.empty());
+
+        service.propose(7L, 1L, new DroneIncidentProposalRequest("COMPENSATION_ONLY", false,
+                new BigDecimal("600.00"), true, null, null));
+
+        verify(mailer).incidentProposal(any(), eq("DPI-21-1"), eq("Bồi thường"), eq("Hư hại nhẹ"),
+                eq("600đ (kèm hoàn phí giao)"), isNull());
+    }
+
     @Test
     void returnFlightNeedsPhysicalAcknowledgementsInOrder() {
         DroneParcelIncident incident = incident("ASSIGNED");

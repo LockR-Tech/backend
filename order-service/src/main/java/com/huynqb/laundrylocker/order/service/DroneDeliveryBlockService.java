@@ -77,6 +77,13 @@ public class DroneDeliveryBlockService {
     private final LockerLookupClient lockerLookupClient;
     private final DroneWeatherService weatherService;
 
+    /// Sự cố sau lúc phóng: người gửi / người nhận đã nhận thư "đang trên đường" nên được báo bằng thư.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DroneDeliveryMailer mailer;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.huynqb.laundrylocker.order.repository.DroneParcelIncidentRepository incidentRepository;
+
     /// Phiên giao ArUco kết thúc ở một trong các trạng thái này ⇒ nắp tủ nhận không mở/đóng được, đơn đứng ở ARRIVED.
     private static final Set<String> LID_FAILED_STATES =
             Set.of(DroneDeliverySession.LID_OPEN_FAILED, DroneDeliverySession.LID_CLOSE_FAILED);
@@ -151,6 +158,7 @@ public class DroneDeliveryBlockService {
                 return Review.UNCHANGED;
             }
             String cleared = DroneFailureReasons.label(order.getDeliveryBlockReason());
+            boolean mailedPause = launchedBefore(mission, order.getDeliveryBlockedAt());
             order.setDeliveryBlockReason(null);
             order.setDeliveryBlockedAt(null);
             order.setDeliveryBlockTicketId(null);
@@ -159,6 +167,9 @@ public class DroneDeliveryBlockService {
             addHistory(order, null, "Đã hết sự cố (" + cleared + ") — đơn tiếp tục được xử lý");
             notifyQuietly(order.getUserId(), "Đơn drone tiếp tục được xử lý",
                     "Sự cố ảnh hưởng tới đơn " + order.getOrderCode() + " đã được khắc phục.", order);
+            if (mailedPause && mailer != null) {
+                recordMail(order, mailer.deliveryResumed(order, cleared, true), "báo đơn tiếp tục được giao");
+            }
             return new Review(Verdict.CLEARED, null, null, null);
         }
 
@@ -181,6 +192,10 @@ public class DroneDeliveryBlockService {
                             + (cause.ticketId() == null ? "" : " · phiếu sự cố #" + cause.ticketId()));
             if (newlyBlocked) {
                 announce(order, mission, pickup, label, cause, inFlight);
+                // Đã phóng (đã gửi thư "đang trên đường") ⇒ thư báo tạm dừng cho cả người gửi và người nhận.
+                if (mailer != null && mission != null && mission.getLaunchingAt() != null) {
+                    recordMail(order, mailer.deliveryPaused(order, label, cause.note(), true), "báo đơn tạm dừng");
+                }
             }
             recordFlightBlock(order, cause);
             return new Review(Verdict.BLOCKED, cause.reason(), cause.ticketId(), cause.note());
@@ -188,7 +203,9 @@ public class DroneDeliveryBlockService {
 
         int timeout = rules.droneBlockedTimeoutMinutes();
         // Drone đang bay thì không tự đóng đơn: kiện đang ở đâu là việc đội bay phải xác nhận.
-        if (!inFlight && timeout > 0 && order.getDeliveryBlockedAt() != null
+        // Đơn giao lại sau sự cố rơi kiện (0đ, kiện nằm ở kho): tự đóng thì không có gì để hoàn mà kiện cũng không
+        // còn đơn nào giao — chờ hết sự cố (test 2026-10-29: #144 bị chặn vì mưa, app báo "sẽ hoàn tiền").
+        if (!inFlight && timeout > 0 && order.getDeliveryBlockedAt() != null && !incidentRedelivery(order)
                 && !order.getDeliveryBlockedAt().plusMinutes(timeout).isAfter(now)) {
             return new Review(Verdict.EXPIRED, cause.reason(), cause.ticketId(), cause.note());
         }
@@ -506,9 +523,12 @@ public class DroneDeliveryBlockService {
     private void announce(LockerOrder order, DroneMission mission, DronePickup pickup, String label, Cause cause,
             boolean inFlight) {
         int timeout = rules.droneBlockedTimeoutMinutes();
+        boolean redelivery = incidentRedelivery(order);
         notifyQuietly(order.getUserId(), "Đơn drone đang gặp sự cố",
                 "Đơn " + order.getOrderCode() + ": " + label + "."
-                        + (inFlight || timeout <= 0
+                        + (redelivery
+                                ? " Kiện vẫn được giữ an toàn tại kho Lock.R; đơn giao lại sẽ tiếp tục khi hết sự cố."
+                                : inFlight || timeout <= 0
                                 ? " Đội bay đang xử lý."
                                 : " Nếu chưa khắc phục được sau " + timeout
                                         + " phút, đơn sẽ kết thúc và bạn được hoàn tiền."),
@@ -536,6 +556,31 @@ public class DroneDeliveryBlockService {
         } catch (RuntimeException ex) {
             log.debug("Could not notify admins about blocked drone order {}: {}", order.getId(), ex.getMessage());
         }
+    }
+
+    /// Đơn được tạo để giao lại kiện của một sự cố rơi kiện.
+    private boolean incidentRedelivery(LockerOrder order) {
+        if (incidentRepository == null || order.getId() == null) {
+            return false;
+        }
+        try {
+            return incidentRepository.findFirstByRedeliveryOrderId(order.getId()).isPresent();
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
+    /// Chặn bắt đầu sau khi drone đã phóng ⇒ lúc chặn đã có thư "tạm dừng" (để báo tiếp "đã tiếp tục").
+    private static boolean launchedBefore(DroneMission mission, LocalDateTime blockedAt) {
+        return mission != null && mission.getLaunchingAt() != null && blockedAt != null
+                && !blockedAt.isBefore(mission.getLaunchingAt());
+    }
+
+    private void recordMail(LockerOrder order, DroneDeliveryMailer.Outcome outcome, String purpose) {
+        String reached = outcome == null ? null : outcome.describe(order);
+        addHistory(order, null, reached == null
+                ? "Chưa gửi được email " + purpose + "."
+                : "Đã gửi email " + purpose + " cho " + reached + ".");
     }
 
     private void notifyQuietly(Long userId, String title, String message, LockerOrder order) {

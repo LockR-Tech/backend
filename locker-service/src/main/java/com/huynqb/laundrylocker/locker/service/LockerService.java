@@ -2767,7 +2767,13 @@ public class LockerService {
         report.setTicketType("DRONE_INSPECTION");
         report.setTitle("Kiểm tra an toàn sau sự cố " + request.incidentCode());
         report.setDescription(buildIncidentInspectionDescription(request));
+        // Chỉ tự giao cho KTV phụ trách drone khi người đó đang trong ca — giao cho người không trực thì phiếu nằm
+        // IN_PROGRESS mà không ai làm (test 2026-10-29, RPT-44 giao cho tài khoản demo). Không trực ⇒ phiếu mở,
+        // báo cả đội drone nhận.
         Long inspectionTechnician = activeTechnician(drone.getAssignedTechnicianId(), DRONE_TECHNICIAN);
+        if (inspectionTechnician != null && !onDuty(inspectionTechnician)) {
+            inspectionTechnician = null;
+        }
         report.setRoutedToUserId(drone.getAssignedTechnicianId());
         if (inspectionTechnician != null) {
             report.setAssignedToUserId(inspectionTechnician);
@@ -2904,6 +2910,12 @@ public class LockerService {
                         && user.roles().contains(requiredRole)
                 ? technicianId
                 : null;
+    }
+
+    private boolean onDuty(Long technicianId) {
+        return presenceRepository.findByUserId(technicianId)
+                .map(presence -> Boolean.TRUE.equals(presence.getOnDuty()))
+                .orElse(false);
     }
 
     private long activeWorkload(Long technicianId) {

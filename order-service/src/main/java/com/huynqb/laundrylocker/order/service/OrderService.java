@@ -56,6 +56,11 @@ public class OrderService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.context.annotation.Lazy
     private DroneParcelIncidentService droneParcelIncidentService;
+
+    /// Mã lấy hàng tận nhà của đơn drone — người gửi đọc cho KTV khi KTV tới; hiện ở chi tiết đơn (test 2026-10-29
+    /// khách chỉ thấy mã ở màn theo dõi). Null trong test đơn vị không dựng repository này.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.huynqb.laundrylocker.order.repository.DronePickupRepository dronePickupRepository;
     private static final Set<String> PIN_RESETTABLE = Set.of("INITIALIZED", "STORING", "RETURNED");
 
     /// Bước admin được đổi tay (trạng thái hiện tại → đích). Đơn đã COMPLETED/CANCELED là đóng hẳn.
@@ -2434,7 +2439,22 @@ public class OrderService {
                 order.getPointsDiscount() == null ? BigDecimal.ZERO : order.getPointsDiscount(),
                 overtimeRatePerHour(order),
                 !isRentalOrder(order),
-                OrderAccessPolicy.hasOpenBoxIncident(order) ? order.getBoxIncidentOpenedAt() : null);
+                OrderAccessPolicy.hasOpenBoxIncident(order) ? order.getBoxIncidentOpenedAt() : null,
+                dronePickupCode(order));
+    }
+
+    /// Chỉ khi KTV chưa cầm kiện: sau đó mã không còn dùng vào việc gì.
+    private String dronePickupCode(LockerOrder order) {
+        if (dronePickupRepository == null || !"DRONE_DELIVERY".equals(order.getType())
+                || !"AWAITING_DISPATCH".equals(order.getStatus()) || order.getId() == null) {
+            return null;
+        }
+        return dronePickupRepository.findByOrderId(order.getId())
+                .filter(pickup -> !com.huynqb.laundrylocker.order.model.DronePickup.PICKED_UP.equals(pickup.getStatus())
+                        && !com.huynqb.laundrylocker.order.model.DronePickup.CANCELED.equals(pickup.getStatus())
+                        && !com.huynqb.laundrylocker.order.model.DronePickup.FAILED.equals(pickup.getStatus()))
+                .map(com.huynqb.laundrylocker.order.model.DronePickup::getPickupCode)
+                .orElse(null);
     }
 
     /// Đơn giá mỗi giờ quá hạn hiển thị cho khách. Đơn thuê chỉ tra loại ô khi đơn có hạn (đã bắt đầu thuê).

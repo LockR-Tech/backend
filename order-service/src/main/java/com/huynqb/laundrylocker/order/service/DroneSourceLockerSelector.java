@@ -165,6 +165,21 @@ public class DroneSourceLockerSelector {
         return hasUsableDrone(lockerId);
     }
 
+    /// Tủ có bãi đáp drone và đang hoạt động (không đòi drone rảnh ngay lúc này) — dùng để biết kiện đang nằm ở
+    /// tủ này có phóng thẳng được từ đây không.
+    public boolean isDroneStation(Long lockerId) {
+        if (lockerId == null) {
+            return false;
+        }
+        try {
+            LockerLayoutDto layout = data(lockerDroneClient.getLockerLayout(lockerId));
+            return layout != null && "ACTIVE".equalsIgnoreCase(layout.status())
+                    && Boolean.TRUE.equals(layout.landingPad());
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
     public boolean hasUsableDrone(Long lockerId) {
         List<DroneUnitDto> drones = data(lockerDroneClient.listDroneUnits(lockerId));
         return drones != null && drones.stream().anyMatch(this::ready);

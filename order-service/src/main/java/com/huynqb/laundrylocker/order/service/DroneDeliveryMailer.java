@@ -182,6 +182,158 @@ public class DroneDeliveryMailer {
         return new Outcome(sender, receiver);
     }
 
+    /**
+     * Kiện rơi khỏi drone khi đang bay. Người gửi và người nhận đã nhận thư "đang trên đường" nên phải được báo
+     * ngay: kiện chưa tới, đang được thu hồi, phương án xử lý sẽ gửi qua ứng dụng.
+     *
+     * @param tellReceiver drone đã phóng (người nhận đã được báo có đơn)
+     */
+    public Outcome parcelDropReported(LockerOrder order, String incidentCode, boolean tellReceiver) {
+        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+                "Đơn hàng " + order.getOrderCode() + " gặp sự cố khi đang bay",
+                "Kiện hàng gặp sự cố trên đường bay",
+                "Rất tiếc, kiện hàng của đơn " + order.getOrderCode() + " đã rơi khỏi drone khi đang bay tới tủ nhận.",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode),
+                        new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
+                                "Kỹ thuật viên Lock.R đang tới khu vực rơi để tìm và thu hồi kiện."),
+                        new DroneDeliveryEmailTemplate.Detail("Tiếp theo",
+                                "Sau khi kiểm tra kiện, Lock.R gửi phương án xử lý (giao lại, bồi thường) trong ứng "
+                                        + "dụng để bạn đồng ý hoặc yêu cầu xem xét lại.")),
+                "Bạn theo dõi sự cố trong ứng dụng Lock.R, mục chi tiết đơn hàng.");
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+                nameOr(order.getReceiverName(), "bạn"), order,
+                "Đơn hàng " + order.getOrderCode() + " gửi cho bạn bị chậm do sự cố",
+                "Đơn hàng gửi cho bạn bị chậm",
+                "Đơn hàng " + order.getOrderCode() + " do " + nameOr(order.getSenderName(), "người gửi")
+                        + " gửi cho bạn gặp sự cố khi đang bay và chưa thể vào tủ nhận.",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode),
+                        new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
+                                "Lock.R đang thu hồi kiện và sẽ thống nhất cách xử lý với người gửi."),
+                        new DroneDeliveryEmailTemplate.Detail("Liên hệ người gửi", nameOr(order.getSenderPhone(), "—"))),
+                "Mã mở ô cũ (nếu có) không còn dùng được. Lock.R sẽ báo lại khi kiện được giao.");
+        return new Outcome(sender, receiver);
+    }
+
+    /// Đơn bị tạm dừng khi drone đã phóng (trời xấu trên tuyến, drone báo lỗi giữa chuyến, nắp tủ nhận lỗi).
+    public Outcome deliveryPaused(LockerOrder order, String reasonLabel, String note, boolean tellReceiver) {
+        String why = reasonLabel + (StringUtils.hasText(note) ? " — " + note.trim() : "");
+        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+                "Đơn hàng " + order.getOrderCode() + " đang tạm dừng do sự cố",
+                "Đơn hàng đang tạm dừng",
+                "Đơn hàng " + order.getOrderCode() + " gặp sự cố trên đường giao và đang được đội bay xử lý.",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Sự cố", why),
+                        new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
+                                "Đội bay theo dõi drone, cho hạ cánh an toàn hoặc quay về trạm nếu cần.")),
+                "Lock.R sẽ báo lại khi đơn tiếp tục hoặc có hướng xử lý khác.");
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+                nameOr(order.getReceiverName(), "bạn"), order,
+                "Đơn hàng " + order.getOrderCode() + " gửi cho bạn đang tạm dừng",
+                "Đơn hàng gửi cho bạn đang tạm dừng",
+                "Đơn hàng " + order.getOrderCode() + " do " + nameOr(order.getSenderName(), "người gửi")
+                        + " gửi cho bạn gặp sự cố trên đường giao.",
+                List.of(new DroneDeliveryEmailTemplate.Detail("Sự cố", why)),
+                "Lock.R sẽ báo lại khi đơn tiếp tục hoặc có hướng xử lý khác.");
+        return new Outcome(sender, receiver);
+    }
+
+    /// Sự cố của đơn đang tạm dừng đã hết — đơn đi tiếp.
+    public Outcome deliveryResumed(LockerOrder order, String clearedLabel, boolean tellReceiver) {
+        List<DroneDeliveryEmailTemplate.Detail> details = List.of(
+                new DroneDeliveryEmailTemplate.Detail("Sự cố đã xử lý", clearedLabel));
+        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+                "Đơn hàng " + order.getOrderCode() + " tiếp tục được giao",
+                "Đơn hàng tiếp tục được giao",
+                "Sự cố ảnh hưởng tới đơn " + order.getOrderCode() + " đã được khắc phục, đơn tiếp tục được giao.",
+                details, "Bạn theo dõi hành trình trong ứng dụng Lock.R.");
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+                nameOr(order.getReceiverName(), "bạn"), order,
+                "Đơn hàng " + order.getOrderCode() + " gửi cho bạn tiếp tục được giao",
+                "Đơn hàng tiếp tục được giao",
+                "Sự cố ảnh hưởng tới đơn " + order.getOrderCode() + " đã được khắc phục.",
+                details, "Khi hàng vào tủ, bạn sẽ nhận email có mã mở ô và thời hạn lấy hàng.");
+        return new Outcome(sender, receiver);
+    }
+
+    /// Lock.R gửi phương án xử lý sự cố rơi kiện — người gửi phải vào ứng dụng đồng ý hoặc yêu cầu xem xét.
+    public Outcome incidentProposal(LockerOrder order, String incidentCode, String resolutionLabel,
+            String parcelCondition, String compensation, String note) {
+        List<DroneDeliveryEmailTemplate.Detail> details = new ArrayList<>();
+        details.add(new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode));
+        if (StringUtils.hasText(parcelCondition)) {
+            details.add(new DroneDeliveryEmailTemplate.Detail("Tình trạng kiện", parcelCondition));
+        }
+        details.add(new DroneDeliveryEmailTemplate.Detail("Phương án", resolutionLabel));
+        if (StringUtils.hasText(compensation)) {
+            details.add(new DroneDeliveryEmailTemplate.Detail("Bồi thường", compensation));
+        }
+        if (StringUtils.hasText(note)) {
+            details.add(new DroneDeliveryEmailTemplate.Detail("Nội dung", note.trim()));
+        }
+        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+                "Phương án xử lý sự cố đơn " + order.getOrderCode(),
+                "Lock.R đã gửi phương án xử lý",
+                "Lock.R đã kiểm tra sự cố rơi kiện của đơn " + order.getOrderCode() + " và gửi phương án xử lý.",
+                details,
+                "Mở ứng dụng Lock.R, mục chi tiết đơn hàng, để Đồng ý hoặc Yêu cầu xem xét phương án này.");
+        return new Outcome(sender, false);
+    }
+
+    /// Người gửi đã đồng ý phương án: báo người nhận kiện có được giao lại không (người gửi nhận thư xác nhận).
+    public Outcome incidentResolutionAccepted(LockerOrder order, String incidentCode, String resolutionLabel,
+            String redeliveryOrderCode, boolean tellReceiver) {
+        boolean redelivery = StringUtils.hasText(redeliveryOrderCode);
+        String next = redelivery
+                ? "Kiện được giao lại miễn phí bằng đơn mới " + redeliveryOrderCode
+                        + "; khi drone phóng sẽ có email báo đơn đang trên đường."
+                : "Kiện không được giao lại.";
+        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+                "Đã ghi nhận phương án xử lý đơn " + order.getOrderCode(),
+                "Đã ghi nhận phương án bạn chọn",
+                "Lock.R đã ghi nhận bạn đồng ý phương án xử lý sự cố của đơn " + order.getOrderCode() + ".",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode),
+                        new DroneDeliveryEmailTemplate.Detail("Phương án", resolutionLabel),
+                        new DroneDeliveryEmailTemplate.Detail("Tiếp theo", next)),
+                "Tiền bồi thường (nếu có) được chuyển về tài khoản ngân hàng bạn đã lưu trong ứng dụng.");
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+                nameOr(order.getReceiverName(), "bạn"), order,
+                redelivery
+                        ? "Đơn hàng gửi cho bạn sẽ được giao lại (" + redeliveryOrderCode + ")"
+                        : "Đơn hàng " + order.getOrderCode() + " gửi cho bạn sẽ không được giao",
+                redelivery ? "Đơn hàng sẽ được giao lại" : "Đơn hàng không được giao",
+                redelivery
+                        ? "Đơn hàng " + order.getOrderCode() + " gặp sự cố sẽ được giao lại cho bạn bằng đơn "
+                                + redeliveryOrderCode + "."
+                        : "Đơn hàng " + order.getOrderCode() + " do " + nameOr(order.getSenderName(), "người gửi")
+                                + " gửi cho bạn gặp sự cố và sẽ không được giao. Người gửi đã thống nhất cách xử "
+                                + "lý với Lock.R.",
+                List.of(new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode)),
+                redelivery
+                        ? "Khi hàng vào tủ, bạn sẽ nhận email có mã mở ô mới và thời hạn lấy hàng."
+                        : "Vui lòng liên hệ người gửi (" + nameOr(order.getSenderPhone(), "—") + ") nếu cần.");
+        return new Outcome(sender, receiver);
+    }
+
+    /// Thư cập nhật sự cố: bản HTML theo template, bản chữ trơn dựng từ cùng nội dung.
+    private boolean sendNotice(String email, String recipientName, LockerOrder order, String subject,
+            String headline, String introduction, List<DroneDeliveryEmailTemplate.Detail> details, String footer) {
+        if (!StringUtils.hasText(email)) {
+            return false;
+        }
+        StringBuilder body = new StringBuilder("Xin chào ").append(recipientName).append(",\n\n")
+                .append(introduction).append("\n\n");
+        for (DroneDeliveryEmailTemplate.Detail detail : details) {
+            body.append(detail.label()).append(": ").append(detail.value()).append('\n');
+        }
+        body.append('\n').append(footer).append('\n');
+        String html = DroneDeliveryEmailTemplate.incident(
+                recipientName, order.getOrderCode(), headline, introduction, details, footer);
+        return send(email, subject, body.toString(), html);
+    }
+
     private boolean send(String email, String subject, String body, String htmlBody) {
         if (!StringUtils.hasText(email)) {
             return false;

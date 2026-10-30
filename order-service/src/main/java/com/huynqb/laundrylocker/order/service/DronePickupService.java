@@ -276,6 +276,7 @@ public class DronePickupService {
                 backToSearching(pickup);
                 addHistory(order, order.getDeliveryStage(), order.getDeliveryStage(), null,
                         "Kỹ thuật viên được mời không trả lời trong hạn — mời người kế tiếp");
+                escalateIfNobodyTakesIt(order, pickup);
                 offerNext(order, pickup, now);
             } else if (DronePickup.ACCEPTED.equals(pickup.getStatus())
                     && rules.dronePickupTimeoutMinutes() > 0
@@ -421,6 +422,7 @@ public class DronePickupService {
         backToSearching(pickup);
         addHistory(order, order.getDeliveryStage(), order.getDeliveryStage(), technicianId,
                 "Kỹ thuật viên được mời " + why + " — mời người kế tiếp");
+        escalateIfNobodyTakesIt(order, pickup);
         offerNext(order, pickup, now);
     }
 
@@ -749,6 +751,37 @@ public class DronePickupService {
                     new DeliveryStatusNotificationRequest(order.getId(), userId, status, null));
         } catch (RuntimeException ignored) {
             // Trạng thái DB là nguồn sự thật; push chỉ là kênh cập nhật nhanh.
+        }
+    }
+
+    /// Lượt mời thứ {@value #ESCALATE_AFTER_MISSED_OFFERS} hết hạn / bị từ chối mà chưa ai nhận ⇒ báo admin một lần
+    /// để giao tay. Trước đây đơn xoay vòng mời → hết hạn → mời lại mãi, admin chỉ biết khi tự mở trang đơn
+    /// (test 2026-10-29, #143 mời lại 2 lần trong 30 phút).
+    static final int ESCALATE_AFTER_MISSED_OFFERS = 2;
+
+    private void escalateIfNobodyTakesIt(LockerOrder order, DronePickup pickup) {
+        long missed = offerRepository.findByPickupId(pickup.getId()).stream()
+                .filter(offer -> DronePickupOffer.EXPIRED.equals(offer.getStatus())
+                        || DronePickupOffer.DECLINED.equals(offer.getStatus()))
+                .count();
+        if (missed != ESCALATE_AFTER_MISSED_OFFERS) {
+            return;
+        }
+        addHistory(order, order.getDeliveryStage(), order.getDeliveryStage(), null,
+                "Đã mời " + missed + " lượt chưa kỹ thuật viên nào nhận — đã báo quản trị viên giao tay");
+        try {
+            var admins = userClient.getUsersByRole("ADMIN");
+            if (admins == null || admins.data() == null) {
+                return;
+            }
+            for (var admin : admins.data()) {
+                notifyQuietly(admin.id(), "Đơn drone chưa có KTV lấy hàng",
+                        "Đơn " + order.getOrderCode() + " đã mời " + missed
+                                + " lượt mà chưa kỹ thuật viên drone nào nhận. Mở Hành trình drone để gán KTV.",
+                        order, "DRONE_DELIVERY_STATUS_CHANGED");
+            }
+        } catch (RuntimeException ex) {
+            log.debug("Could not notify admins about unclaimed pickup of order {}: {}", order.getId(), ex.getMessage());
         }
     }
 

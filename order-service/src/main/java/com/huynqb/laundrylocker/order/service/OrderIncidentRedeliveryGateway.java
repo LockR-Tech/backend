@@ -27,6 +27,9 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
     private final OrderStatusHistoryRepository historyRepository;
     private final DroneParcelIncidentRepository incidentRepository;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DroneSourceLockerSelector sourceLockerSelector;
+
     @Override
     @Transactional
     public Submission createAttempt(Long incidentId, Long originalOrderId, Long customerUserId, String idempotencyKey) {
@@ -58,12 +61,26 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             newOrder.setDelegatePhone(oldOrder.getDelegatePhone());
             newOrder.setDelegateNote(oldOrder.getDelegateNote());
 
-            // Tuyến đường bay: xuất phát từ Hub (sourceLockerId) tới tủ nhận
-            newOrder.setSourceLockerId(oldOrder.getSourceLockerId());
+            // Tuyến bay xuất phát từ nơi đang giữ kiện: tủ KTV bàn giao kiện về (recoveryLockerId) nếu tủ đó là trạm
+            // bay. Trước đây luôn lấy tủ gửi của đơn cũ ⇒ KTV drone ra tủ bay mà kiện lại nằm ở kho khác (test
+            // 2026-10-29, DPI-143: kiện ở CAB-TU01, đơn giao lại xuất phát HCM-TD-01). Kho không có bãi đáp thì giữ
+            // tủ bay cũ và ghi rõ phải mang kiện từ kho tới trạm trước khi nạp.
+            Long hubLockerId = incident != null ? incident.getRecoveryLockerId() : null;
+            boolean launchFromHub = hubLockerId != null && !hubLockerId.equals(oldOrder.getSourceLockerId())
+                    && sourceLockerSelector != null && sourceLockerSelector.isDroneStation(hubLockerId);
+            newOrder.setSourceLockerId(launchFromHub ? hubLockerId : oldOrder.getSourceLockerId());
             newOrder.setDestinationLockerId(oldOrder.getDestinationLockerId());
             newOrder.setLockerId(oldOrder.getDestinationLockerId());
-            newOrder.setReservedBoxId(oldOrder.getReservedBoxId());
-            newOrder.setReceiveBoxId(oldOrder.getReservedBoxId());
+            // Ô nhận chuyển hẳn sang đơn giao lại: đơn cũ (đã đóng) không còn giữ ô, để không đường nhả ô nào của
+            // đơn cũ lấy mất ô của đơn mới.
+            Long boxId = oldOrder.getReservedBoxId();
+            newOrder.setReservedBoxId(boxId);
+            newOrder.setReceiveBoxId(boxId);
+            String transferNote = hubLockerId != null && !launchFromHub
+                    && !hubLockerId.equals(oldOrder.getSourceLockerId())
+                    ? "Kiện đang ở kho tủ #" + hubLockerId + " — mang kiện tới trạm bay tủ #"
+                            + oldOrder.getSourceLockerId() + " trước khi nạp lên drone."
+                    : null;
 
             // Vì hàng đã được KTV thu hồi về Hub nên đơn mới BỎ QUA LUÔN bước lấy hàng
             newOrder.setPickupAddress(null);
@@ -81,7 +98,8 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             newOrder.setParcelHeightCm(oldOrder.getParcelHeightCm());
             newOrder.setParcelDeclaredValue(oldOrder.getParcelDeclaredValue());
             newOrder.setParcelFragile(oldOrder.getParcelFragile());
-            newOrder.setRouteDistanceMeters(oldOrder.getRouteDistanceMeters());
+            // Đổi trạm cất cánh thì quãng bay của đơn cũ không còn đúng.
+            newOrder.setRouteDistanceMeters(launchFromHub ? null : oldOrder.getRouteDistanceMeters());
             newOrder.setProhibitedItemsDeclaredAt(LocalDateTime.now());
             newOrder.setType("DRONE_DELIVERY");
             newOrder.setServiceCategory("DRONE_DELIVERY");
@@ -96,6 +114,7 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             newOrder.setShippingFee(BigDecimal.ZERO);
             newOrder.setDescription("Giao lại miễn phí từ Hub sau sự cố " + incidentCode + " (đơn cũ: " + oldOrder.getOrderCode() + ")");
             newOrder.setCustomerNote("Đơn giao lại miễn phí cho sự cố rơi kiện " + incidentCode);
+            newOrder.setStaffNote(transferNote);
 
             // Kiện đã nằm ở Hub (không có điểm lấy hàng, đã "bỏ kiện"): đơn vào hàng chờ chung của đội bay như đơn
             // gửi tại tủ — KTV drone nào rảnh cũng thấy, tự gán drone ở tủ gửi rồi nạp và phóng như thường.
@@ -109,7 +128,8 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             newHistory.setOldStatus(null);
             newHistory.setNewStatus(newOrder.getDeliveryStage());
             newHistory.setChangedByUserId(customerUserId);
-            newHistory.setNote("Khởi tạo đơn giao lại miễn phí từ Hub sau sự cố " + incidentCode + " (thay thế đơn " + oldOrder.getOrderCode() + ")");
+            newHistory.setNote("Khởi tạo đơn giao lại miễn phí từ Hub sau sự cố " + incidentCode + " (thay thế đơn "
+                    + oldOrder.getOrderCode() + ")" + (transferNote == null ? "" : ". " + transferNote));
             historyRepository.save(newHistory);
 
             // ĐÓNG ĐƠN CŨ với trạng thái rõ ràng
@@ -117,6 +137,8 @@ public class OrderIncidentRedeliveryGateway implements IncidentRedeliveryGateway
             oldOrder.setStatus("CANCELED");
             oldOrder.setDeliveryStage("DROP_REPORTED");
             oldOrder.setStaffNote("Đóng đơn do sự cố rơi kiện (" + incidentCode + "). Đã tạo đơn mới giao lại miễn phí: " + newOrderCode);
+            oldOrder.setReservedBoxId(null);
+            oldOrder.setReceiveBoxId(null);
             orderRepository.save(oldOrder);
 
             OrderStatusHistory oldHistory = new OrderStatusHistory();

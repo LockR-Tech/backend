@@ -23,6 +23,7 @@ import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
 import com.huynqb.laundrylocker.locker.model.MaintenanceSchedule;
 import com.huynqb.laundrylocker.locker.model.ReportCategory;
+import com.huynqb.laundrylocker.locker.model.TechnicianPresence;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.LockerRules;
 import com.huynqb.laundrylocker.locker.settings.TestLockerRules;
@@ -403,6 +404,11 @@ class LockerServiceDroneFleetTest {
             return report;
         });
 
+        TechnicianPresence onShift = new TechnicianPresence();
+        onShift.setUserId(42L);
+        onShift.setOnDuty(true);
+        when(presenceRepository.findByUserId(42L)).thenReturn(Optional.of(onShift));
+
         IncidentTicketBundleResponse result = service.createIncidentTickets(new CreateIncidentTicketsRequest(
                 89L, "DPI-89", 89L, "ORD-89", 7L, "DRONE-01", 3L,
                 "Kiện rơi khỏi khoang", 10.8411, 106.8097, null, null));
@@ -416,6 +422,18 @@ class LockerServiceDroneFleetTest {
         assertEquals(ReportCategory.DRONE, inspection.getCategory());
         assertEquals(84L, result.recoveryTechnicianId());
         assertEquals(10L, result.recoveryLockerId());
+
+        // KTV phụ trách drone đang ngoài ca ⇒ phiếu để mở cho đội drone, không treo ở người không trực
+        // (test 2026-10-29, RPT-44).
+        onShift.setOnDuty(false);
+        when(reportRepository.findByExternalIncidentIdAndTicketType(any(), any())).thenReturn(Optional.empty());
+        IncidentTicketBundleResponse offShift = service.createIncidentTickets(new CreateIncidentTicketsRequest(
+                90L, "DPI-90", 90L, "ORD-90", 7L, "DRONE-01", 3L,
+                "Kiện rơi khỏi khoang", 10.8411, 106.8097, null, null));
+        verify(reportRepository, times(2)).save(reports.capture());
+        assertEquals(null, reports.getValue().getAssignedToUserId());
+        assertEquals("OPEN", reports.getValue().getStatus());
+        assertEquals(null, offShift.inspectionTechnicianId());
     }
 
     @Test

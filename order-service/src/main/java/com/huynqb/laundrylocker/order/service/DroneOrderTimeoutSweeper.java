@@ -37,6 +37,9 @@ public class DroneOrderTimeoutSweeper {
     private final DroneRefundService refundService;
     private final OrderRules rules;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.huynqb.laundrylocker.order.repository.DroneParcelIncidentRepository incidentRepository;
+
     @Scheduled(cron = "${app.order.drone-timeout-sweep-cron:0 */5 * * * *}")
     public void sweepScheduled() {
         try {
@@ -79,8 +82,11 @@ public class DroneOrderTimeoutSweeper {
             return expiryService.cancelUnpaid(orderId, now.minusMinutes(unpaidMinutes), unpaidMinutes);
         }
         boolean canceled = false;
+        // Đơn giao lại sau sự cố rơi kiện (0đ, kiện ở kho) không tự đóng "không có KTV": đóng thì kiện không còn đơn
+        // nào giao và sự cố kẹt "đang giao lại". Đơn này chờ KTV drone tiếp nhận.
         if (dispatchMinutes > 0
-                && DroneOrderExpiryService.unassignedPast(order, now.minusMinutes(dispatchMinutes))) {
+                && DroneOrderExpiryService.unassignedPast(order, now.minusMinutes(dispatchMinutes))
+                && !incidentRedelivery(orderId)) {
             // Khoá và kiểm lại nằm trong fail(): KTV vừa nhận thì chặng đã đổi và lệnh này bị từ chối.
             if (expiryService.stillUnassigned(orderId, now.minusMinutes(dispatchMinutes))) {
                 failureService.fail(orderId, null, DroneDeliveryFailureService.Actor.SYSTEM,
@@ -97,5 +103,16 @@ public class DroneOrderTimeoutSweeper {
             refundService.refundCanceledOrder(orderId, null);
         }
         return canceled;
+    }
+
+    private boolean incidentRedelivery(Long orderId) {
+        if (incidentRepository == null) {
+            return false;
+        }
+        try {
+            return incidentRepository.findFirstByRedeliveryOrderId(orderId).isPresent();
+        } catch (RuntimeException ex) {
+            return false;
+        }
     }
 }

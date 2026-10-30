@@ -132,6 +132,17 @@ public class DroneParcelIncidentController {
                 "Compensation approval processed", service.approveCompensation(id, userId, roles));
     }
 
+    @PostMapping("/api/admin/drone-incidents/{id}/return-flight/confirm")
+    public ApiResponse<DroneParcelIncidentResponse> confirmDroneReturned(
+            @PathVariable Long id,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestBody(required = false) Map<String, String> body) {
+        requireAdmin(roles);
+        return ApiResponse.ok("RETURN_FLIGHT_CONFIRMED", "Drone return confirmed",
+                service.confirmDroneReturned(id, userId, body == null ? null : body.get("note")));
+    }
+
     @PostMapping("/api/admin/drone-incidents/{id}/redelivery/complete")
     public ApiResponse<DroneParcelIncidentResponse> completeRedelivery(
             @PathVariable Long id,
