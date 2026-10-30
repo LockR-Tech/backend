@@ -72,8 +72,8 @@ public record DroneDeliveryOrderResponse(
         /// Đang có nguồn vị trí trực tiếp cho bản đồ: đơn DEMO đang bay (vị trí nội suy), hoặc
         /// drone thật còn gửi telemetry. false ⇒ mở bản đồ sẽ không có tín hiệu.
         Boolean liveTracking,
-        /// Current drone coordinates exposed consistently to customer, admin and technician views.
-        /// They remain null until telemetry is connected to this shared read model.
+        /// Vị trí drone hiện tại, cùng số với luồng STOMP vị trí: telemetry thật khi drone còn tín hiệu GPS,
+        /// điểm nội suy với đơn DEMO đang bay, toạ độ tủ nhận khi kiện đã vào ô; null khi chưa cất cánh / mất tín hiệu.
         Double currentLatitude,
         Double currentLongitude,
         /// Khai báo kiện hàng lúc đặt đơn; kích thước và giá trị khai báo có thể null.
