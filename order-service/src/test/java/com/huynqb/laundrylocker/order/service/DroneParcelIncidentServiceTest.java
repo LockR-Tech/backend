@@ -253,6 +253,26 @@ class DroneParcelIncidentServiceTest {
     }
 
     @Test
+    void incidentListLooksUpTheSharedRecoveryTechnicianOnce() {
+        DroneParcelIncident first = incident("ASSIGNED");
+        DroneParcelIncident second = incident("ASSIGNED");
+        second.setId(8L);
+        second.setIncidentCode("DPI-21-2");
+        when(incidentRepository.findAllByOrderByUpdatedAtDesc()).thenReturn(List.of(first, second));
+        when(orderRepository.findAllById(List.of(21L))).thenReturn(List.of(policyOrder()));
+        when(userClient.getUser(44L)).thenReturn(com.huynqb.laundrylocker.common.dto.ApiResponse.ok(
+                new com.huynqb.laundrylocker.common.dto.UserSummary(
+                        44L, "ktv@x.vn", "0900", "KTV Tủ", "ACTIVE", java.util.Set.of("LOCKER_TECHNICIAN"))));
+
+        List<DroneParcelIncidentResponse> result = service.list(1L, "ADMIN", false);
+
+        assertEquals(2, result.size());
+        assertEquals("ORD-21", result.get(1).orderCode());
+        verify(userClient, times(1)).getUser(44L);
+        verify(orderRepository, never()).findById(any());
+    }
+
+    @Test
     void droneTechnicianDetailAllowsTheMissionOperatorEvenIfAdminReported() {
         DroneParcelIncident incident = incident("ASSIGNED");
         incident.setReportedByUserId(1L);
@@ -638,6 +658,41 @@ class DroneParcelIncidentServiceTest {
         assertEquals(Boolean.TRUE, response.recoveryStationDroneAvailable());
         verify(notificationClient).requestNotification(argThat(n -> n.userId().equals(44L)
                 && "DRONE_PARCEL_RECOVERY_STATION".equals(n.type()) && n.message().contains("1 Võ Văn Ngân")));
+    }
+
+    /// Kiện hư nặng không bay giao lại được ⇒ không chọn trạm bay, không báo KTV mang tới trạm.
+    @Test
+    void badlyDamagedParcelIsNotDispatchedToADroneStation() {
+        DroneSourceLockerSelector selector = mock(DroneSourceLockerSelector.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "stationSelector", selector);
+        DroneParcelIncident incident = incident("SUBMITTED");
+        incident.setRecoveryOutcome("FOUND");
+        incident.setParcelCondition("UNUSABLE");
+        incident.setParcelStatus("DAMAGED");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        service.verifyRecovery(7L, 1L);
+
+        assertNull(incident.getRecoveryStationName());
+        verifyNoInteractions(selector);
+    }
+
+    /// Bàn giao về kho ghi đè parcelStatus thành RETURNED_TO_HUB nên phải chặn theo tình trạng kiện.
+    @Test
+    void badlyDamagedParcelCannotBeProposedForRedelivery() {
+        DroneParcelIncident incident = incident("CLOSED");
+        incident.setStatus("AWAITING_ADMIN_REVIEW");
+        incident.setParcelCondition("MAJOR_DAMAGE");
+        incident.setParcelStatus("RETURNED_TO_HUB");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.propose(7L, 1L, new DroneIncidentProposalRequest("FREE_REDELIVERY", true,
+                        BigDecimal.ZERO, false, null, null)));
+
+        assertEquals("PARCEL_NOT_REDELIVERABLE", error.getCode());
     }
 
     /// Kiện không tìm thấy ⇒ không có gì để mang tới trạm.

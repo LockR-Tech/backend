@@ -258,8 +258,8 @@ public class DroneDeliveryMailer {
         }
         details.add(new DroneDeliveryEmailTemplate.Detail("Tiếp theo", found
                 ? "Kiện được đưa về " + (StringUtils.hasText(stationName) ? "trạm " + stationName.trim() : "trạm Lock.R")
-                        + ". Lock.R sẽ gửi phương án xử lý (giao lại, bồi thường) trong ứng dụng."
-                : "Lock.R sẽ gửi phương án bồi thường trong ứng dụng để bạn đồng ý hoặc yêu cầu xem xét lại."));
+                        + ". Lock.R sẽ gửi phương án xử lý trong ứng dụng."
+                : "Lock.R sẽ gửi phương án xử lý trong ứng dụng để bạn đồng ý hoặc yêu cầu xem xét lại."));
         boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
                 found
                         ? "Đã tìm thấy kiện hàng của đơn " + order.getOrderCode()

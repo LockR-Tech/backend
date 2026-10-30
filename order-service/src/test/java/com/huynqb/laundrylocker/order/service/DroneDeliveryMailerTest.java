@@ -109,7 +109,7 @@ class DroneDeliveryMailerTest {
         verify(notificationClient, times(3)).notifyGuest(sent.capture());
         GuestNotification.Request lost = sent.getAllValues().get(sent.getAllValues().size() - 1);
         assertTrue(lost.subject().startsWith("Chưa tìm thấy kiện hàng"), lost.subject());
-        assertTrue(lost.emailBody().contains("phương án bồi thường"), lost.emailBody());
+        assertTrue(lost.emailBody().contains("phương án xử lý"), lost.emailBody());
     }
 
     @Test
