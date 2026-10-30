@@ -199,6 +199,12 @@ public class JwtGatewayFilter implements GlobalFilter, Ordered {
         if (path.startsWith("/api/drone-technician")) {
             return hasAny(roles, "DRONE_TECHNICIAN");
         }
+        // Thu hồi kiện drone rơi: admin giao được cho KTV tủ hoặc KTV drone (cả lúc tự phân công), order-service
+        // tự kiểm người được giao. Chặn KTV drone ở đây thì nhiệm vụ đã giao kẹt ở ASSIGNED.
+        if (path.equals("/api/locker-technician/drone-recoveries")
+                || path.startsWith("/api/locker-technician/drone-recoveries/")) {
+            return hasAny(roles, "LOCKER_TECHNICIAN", "DRONE_TECHNICIAN");
+        }
         if (path.startsWith("/api/locker-technician")) {
             return hasAny(roles, "LOCKER_TECHNICIAN");
         }
