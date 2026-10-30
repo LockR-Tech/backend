@@ -214,6 +214,32 @@ class JwtGatewayFilterTest {
         assertFalse(chainCalled.get());
     }
 
+    // KTV drone được giao thu hồi kiện rơi phải nhận việc/nộp kết quả được; phần còn lại của prefix vẫn chặn.
+    @Test
+    void allowsDroneTechnicianForDroneRecoveryApi() {
+        for (String path : java.util.List.of(
+                "/api/locker-technician/drone-recoveries",
+                "/api/locker-technician/drone-recoveries/7/actions")) {
+            MockServerWebExchange exchange =
+                    exchangeWithBearer(MockServerHttpRequest.post(path), token("access", "DRONE_TECHNICIAN"));
+            AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+            filter.filter(exchange, chainThatMarks(chainCalled)).block();
+
+            assertTrue(chainCalled.get(), path);
+        }
+        MockServerWebExchange other =
+                exchangeWithBearer(
+                        MockServerHttpRequest.get("/api/locker-technician/drone-recoveries-export"),
+                        token("access", "DRONE_TECHNICIAN"));
+        AtomicBoolean otherCalled = new AtomicBoolean(false);
+
+        filter.filter(other, chainThatMarks(otherCalled)).block();
+
+        assertEquals(HttpStatus.FORBIDDEN, other.getResponse().getStatusCode());
+        assertFalse(otherCalled.get());
+    }
+
     @Test
     void allowsLockerTechnicianForLockerTechnicianApi() {
         MockServerWebExchange exchange =

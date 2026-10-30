@@ -33,6 +33,12 @@ public interface DroneParcelIncidentRepository extends JpaRepository<DroneParcel
             + " order by i.updatedAt desc, i.createdAt desc, i.id desc")
     List<DroneParcelIncident> findVisibleToDroneTechnician(@Param("userId") Long userId);
 
+    /// Sự cố trên đơn của khách (người gửi hoặc người nhận có tài khoản) — lọc trong DB thay vì đọc mọi sự cố.
+    @Query("select i from DroneParcelIncident i where i.orderId in"
+            + " (select o.id from LockerOrder o where o.userId = :userId or o.receiverUserId = :userId)"
+            + " order by i.updatedAt desc, i.id desc")
+    List<DroneParcelIncident> findVisibleToCustomer(@Param("userId") Long userId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from DroneParcelIncident i where i.id = :id")
     Optional<DroneParcelIncident> findByIdForUpdate(@Param("id") Long id);

@@ -153,6 +153,66 @@ public class DroneSourceLockerSelector {
                 "No locker near the pickup location currently has a ready landing pad and a usable drone");
     }
 
+    /// Trạm nhận kiện rơi đã tìm thấy để bay giao lại; `droneAvailable = false` ⇒ trạm đang hết drone, kiện chờ ở đó.
+    public record RecoveryStation(LockerInfo locker, int distanceMeters, int routeMeters, boolean droneAvailable) {
+    }
+
+    /**
+     * Trạm bay gần nơi tìm thấy kiện nhất để KTV mang kiện tới rồi drone bay giao lại tủ nhận. KTV đi đường bộ nên
+     * không giới hạn bán kính lấy hàng; trạm phải đang hoạt động, bãi đáp sẵn sàng, bay tới tủ nhận trong tầm và
+     * không bị admin tạm dừng bay. Ưu tiên trạm còn drone dùng được; không có thì trạm gần nhất có bãi đáp sẵn
+     * sàng (chờ drone). Không có trạm nào ⇒ empty. Không ném lỗi: lỗi tra cứu không được chặn việc xác minh.
+     */
+    public java.util.Optional<RecoveryStation> recoveryStation(double latitude, double longitude,
+            Long destinationLockerId) {
+        try {
+            List<LockerInfo> lockers = allLockers();
+            LockerInfo destination = lockers.stream()
+                    .filter(locker -> Objects.equals(locker.id(), destinationLockerId))
+                    .filter(locker -> locker.latitude() != null && locker.longitude() != null)
+                    .findFirst()
+                    .orElse(null);
+            double[] found = {latitude, longitude};
+            int maxRouteMeters = rules.droneMaxRouteMeters();
+            Set<Long> suspended = flightControl.activeSuspensions().keySet();
+            List<Candidate> stations = lockers.stream()
+                    .filter(locker -> !Objects.equals(locker.id(), destinationLockerId))
+                    .filter(locker -> "ACTIVE".equalsIgnoreCase(locker.status()))
+                    .filter(locker -> Boolean.TRUE.equals(locker.landingPad()))
+                    .filter(locker -> locker.latitude() != null && locker.longitude() != null)
+                    .filter(locker -> !suspended.contains(locker.id()))
+                    .filter(locker -> destination == null || maxRouteMeters <= 0
+                            || meters(new double[] {locker.latitude(), locker.longitude()}, destination)
+                                    <= maxRouteMeters)
+                    .map(locker -> new Candidate(locker, meters(found, locker)))
+                    .sorted(Comparator.comparingInt(Candidate::pickupMeters))
+                    .toList();
+            RecoveryStation waitingForDrone = null;
+            for (Candidate candidate : stations) {
+                LockerLayoutDto layout = data(lockerDroneClient.getLockerLayout(candidate.locker().id()));
+                if (layout == null || !"ACTIVE".equalsIgnoreCase(layout.status())
+                        || !Boolean.TRUE.equals(layout.landingPad())
+                        || !"OK".equalsIgnoreCase(layout.landingPadStatus())) {
+                    continue;
+                }
+                int routeMeters = destination == null ? 0
+                        : meters(new double[] {candidate.locker().latitude(), candidate.locker().longitude()},
+                                destination);
+                if (hasUsableDrone(candidate.locker().id())) {
+                    return java.util.Optional.of(
+                            new RecoveryStation(candidate.locker(), candidate.pickupMeters(), routeMeters, true));
+                }
+                if (waitingForDrone == null) {
+                    waitingForDrone = new RecoveryStation(
+                            candidate.locker(), candidate.pickupMeters(), routeMeters, false);
+                }
+            }
+            return java.util.Optional.ofNullable(waitingForDrone);
+        } catch (RuntimeException ex) {
+            return java.util.Optional.empty();
+        }
+    }
+
     /// Bãi đáp đang sẵn sàng và còn ít nhất một drone dùng được.
     boolean serviceable(Long lockerId) {
         LockerLayoutDto layout = data(lockerDroneClient.getLockerLayout(lockerId));

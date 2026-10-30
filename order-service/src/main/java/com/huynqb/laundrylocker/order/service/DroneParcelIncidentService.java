@@ -23,7 +23,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
@@ -79,6 +84,14 @@ public class DroneParcelIncidentService {
     /// Thư cho người gửi / người nhận khi có sự cố sau lúc đã báo "đơn đang trên đường" (không bắt buộc trong test).
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DroneDeliveryMailer mailer;
+
+    /// Chọn trạm bay nhận kiện rơi đã tìm thấy (không có trong unit test cũ ⇒ bỏ qua bước điều phối).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DroneSourceLockerSelector stationSelector;
+
+    /// Ghi nhật ký thư sau commit cần giao dịch riêng (không có trong unit test ⇒ ghi thẳng).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PlatformTransactionManager transactionManager;
 
     @Transactional
     public DroneParcelIncidentResponse report(
@@ -188,11 +201,22 @@ public class DroneParcelIncidentService {
             // source of truth and the drone is never set back to IDLE here.
         }
 
-        IncidentTicketBundle tickets = lockerDroneClient.createIncidentTickets(new CreateIncidentTicketsCommand(
-                incident.getId(), incident.getIncidentCode(), order.getId(), order.getOrderCode(),
-                mission.getDroneUnitId(), mission.getDroneCode(), actorUserId, request.reason(),
-                location.latitude(), location.longitude(), location.accuracyM(), incident.getCameraSnapshotUrl())).data();
-        if (tickets != null) {
+        // locker-service lỗi không được chặn việc báo rơi: drone đã mất kiện, sự cố và việc dừng nhiệm vụ phải ghi
+        // được. Không có phiếu ⇒ thu hồi chờ admin phân công tay (AWAITING_ASSIGNMENT).
+        IncidentTicketBundle tickets = null;
+        try {
+            var ticketResponse = lockerDroneClient.createIncidentTickets(new CreateIncidentTicketsCommand(
+                    incident.getId(), incident.getIncidentCode(), order.getId(), order.getOrderCode(),
+                    mission.getDroneUnitId(), mission.getDroneCode(), actorUserId, request.reason(),
+                    location.latitude(), location.longitude(), location.accuracyM(), incident.getCameraSnapshotUrl()));
+            tickets = ticketResponse == null ? null : ticketResponse.data();
+        } catch (RuntimeException ex) {
+            log.warn("Incident {} reported without locker tickets: {}", incident.getIncidentCode(), ex.getMessage());
+        }
+        if (tickets == null) {
+            incident.setRecoveryStatus("AWAITING_ASSIGNMENT");
+            incident.setParcelStatus("RECOVERY_PENDING");
+        } else {
             incident.setInspectionReportId(tickets.inspectionReportId());
             incident.setInspectionStatus(tickets.inspectionTechnicianId() == null ? "AWAITING_ASSIGNMENT" : "ASSIGNED");
             incident.setRecoveryAssignedToUserId(tickets.recoveryTechnicianId());
@@ -213,7 +237,13 @@ public class DroneParcelIncidentService {
         incident = incidentRepository.save(incident);
         timeline(incident, "INCIDENT_REPORTED", null, incident.getStatus(), actorUserId, request.reason(), null);
         timeline(incident, "RETURN_REQUEST", null, incident.getReturnFlightStatus(), actorUserId, rtl.detail(), null);
-        notifyIncidentCreatedQuietly(incident, order, tickets);
+        if (tickets == null) {
+            timeline(incident, "RECOVERY_TICKETS_UNAVAILABLE", null, incident.getRecoveryStatus(), null,
+                    "Chưa tạo được phiếu kiểm tra/thu hồi bên tủ — admin phân công KTV thu hồi bằng tay", null);
+        }
+        DroneParcelIncident created = incident;
+        IncidentTicketBundle createdTickets = tickets;
+        afterCommit(() -> notifyIncidentCreatedQuietly(created, order, createdTickets));
         mailDropReported(order, mission, incident);
         return toResponse(incident);
     }
@@ -283,13 +313,7 @@ public class DroneParcelIncidentService {
             incidents = incidentRepository.findByReportedByUserIdOrRecoveryAssignedToUserIdOrderByUpdatedAtDesc(
                     actorUserId, actorUserId);
         } else {
-            incidents = incidentRepository.findAllByOrderByUpdatedAtDesc().stream()
-                    .filter(incident -> {
-                        LockerOrder order = orderRepository.findById(incident.getOrderId()).orElse(null);
-                        return order != null && (actorUserId.equals(order.getUserId())
-                                || actorUserId.equals(order.getReceiverUserId()));
-                    })
-                    .toList();
+            incidents = incidentRepository.findVisibleToCustomer(actorUserId);
         }
         return incidents.stream().map(this::toResponse).toList();
     }
@@ -388,6 +412,13 @@ public class DroneParcelIncidentService {
         incident.setStatus("AWAITING_ADMIN_REVIEW");
         incidentRepository.save(incident);
         timeline(incident, "RECOVERY_SUBMITTED", "SEARCHING", "SUBMITTED", actorUserId, request.note(), null);
+        String code = incident.getIncidentCode();
+        Long submittedId = incident.getId();
+        String result = "FOUND".equals(outcome) ? "đã tìm thấy kiện"
+                : "NOT_FOUND".equals(outcome) ? "không tìm thấy kiện" : "không tiếp cận được khu vực";
+        afterCommit(() -> notifyAdminsQuietly("Kết quả thu hồi chờ xác minh",
+                "KTV báo " + result + " cho sự cố " + code + ". Vui lòng xác minh kết quả.",
+                "DRONE_INCIDENT_RECOVERY_SUBMITTED", submittedId));
         return toResponse(incident);
     }
 
@@ -400,7 +431,76 @@ public class DroneParcelIncidentService {
         incident.setStatus("AWAITING_ADMIN_REVIEW");
         incidentRepository.save(incident);
         timeline(incident, "RECOVERY_VERIFIED", "SUBMITTED", "VERIFIED", adminUserId, null, null);
+        if ("FOUND".equals(incident.getRecoveryOutcome())) {
+            dispatchToRecoveryStation(incident, adminUserId);
+        }
+        announceRecoveryVerified(incident);
         return toResponse(incident);
+    }
+
+    /// Kiện đã tìm thấy và admin đã xác minh ⇒ điều phối về trạm bay gần nơi tìm thấy nhất còn drone, để đơn giao
+    /// lại (khi khách đồng ý) bay thẳng từ trạm đó. KTV thu hồi thấy tên, địa chỉ, toạ độ trạm để chỉ đường.
+    /// Hết drone ⇒ trạm gần nhất có bãi đáp sẵn sàng và báo admin; không có trạm ⇒ giữ tủ phụ trách cũ, báo admin.
+    private void dispatchToRecoveryStation(DroneParcelIncident incident, Long adminUserId) {
+        if (stationSelector == null) {
+            return;
+        }
+        LockerOrder order = orderRepository.findById(incident.getOrderId()).orElse(null);
+        Double latitude = incident.getRecoveredLatitude() != null ? incident.getRecoveredLatitude()
+                : incident.getDropLatitude();
+        Double longitude = incident.getRecoveredLongitude() != null ? incident.getRecoveredLongitude()
+                : incident.getDropLongitude();
+        Long destinationId = order == null ? null
+                : order.getDestinationLockerId() != null ? order.getDestinationLockerId() : order.getLockerId();
+        var station = latitude == null || longitude == null || destinationId == null
+                ? java.util.Optional.<DroneSourceLockerSelector.RecoveryStation>empty()
+                : stationSelector.recoveryStation(latitude, longitude, destinationId);
+        String code = incident.getIncidentCode();
+        Long incidentId = incident.getId();
+        if (station.isEmpty()) {
+            timeline(incident, "RECOVERY_STATION_UNAVAILABLE", null, null, adminUserId,
+                    "Không có trạm bay nào nhận được kiện (bãi đáp sẵn sàng, trong tầm bay tới tủ nhận) — "
+                            + "giữ nơi bàn giao cũ, admin điều phối tay", null);
+            afterCommit(() -> notifyAdminsQuietly("Chưa điều phối được trạm cho kiện tìm thấy",
+                    "Sự cố " + code + ": không có trạm bay nào nhận được kiện, cần điều phối tay.",
+                    "DRONE_INCIDENT_STATION_UNAVAILABLE", incidentId));
+            return;
+        }
+        DroneSourceLockerSelector.RecoveryStation selected = station.get();
+        LockerInfo locker = selected.locker();
+        Long previousLocker = incident.getRecoveryLockerId();
+        incident.setRecoveryLockerId(locker.id());
+        incident.setRecoveryStationDispatchedAt(LocalDateTime.now());
+        incident.setRecoveryStationName(StringUtils.hasText(locker.name()) ? locker.name() : locker.code());
+        incident.setRecoveryStationAddress(locker.address());
+        incident.setRecoveryStationLatitude(locker.latitude());
+        incident.setRecoveryStationLongitude(locker.longitude());
+        incident.setRecoveryStationDistanceM(selected.distanceMeters());
+        incident.setRecoveryStationDroneAvailable(selected.droneAvailable());
+        incidentRepository.save(incident);
+        String stationName = incident.getRecoveryStationName();
+        String distance = String.format(Locale.ROOT, "%.1f km", selected.distanceMeters() / 1000.0);
+        timeline(incident, "RECOVERY_STATION_DISPATCHED", null, null, adminUserId,
+                "Điều phối kiện về trạm " + stationName + " (cách nơi tìm thấy ~" + distance + ")"
+                        + (selected.droneAvailable() ? "" : " — trạm đang hết drone, kiện chờ drone tại trạm"),
+                json(Map.of("previousLockerId", previousLocker == null ? "" : previousLocker,
+                        "stationLockerId", locker.id(), "distanceMeters", selected.distanceMeters(),
+                        "droneAvailable", selected.droneAvailable())));
+        Long technicianId = incident.getRecoveryAssignedToUserId();
+        String address = StringUtils.hasText(locker.address()) ? " — " + locker.address() : "";
+        boolean droneAvailable = selected.droneAvailable();
+        afterCommit(() -> {
+            notifyStaffQuietly(technicianId, "Mang kiện tới trạm " + stationName,
+                    "Sự cố " + code + ": mang kiện tới trạm " + stationName + address + " (~" + distance
+                            + "), rồi xác nhận bàn giao tại trạm.",
+                    "DRONE_PARCEL_RECOVERY_STATION", incidentId);
+            if (!droneAvailable) {
+                notifyAdminsQuietly("Trạm nhận kiện đang hết drone",
+                        "Sự cố " + code + ": kiện được điều phối về trạm " + stationName
+                                + " nhưng trạm chưa có drone sẵn sàng để giao lại.",
+                        "DRONE_INCIDENT_STATION_NO_DRONE", incidentId);
+            }
+        });
     }
 
     @Transactional
@@ -438,9 +538,12 @@ public class DroneParcelIncidentService {
         timeline(incident, "RECOVERY_ASSIGNED", null, "ASSIGNED", adminUserId, request.note(),
                 json(Map.of("previousAssigneeId", previousAssignee == null ? "" : previousAssignee,
                         "technicianId", request.technicianId())));
-        notifyQuietly(request.technicianId(), "Nhiệm vụ thu hồi kiện drone",
-                "Bạn được phân công thu hồi kiện cho sự cố " + incident.getIncidentCode() + ".",
-                "DRONE_PARCEL_RECOVERY_ASSIGNED", incident.getId());
+        Long technicianId = request.technicianId();
+        String code = incident.getIncidentCode();
+        Long assignedId = incident.getId();
+        afterCommit(() -> notifyStaffQuietly(technicianId, "Nhiệm vụ thu hồi kiện drone",
+                "Bạn được phân công thu hồi kiện cho sự cố " + code + ".",
+                "DRONE_PARCEL_RECOVERY_ASSIGNED", assignedId));
         return toResponse(incident);
     }
 
@@ -572,7 +675,10 @@ public class DroneParcelIncidentService {
         };
         requireState(next, allowed, "RETURN_FLIGHT_TRANSITION_INVALID");
         incident.setReturnFlightStatus(next);
-        if ("FAILED".equals(next) || "MANUAL_INTERVENTION_REQUIRED".equals(next)) {
+        // Chuyến bay về chỉ chặn sự cố khi còn ở bước điều tra ban đầu. Sự cố đã sang thu hồi / phương án / xử lý
+        // thì giữ nguyên — bước quay về có cột riêng (returnFlightStatus), ghi đè làm mất trạng thái thật.
+        if (("FAILED".equals(next) || "MANUAL_INTERVENTION_REQUIRED".equals(next))
+                && Set.of("REPORTED", "INVESTIGATING").contains(incident.getStatus())) {
             incident.setStatus("MANUAL_INTERVENTION_REQUIRED");
         }
         incidentRepository.save(incident);
@@ -585,6 +691,13 @@ public class DroneParcelIncidentService {
             Long incidentId, Long adminUserId, DroneIncidentProposalRequest request) {
         DroneParcelIncident incident = locked(incidentId);
         requireState(incident.getRecoveryStatus(), Set.of("VERIFIED", "CLOSED"), "RECOVERY_NOT_VERIFIED");
+        // Phương án đang chờ khách, đã được nhận hoặc sự cố đã xong ⇒ không gửi thêm phiên bản (trước đây chỉ web ẩn
+        // form; gọi thẳng API vẫn mở lại sự cố đã RESOLVED và chi bồi thường lần hai).
+        if (Set.of("AWAITING_CUSTOMER_RESPONSE", "RESOLUTION_IN_PROGRESS", "RESOLVED", "CLOSED")
+                .contains(incident.getStatus())) {
+            throw new BusinessException("INCIDENT_NOT_PROPOSABLE",
+                    "Sự cố đang chờ khách phản hồi hoặc đã có phương án được chấp nhận", HttpStatus.CONFLICT);
+        }
         String type = request.resolutionType().trim().toUpperCase(Locale.ROOT);
         if (!RESOLUTION_TYPES.contains(type)) {
             throw new BusinessException("RESOLUTION_TYPE_INVALID", "Unsupported resolution type");
@@ -631,8 +744,18 @@ public class DroneParcelIncidentService {
             throw new BusinessException("RESOLUTION_NOTE_REQUIRED",
                     "Thỏa thuận riêng cần ghi rõ nội dung thoả thuận gửi khách");
         }
-        int version = proposalRepository.findFirstByIncidentIdOrderByProposalVersionDesc(incidentId)
-                .map(value -> value.getProposalVersion() + 1).orElse(1);
+        DroneIncidentResolutionProposal previous = proposalRepository
+                .findFirstByIncidentIdOrderByProposalVersionDesc(incidentId).orElse(null);
+        if (previous != null && "ACCEPTED".equals(previous.getStatus())) {
+            throw new BusinessException("INCIDENT_NOT_PROPOSABLE",
+                    "Khách đã đồng ý phương án lần " + previous.getProposalVersion(), HttpStatus.CONFLICT);
+        }
+        if (previous != null && Set.of("AWAITING_CUSTOMER_ACCEPTANCE", "DISPUTED").contains(previous.getStatus())) {
+            // Phương án bị khách yêu cầu xem xét được thay bằng bản mới — khách chỉ phản hồi bản mới nhất.
+            previous.setStatus("SUPERSEDED");
+            proposalRepository.save(previous);
+        }
+        int version = previous == null ? 1 : previous.getProposalVersion() + 1;
         DroneIncidentResolutionProposal proposal = new DroneIncidentResolutionProposal();
         proposal.setIncidentId(incidentId);
         proposal.setProposalVersion(version);
@@ -653,7 +776,7 @@ public class DroneParcelIncidentService {
         incidentRepository.save(incident);
         timeline(incident, "RESOLUTION_PROPOSED", null, incident.getStatus(), adminUserId,
                 "Gửi phương án lần " + version, json(Map.of("suggestedCompensation", suggested)));
-        notifyResolutionQuietly(order, incident);
+        afterCommit(() -> notifyResolutionQuietly(order, incident));
         mailProposal(order, incident, proposal);
         return toResponse(incident);
     }
@@ -664,8 +787,14 @@ public class DroneParcelIncidentService {
         DroneParcelIncident incident = locked(incidentId);
         LockerOrder order = orderRepository.findById(incident.getOrderId())
                 .orElseThrow(() -> new NotFoundException("LockerOrder", incident.getOrderId()));
-        if (!customerUserId.equals(order.getUserId()) && !customerUserId.equals(order.getReceiverUserId())) {
-            throw new BusinessException("INCIDENT_CUSTOMER_FORBIDDEN", "This incident does not belong to you", HttpStatus.FORBIDDEN);
+        // Chỉ người gửi (chủ đơn) quyết định phương án: tiền bồi thường chuyển về tài khoản người gửi. Người nhận vẫn
+        // xem được sự cố nhưng không đồng ý / yêu cầu xem xét thay.
+        if (!customerUserId.equals(order.getUserId())) {
+            throw new BusinessException("INCIDENT_CUSTOMER_FORBIDDEN",
+                    customerUserId.equals(order.getReceiverUserId())
+                            ? "Chỉ người gửi đơn được phản hồi phương án xử lý"
+                            : "This incident does not belong to you",
+                    HttpStatus.FORBIDDEN);
         }
         DroneIncidentResolutionProposal proposal = proposalRepository
                 .findFirstByIncidentIdOrderByProposalVersionDesc(incidentId)
@@ -681,7 +810,10 @@ public class DroneParcelIncidentService {
             }
             proposal.setStatus("DISPUTED");
             incident.setStatus("DISPUTED");
-            incident.setCompensationStatus("DISPUTED");
+            // Chỉ khoản bồi thường mới bị "tranh chấp"; phương án không có tiền thì giữ NOT_REQUIRED.
+            if (proposal.getCompensationAmount() != null && proposal.getCompensationAmount().signum() > 0) {
+                incident.setCompensationStatus("DISPUTED");
+            }
         } else if ("ACCEPT".equals(decision)) {
             proposal.setStatus("ACCEPTED");
             incident.setStatus("RESOLUTION_IN_PROGRESS");
@@ -714,6 +846,14 @@ public class DroneParcelIncidentService {
             resolveIfSettled(incident, customerUserId);
             mailResolutionAccepted(order, incident, proposal);
         }
+        boolean accepted = "ACCEPT".equals(decision);
+        String code = incident.getIncidentCode();
+        Long respondedId = incident.getId();
+        afterCommit(() -> notifyAdminsQuietly(
+                accepted ? "Khách đồng ý phương án sự cố" : "Khách yêu cầu xem xét lại phương án",
+                "Đơn " + order.getOrderCode() + " (" + code + "): "
+                        + (accepted ? "khách đã đồng ý phương án." : "khách yêu cầu xem xét lại, cần gửi phương án mới."),
+                accepted ? "DRONE_INCIDENT_CUSTOMER_ACCEPTED" : "DRONE_INCIDENT_CUSTOMER_DISPUTED", respondedId));
         return toResponse(incident);
     }
 
@@ -863,7 +1003,14 @@ public class DroneParcelIncidentService {
                 refundShippingFee,
                 recoverySlaHours,
                 approvalRequired,
-                policyEnabled);
+                policyEnabled,
+                incident.getRecoveryStationName(),
+                incident.getRecoveryStationAddress(),
+                incident.getRecoveryStationLatitude(),
+                incident.getRecoveryStationLongitude(),
+                incident.getRecoveryStationDistanceM(),
+                incident.getRecoveryStationDroneAvailable(),
+                incident.getRecoveryStationDispatchedAt());
     }
 
     private void requestCompensation(DroneParcelIncident incident, LockerOrder order,
@@ -966,12 +1113,16 @@ public class DroneParcelIncidentService {
         Long boxId = order.getReservedBoxId();
         orderRepository.save(order);
         if (boxId != null) {
-            try {
-                lockerClient.releaseBox(boxId);
-            } catch (RuntimeException ex) {
-                log.warn("Could not release box {} of order {} after drop incident: {}", boxId, order.getId(),
-                        ex.getMessage());
-            }
+            // Sau commit: giao dịch hỏng thì đơn chưa đóng, ô không được nhả cho đơn khác.
+            Long closedOrderId = order.getId();
+            afterCommit(() -> {
+                try {
+                    lockerClient.releaseBox(boxId);
+                } catch (RuntimeException ex) {
+                    log.warn("Could not release box {} of order {} after drop incident: {}", boxId, closedOrderId,
+                            ex.getMessage());
+                }
+            });
         }
         addOrderHistory(order.getId(), previous, "CANCELED", actorUserId,
                 "Đóng đơn do sự cố rơi kiện " + incident.getIncidentCode() + " — không giao lại, đã nhả ô nhận");
@@ -1100,40 +1251,88 @@ public class DroneParcelIncidentService {
 
     private void notifyIncidentCreatedQuietly(
             DroneParcelIncident incident, LockerOrder order, IncidentTicketBundle tickets) {
-        notifyQuietly(order.getUserId(), "Sự cố giao hàng bằng drone",
+        notifyCustomerQuietly(order.getUserId(), "Sự cố giao hàng bằng drone",
                 "Kiện hàng của đơn " + order.getOrderCode() + " được báo rơi. Hệ thống đang điều phối thu hồi.",
                 "DRONE_PARCEL_DROP_REPORTED", order.getId());
         if (order.getReceiverUserId() != null && !order.getReceiverUserId().equals(order.getUserId())) {
-            notifyQuietly(order.getReceiverUserId(), "Sự cố giao hàng bằng drone",
+            notifyCustomerQuietly(order.getReceiverUserId(), "Sự cố giao hàng bằng drone",
                     "Đơn " + order.getOrderCode() + " đang được xử lý sau sự cố rơi kiện.",
                     "DRONE_PARCEL_DROP_REPORTED", order.getId());
         }
         if (tickets != null && tickets.recoveryTechnicianId() != null) {
-            notifyQuietly(tickets.recoveryTechnicianId(), "Nhiệm vụ thu hồi kiện drone",
+            notifyStaffQuietly(tickets.recoveryTechnicianId(), "Nhiệm vụ thu hồi kiện drone",
                     "Bạn được phân công thu hồi kiện cho sự cố " + incident.getIncidentCode() + ".",
                     "DRONE_PARCEL_RECOVERY_ASSIGNED", incident.getId());
         }
+        notifyAdminsQuietly("Sự cố rơi kiện drone",
+                "Đơn " + order.getOrderCode() + " báo rơi kiện (" + incident.getIncidentCode() + ")"
+                        + (tickets == null || tickets.recoveryTechnicianId() == null
+                                ? " — chưa có KTV thu hồi, cần phân công." : "."),
+                "DRONE_PARCEL_DROP_REPORTED", incident.getId());
     }
 
     private void notifyResolutionQuietly(LockerOrder order, DroneParcelIncident incident) {
-        notifyQuietly(order.getUserId(), "Phương án xử lý sự cố drone",
+        notifyCustomerQuietly(order.getUserId(), "Phương án xử lý sự cố drone",
                 "Đơn " + order.getOrderCode() + " đã có phương án xử lý cần bạn phản hồi.",
                 "DRONE_INCIDENT_RESOLUTION_PROPOSED", order.getId());
         if (order.getReceiverUserId() != null && !order.getReceiverUserId().equals(order.getUserId())) {
-            notifyQuietly(order.getReceiverUserId(), "Phương án xử lý sự cố drone",
+            notifyCustomerQuietly(order.getReceiverUserId(), "Phương án xử lý sự cố drone",
                     "Đơn " + order.getOrderCode() + " đã có phương án xử lý.",
                     "DRONE_INCIDENT_RESOLUTION_PROPOSED", order.getId());
         }
     }
 
     /// Báo rơi kiện: người gửi luôn được báo; người nhận chỉ khi drone đã phóng (đã nhận thư "đang trên đường").
+    /// Gửi sau commit: giao dịch hỏng thì không có thư cho một sự cố không tồn tại, và không giữ khoá đơn khi chờ SMTP.
     private void mailDropReported(LockerOrder order, DroneMission mission, DroneParcelIncident incident) {
         if (mailer == null) {
             return;
         }
         boolean launched = mission != null && mission.getLaunchingAt() != null;
-        DroneDeliveryMailer.Outcome outcome = mailer.parcelDropReported(order, incident.getIncidentCode(), launched);
-        recordMail(order, outcome, "báo sự cố rơi kiện");
+        String location = incident.getDropLatitude() == null || incident.getDropLongitude() == null
+                ? null
+                : String.format(Locale.ROOT, "%.5f, %.5f", incident.getDropLatitude(), incident.getDropLongitude());
+        String stage = DroneMissionProgressService.stageLabel(mission == null ? null : mission.getFailedStage());
+        String code = incident.getIncidentCode();
+        Instant reportedAt = Instant.now();
+        afterCommit(() -> recordMail(order,
+                mailer.parcelDropReported(order, code, reportedAt, location, stage, launched),
+                "báo sự cố rơi kiện"));
+    }
+
+    /// Mail 2: admin đã xác minh kết quả thu hồi (tìm thấy / chưa tìm thấy) — kèm thông báo trong app.
+    private void announceRecoveryVerified(DroneParcelIncident incident) {
+        LockerOrder order = orderRepository.findById(incident.getOrderId()).orElse(null);
+        if (order == null) {
+            return;
+        }
+        boolean found = "FOUND".equals(incident.getRecoveryOutcome());
+        String parcel = PaymentIncidentCompensationGateway.parcelLabel(incident);
+        String parcelState = parcel == null ? null : Character.toUpperCase(parcel.charAt(0)) + parcel.substring(1);
+        boolean launched = incident.getMissionId() != null && missionRepository.findById(incident.getMissionId())
+                .map(DroneMission::getLaunchingAt).isPresent();
+        String code = incident.getIncidentCode();
+        String stationName = incident.getRecoveryStationName();
+        Instant verifiedAt = Instant.now();
+        String title = found ? "Đã tìm thấy kiện hàng" : "Chưa tìm thấy kiện hàng";
+        String message = found
+                ? "Kiện của đơn " + order.getOrderCode() + " đã được tìm thấy"
+                        + (parcel == null ? "" : " (" + parcel + ")")
+                        + (stationName == null ? "" : " và được đưa về trạm " + stationName)
+                        + ". Lock.R sẽ gửi phương án xử lý."
+                : "Kiện của đơn " + order.getOrderCode() + " chưa tìm thấy. Lock.R sẽ gửi phương án bồi thường.";
+        afterCommit(() -> {
+            notifyCustomerQuietly(order.getUserId(), title, message, "DRONE_PARCEL_RECOVERY_VERIFIED", order.getId());
+            if (order.getReceiverUserId() != null && !order.getReceiverUserId().equals(order.getUserId())) {
+                notifyCustomerQuietly(order.getReceiverUserId(), title, message, "DRONE_PARCEL_RECOVERY_VERIFIED",
+                        order.getId());
+            }
+            if (mailer != null) {
+                recordMail(order, mailer.parcelRecoveryVerified(order, code, found, parcelState, stationName, verifiedAt,
+                        launched),
+                        found ? "báo đã tìm thấy kiện" : "báo chưa tìm thấy kiện");
+            }
+        });
     }
 
     private void mailProposal(LockerOrder order, DroneParcelIncident incident,
@@ -1147,11 +1346,13 @@ public class DroneParcelIncidentService {
                 ? null
                 : PaymentIncidentCompensationGateway.formatVnd(amount)
                         + (proposal.isRefundShippingFee() ? " (kèm hoàn phí giao)" : "");
-        DroneDeliveryMailer.Outcome outcome = mailer.incidentProposal(order, incident.getIncidentCode(),
-                PaymentIncidentCompensationGateway.resolutionLabel(proposal.getResolutionType()),
-                parcel == null ? null : Character.toUpperCase(parcel.charAt(0)) + parcel.substring(1),
-                compensation, proposal.getResolutionNote());
-        recordMail(order, outcome, "gửi phương án xử lý sự cố");
+        String code = incident.getIncidentCode();
+        String resolution = PaymentIncidentCompensationGateway.resolutionLabel(proposal.getResolutionType());
+        String parcelState = parcel == null ? null : Character.toUpperCase(parcel.charAt(0)) + parcel.substring(1);
+        String note = proposal.getResolutionNote();
+        afterCommit(() -> recordMail(order,
+                mailer.incidentProposal(order, code, resolution, parcelState, compensation, note),
+                "gửi phương án xử lý sự cố"));
     }
 
     private void mailResolutionAccepted(LockerOrder order, DroneParcelIncident incident,
@@ -1163,31 +1364,94 @@ public class DroneParcelIncidentService {
                 : orderRepository.findById(incident.getRedeliveryOrderId()).map(LockerOrder::getOrderCode).orElse(null);
         boolean launched = incident.getMissionId() != null && missionRepository.findById(incident.getMissionId())
                 .map(DroneMission::getLaunchingAt).isPresent();
-        DroneDeliveryMailer.Outcome outcome = mailer.incidentResolutionAccepted(order, incident.getIncidentCode(),
-                PaymentIncidentCompensationGateway.resolutionLabel(proposal.getResolutionType()), redeliveryCode,
-                launched);
-        recordMail(order, outcome, "xác nhận phương án xử lý sự cố");
+        String code = incident.getIncidentCode();
+        String resolution = PaymentIncidentCompensationGateway.resolutionLabel(proposal.getResolutionType());
+        afterCommit(() -> recordMail(order,
+                mailer.incidentResolutionAccepted(order, code, resolution, redeliveryCode, launched),
+                "xác nhận phương án xử lý sự cố"));
     }
 
-    /// Nhật ký hành trình ghi thư đã tới ai — người gửi và nhân viên cùng xem được.
+    /// Nhật ký hành trình ghi thư đã tới ai — người gửi và nhân viên cùng xem được. Chạy sau commit nên cần giao
+    /// dịch riêng, nếu không bản ghi tham gia vào giao dịch đã đóng và bị bỏ.
     private void recordMail(LockerOrder order, DroneDeliveryMailer.Outcome outcome, String purpose) {
         String reached = outcome == null ? null : outcome.describe(order);
-        addOrderHistory(order.getId(), order.getDeliveryStage(), order.getDeliveryStage(), null,
-                reached == null
-                        ? "Chưa gửi được email " + purpose + "."
-                        : "Đã gửi email " + purpose + " cho " + reached + ".");
+        String note = reached == null
+                ? "Chưa gửi được email " + purpose + "."
+                : "Đã gửi email " + purpose + " cho " + reached + ".";
+        try {
+            inNewTransaction(() -> addOrderHistory(
+                    order.getId(), order.getDeliveryStage(), order.getDeliveryStage(), null, note));
+        } catch (RuntimeException ex) {
+            log.warn("Could not record mail note for order {}: {}", order.getId(), ex.getMessage());
+        }
     }
 
-    private void notifyQuietly(Long userId, String title, String message, String type, Long incidentId) {
+    /// Thông báo cho khách: tham chiếu là ĐƠN (app khách mở màn theo dõi đơn và tải lại theo orderId).
+    private void notifyCustomerQuietly(Long userId, String title, String message, String type, Long orderId) {
+        notifyQuietly(userId, title, message, type, orderId, "DRONE_ORDER");
+    }
+
+    /// Thông báo cho KTV/admin: tham chiếu là SỰ CỐ (mở thẳng chi tiết sự cố).
+    private void notifyStaffQuietly(Long userId, String title, String message, String type, Long incidentId) {
+        notifyQuietly(userId, title, message, type, incidentId, "DRONE_INCIDENT");
+    }
+
+    /// Việc chờ admin (phân công, xác minh kết quả, khách phản hồi): báo trong app cho mọi admin đang hoạt động.
+    private void notifyAdminsQuietly(String title, String message, String type, Long incidentId) {
+        try {
+            var response = userClient.getUsersByRole("ADMIN");
+            List<com.huynqb.laundrylocker.common.dto.UserSummary> admins = response == null ? null : response.data();
+            if (admins == null) {
+                return;
+            }
+            admins.stream()
+                    .filter(admin -> admin.id() != null
+                            && (admin.status() == null || "ACTIVE".equalsIgnoreCase(admin.status())))
+                    .forEach(admin -> notifyStaffQuietly(admin.id(), title, message, type, incidentId));
+        } catch (RuntimeException ex) {
+            log.warn("Could not notify admins about incident {}: {}", incidentId, ex.getMessage());
+        }
+    }
+
+    private void notifyQuietly(Long userId, String title, String message, String type, Long referenceId,
+            String referenceType) {
         if (userId == null) {
             return;
         }
         try {
             notificationClient.requestNotification(
-                    new NotificationRequest(userId, title, message, type, incidentId, "DRONE_INCIDENT"));
+                    new NotificationRequest(userId, title, message, type, referenceId, referenceType));
         } catch (RuntimeException ignored) {
             // Incident state is authoritative; notification delivery is best effort.
         }
+    }
+
+    /// Thư, thông báo, lệnh sang service khác chỉ chạy khi giao dịch đã commit. Ngoài giao dịch (test) ⇒ chạy ngay.
+    private static void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    action.run();
+                } catch (RuntimeException ex) {
+                    log.warn("After-commit action of a drone incident failed: {}", ex.getMessage());
+                }
+            }
+        });
+    }
+
+    private void inNewTransaction(Runnable action) {
+        if (transactionManager == null) {
+            action.run();
+            return;
+        }
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.executeWithoutResult(status -> action.run());
     }
 
     private void assertCanView(DroneParcelIncident incident, Long actorUserId, String roles) {

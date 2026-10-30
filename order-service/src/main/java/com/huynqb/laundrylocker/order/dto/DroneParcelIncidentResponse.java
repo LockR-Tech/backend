@@ -69,5 +69,14 @@ public record DroneParcelIncidentResponse(
         Boolean refundShippingFeeAllowed,
         Integer recoverySlaHours,
         Boolean approvalRequired,
-        Boolean incidentPolicyEnabled) {
+        Boolean incidentPolicyEnabled,
+        /// Trạm bay kiện đã tìm thấy được điều phối về (recoveryLockerId) lúc admin xác minh — KTV mang kiện tới đây
+        /// rồi bàn giao; đơn giao lại bay từ trạm này. null khi chưa điều phối (chưa xác minh / không tìm thấy kiện).
+        String recoveryStationName,
+        String recoveryStationAddress,
+        Double recoveryStationLatitude,
+        Double recoveryStationLongitude,
+        Integer recoveryStationDistanceM,
+        Boolean recoveryStationDroneAvailable,
+        LocalDateTime recoveryStationDispatchedAt) {
 }
