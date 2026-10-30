@@ -479,6 +479,199 @@ class DroneParcelIncidentServiceTest {
                 eq("600đ (kèm hoàn phí giao)"), isNull());
     }
 
+    /// locker-service sập lúc báo rơi: sự cố vẫn được ghi, nhiệm vụ dừng, thu hồi chờ admin phân công tay.
+    @Test
+    void dropIsRecordedEvenWhenLockerTicketsCannotBeCreated() {
+        LockerOrder order = policyOrder();
+        order.setType("DRONE_DELIVERY");
+        order.setUserId(55L);
+        order.setDeliveryStage("EN_ROUTE");
+        DroneMission mission = new DroneMission();
+        mission.setId(31L);
+        mission.setOrderId(21L);
+        mission.setStatus("EN_ROUTE");
+        mission.setDroneUnitId(9L);
+        mission.setDroneCode("DRONE-09");
+        mission.setAssignedByUserId(99L);
+        when(incidentRepository.findByIdempotencyKey("drop-key")).thenReturn(Optional.empty());
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(incidentRepository.findByOrderId(21L)).thenReturn(Optional.empty());
+        when(telemetryRegistry.latest("DRONE-09")).thenReturn(Optional.empty());
+        when(incidentRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+            DroneParcelIncident saved = invocation.getArgument(0);
+            saved.setId(7L);
+            return saved;
+        });
+        when(lockerDroneClient.createIncidentTickets(any())).thenThrow(new RuntimeException("locker-service down"));
+
+        DroneParcelIncidentResponse response = service.report(21L, 99L, "DRONE_TECHNICIAN", "drop-key",
+                new com.huynqb.laundrylocker.order.dto.ReportDroppedParcelRequest(
+                        "Rơi kiện", 10.84, 106.81, 5.0, null, null, null));
+
+        assertEquals("INVESTIGATING", response.status());
+        assertEquals("AWAITING_ASSIGNMENT", response.recoveryStatus());
+        assertEquals("DROP_REPORTED", mission.getStatus());
+        assertEquals("DROP_REPORTED", order.getDeliveryStage());
+        verify(notificationClient).requestNotification(argThat(n -> n.userId().equals(55L)
+                && "DRONE_PARCEL_DROP_REPORTED".equals(n.type()) && "DRONE_ORDER".equals(n.referenceType())
+                && n.referenceId().equals(21L)));
+    }
+
+    /// Sự cố đã xong (hoặc khách đang xem phương án) ⇒ API không cho gửi phương án nữa, kể cả gọi thẳng.
+    @Test
+    void proposalIsRejectedOnceTheIncidentIsSettledOrAwaitingTheCustomer() {
+        for (String status : List.of("AWAITING_CUSTOMER_RESPONSE", "RESOLUTION_IN_PROGRESS", "RESOLVED")) {
+            DroneParcelIncident incident = incident("CLOSED");
+            incident.setStatus(status);
+            when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+
+            BusinessException error = assertThrows(BusinessException.class,
+                    () -> service.propose(7L, 1L, new DroneIncidentProposalRequest("COMPENSATION_ONLY", false,
+                            new BigDecimal("600.00"), false, null, null)), status);
+            assertEquals("INCIDENT_NOT_PROPOSABLE", error.getCode(), status);
+        }
+        verify(proposalRepository, never()).save(any());
+    }
+
+    /// Khách yêu cầu xem xét ⇒ admin gửi bản mới, bản bị khiếu nại chuyển SUPERSEDED.
+    @Test
+    void newProposalSupersedesTheDisputedOne() {
+        DroneParcelIncident incident = incident("VERIFIED");
+        incident.setStatus("DISPUTED");
+        DroneIncidentResolutionProposal disputed = new DroneIncidentResolutionProposal();
+        disputed.setIncidentId(7L);
+        disputed.setProposalVersion(1);
+        disputed.setStatus("DISPUTED");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+        when(proposalRepository.findFirstByIncidentIdOrderByProposalVersionDesc(7L)).thenReturn(Optional.of(disputed));
+        ArgumentCaptor<DroneIncidentResolutionProposal> saved =
+                ArgumentCaptor.forClass(DroneIncidentResolutionProposal.class);
+
+        service.propose(7L, 1L, new DroneIncidentProposalRequest("COMPENSATION_ONLY", false,
+                new BigDecimal("600.00"), false, null, null));
+
+        verify(proposalRepository, times(2)).save(saved.capture());
+        assertEquals("SUPERSEDED", disputed.getStatus());
+        assertEquals(2, saved.getAllValues().get(1).getProposalVersion());
+        assertEquals("AWAITING_CUSTOMER_RESPONSE", incident.getStatus());
+    }
+
+    /// Tiền bồi thường về tài khoản người gửi ⇒ chỉ người gửi quyết định phương án.
+    @Test
+    void receiverCannotAnswerTheProposalForTheSender() {
+        DroneParcelIncident incident = incident("VERIFIED");
+        incident.setStatus("AWAITING_CUSTOMER_RESPONSE");
+        LockerOrder order = policyOrder();
+        order.setUserId(55L);
+        order.setReceiverUserId(66L);
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.customerRespond(7L, 66L, new DroneIncidentCustomerResponseRequest("ACCEPT", null)));
+
+        assertEquals("INCIDENT_CUSTOMER_FORBIDDEN", error.getCode());
+        assertEquals("AWAITING_CUSTOMER_RESPONSE", incident.getStatus());
+        verify(proposalRepository, never()).save(any());
+    }
+
+    /// Mail 2: admin xác minh kiện đã tìm thấy ⇒ thư + thông báo cho người gửi và người nhận.
+    @Test
+    void verifyingAFoundParcelTellsTheCustomers() {
+        DroneDeliveryMailer mailer = mock(DroneDeliveryMailer.class);
+        when(mailer.parcelRecoveryVerified(any(), any(), anyBoolean(), any(), any(), any(), anyBoolean()))
+                .thenReturn(new DroneDeliveryMailer.Outcome(true, true));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "mailer", mailer);
+        DroneParcelIncident incident = incident("SUBMITTED");
+        incident.setStatus("AWAITING_ADMIN_REVIEW");
+        incident.setRecoveryOutcome("FOUND");
+        incident.setParcelCondition("INTACT");
+        LockerOrder order = policyOrder();
+        order.setUserId(55L);
+        order.setReceiverUserId(66L);
+        DroneMission mission = new DroneMission();
+        mission.setLaunchingAt(java.time.LocalDateTime.now());
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findById(31L)).thenReturn(Optional.of(mission));
+
+        service.verifyRecovery(7L, 1L);
+
+        assertEquals("VERIFIED", incident.getRecoveryStatus());
+        verify(mailer).parcelRecoveryVerified(eq(order), eq("DPI-21-1"), eq(true), eq("Còn nguyên vẹn"), isNull(),
+                any(), eq(true));
+        verify(notificationClient, times(2)).requestNotification(
+                argThat(n -> "DRONE_PARCEL_RECOVERY_VERIFIED".equals(n.type())));
+    }
+
+    /// Admin xác minh kiện đã tìm thấy ⇒ kiện được điều phối về trạm bay gần nhất còn drone; KTV nhận tên/địa chỉ
+    /// trạm để chỉ đường, nơi bàn giao (recoveryLockerId) đổi sang trạm đó để đơn giao lại bay từ đây.
+    @Test
+    void verifiedFoundParcelIsDispatchedToTheNearestDroneStation() {
+        DroneSourceLockerSelector selector = mock(DroneSourceLockerSelector.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "stationSelector", selector);
+        DroneParcelIncident incident = incident("SUBMITTED");
+        incident.setStatus("AWAITING_ADMIN_REVIEW");
+        incident.setRecoveryOutcome("FOUND");
+        incident.setRecoveryLockerId(3L);
+        incident.setRecoveredLatitude(10.70);
+        incident.setRecoveredLongitude(106.70);
+        LockerOrder order = policyOrder();
+        order.setDestinationLockerId(9L);
+        com.huynqb.laundrylocker.order.dto.admin.LockerInfo station = new com.huynqb.laundrylocker.order.dto.admin.LockerInfo(
+                5L, 1L, "HCM-05", "Trạm Thủ Đức", "ACTIVE", "1 Võ Văn Ngân", 10.71, 106.71, true, null, "OK", 4, 4);
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
+        when(selector.recoveryStation(10.70, 106.70, 9L)).thenReturn(Optional.of(
+                new DroneSourceLockerSelector.RecoveryStation(station, 1560, 3000, true)));
+
+        DroneParcelIncidentResponse response = service.verifyRecovery(7L, 1L);
+
+        assertEquals(5L, incident.getRecoveryLockerId());
+        assertEquals("Trạm Thủ Đức", response.recoveryStationName());
+        assertEquals("1 Võ Văn Ngân", response.recoveryStationAddress());
+        assertEquals(10.71, response.recoveryStationLatitude());
+        assertEquals(1560, response.recoveryStationDistanceM());
+        assertEquals(Boolean.TRUE, response.recoveryStationDroneAvailable());
+        verify(notificationClient).requestNotification(argThat(n -> n.userId().equals(44L)
+                && "DRONE_PARCEL_RECOVERY_STATION".equals(n.type()) && n.message().contains("1 Võ Văn Ngân")));
+    }
+
+    /// Kiện không tìm thấy ⇒ không có gì để mang tới trạm.
+    @Test
+    void notFoundParcelIsNotDispatchedToAStation() {
+        DroneSourceLockerSelector selector = mock(DroneSourceLockerSelector.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "stationSelector", selector);
+        DroneParcelIncident incident = incident("SUBMITTED");
+        incident.setRecoveryOutcome("NOT_FOUND");
+        incident.setParcelStatus("LOST");
+        when(incidentRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        service.verifyRecovery(7L, 1L);
+
+        assertNull(incident.getRecoveryStationName());
+        verifyNoInteractions(selector);
+    }
+
+    /// Webhook "drone không về được" tới muộn không được kéo sự cố đang chờ khách về "cần can thiệp".
+    @Test
+    void lateReturnFlightFailureKeepsTheIncidentWhereItIs() {
+        DroneParcelIncident incident = incident("CLOSED");
+        incident.setStatus("AWAITING_CUSTOMER_RESPONSE");
+        incident.setReturnFlightStatus("RETURNING");
+        when(incidentRepository.findByIncidentCode("DPI-21-1")).thenReturn(Optional.of(incident));
+        when(orderRepository.findById(21L)).thenReturn(Optional.of(policyOrder()));
+
+        service.updateReturnFlight("DPI-21-1", new ReturnFlightUpdateRequest("FAILED", "mất kết nối"));
+
+        assertEquals("FAILED", incident.getReturnFlightStatus());
+        assertEquals("AWAITING_CUSTOMER_RESPONSE", incident.getStatus());
+    }
+
     @Test
     void returnFlightNeedsPhysicalAcknowledgementsInOrder() {
         DroneParcelIncident incident = incident("ASSIGNED");

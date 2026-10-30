@@ -12,6 +12,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -31,6 +34,9 @@ import java.util.Objects;
 @Service
 @RequiredArgsConstructor
 public class DroneDeliveryMailer {
+
+    private static final ZoneId DISPLAY_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final DateTimeFormatter INCIDENT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm dd/MM/yyyy");
 
     private final NotificationClient notificationClient;
     private final LockerLookupClient lockerLookupClient;
@@ -186,34 +192,104 @@ public class DroneDeliveryMailer {
      * Kiện rơi khỏi drone khi đang bay. Người gửi và người nhận đã nhận thư "đang trên đường" nên phải được báo
      * ngay: kiện chưa tới, đang được thu hồi, phương án xử lý sẽ gửi qua ứng dụng.
      *
+     * @param reportedAt   lúc báo rơi
+     * @param location     toạ độ báo rơi ("10.84110, 106.80970"), null nếu không có
+     * @param flightStage  chặng bay lúc rơi ("drone đang bay"…). Không trích ghi chú nội bộ của đội bay.
      * @param tellReceiver drone đã phóng (người nhận đã được báo có đơn)
      */
-    public Outcome parcelDropReported(LockerOrder order, String incidentCode, boolean tellReceiver) {
+    public Outcome parcelDropReported(LockerOrder order, String incidentCode, Instant reportedAt, String location,
+            String flightStage, boolean tellReceiver) {
+        List<DroneDeliveryEmailTemplate.Detail> incident = new ArrayList<>();
+        incident.add(new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode));
+        incident.add(new DroneDeliveryEmailTemplate.Detail("Thời gian", displayTime(reportedAt)));
+        if (StringUtils.hasText(location)) {
+            incident.add(new DroneDeliveryEmailTemplate.Detail("Vị trí báo rơi", location));
+        }
+        incident.add(new DroneDeliveryEmailTemplate.Detail("Mô tả", "Kiện rơi khỏi drone trong lúc bay"
+                + (StringUtils.hasText(flightStage) ? " (" + flightStage.trim() + ")" : "") + "."));
+        incident.add(new DroneDeliveryEmailTemplate.Detail("Trạng thái", "Đang tìm và thu hồi kiện"));
+
+        List<DroneDeliveryEmailTemplate.Detail> senderDetails = new ArrayList<>(incident);
+        senderDetails.add(new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
+                "Kỹ thuật viên Lock.R đang tới khu vực rơi để tìm và thu hồi kiện."));
+        senderDetails.add(new DroneDeliveryEmailTemplate.Detail("Tiếp theo",
+                "Sau khi kiểm tra kiện, Lock.R gửi phương án xử lý (giao lại, bồi thường) trong ứng "
+                        + "dụng để bạn đồng ý hoặc yêu cầu xem xét lại."));
         boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " gặp sự cố khi đang bay",
                 "Kiện hàng gặp sự cố trên đường bay",
                 "Rất tiếc, kiện hàng của đơn " + order.getOrderCode() + " đã rơi khỏi drone khi đang bay tới tủ nhận.",
-                List.of(
-                        new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode),
-                        new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
-                                "Kỹ thuật viên Lock.R đang tới khu vực rơi để tìm và thu hồi kiện."),
-                        new DroneDeliveryEmailTemplate.Detail("Tiếp theo",
-                                "Sau khi kiểm tra kiện, Lock.R gửi phương án xử lý (giao lại, bồi thường) trong ứng "
-                                        + "dụng để bạn đồng ý hoặc yêu cầu xem xét lại.")),
-                "Bạn theo dõi sự cố trong ứng dụng Lock.R, mục chi tiết đơn hàng.");
+                senderDetails,
+                "Bạn theo dõi sự cố trong ứng dụng Lock.R: mở đơn " + order.getOrderCode() + " ⇒ Theo dõi drone.");
+
+        List<DroneDeliveryEmailTemplate.Detail> receiverDetails = new ArrayList<>(incident);
+        receiverDetails.add(new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
+                "Lock.R đang thu hồi kiện và sẽ thống nhất cách xử lý với người gửi."));
+        receiverDetails.add(new DroneDeliveryEmailTemplate.Detail("Liên hệ người gửi",
+                nameOr(order.getSenderPhone(), "—")));
         boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
                 nameOr(order.getReceiverName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " gửi cho bạn bị chậm do sự cố",
                 "Đơn hàng gửi cho bạn bị chậm",
                 "Đơn hàng " + order.getOrderCode() + " do " + nameOr(order.getSenderName(), "người gửi")
                         + " gửi cho bạn gặp sự cố khi đang bay và chưa thể vào tủ nhận.",
-                List.of(
-                        new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode),
-                        new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
-                                "Lock.R đang thu hồi kiện và sẽ thống nhất cách xử lý với người gửi."),
-                        new DroneDeliveryEmailTemplate.Detail("Liên hệ người gửi", nameOr(order.getSenderPhone(), "—"))),
+                receiverDetails,
                 "Mã mở ô cũ (nếu có) không còn dùng được. Lock.R sẽ báo lại khi kiện được giao.");
         return new Outcome(sender, receiver);
+    }
+
+    /**
+     * Admin đã xác minh kết quả thu hồi kiện rơi. Gửi sau mail báo rơi (sự cố chỉ tới bước này sau khi đã báo rơi),
+     * trước mail phương án xử lý.
+     *
+     * @param found         KTV tìm thấy kiện (FOUND); false ⇒ chưa tìm thấy (NOT_FOUND / không tiếp cận được)
+     * @param parcelState   tình trạng kiện ("còn nguyên vẹn", "hư hại nhẹ"…), null khi chưa tìm thấy
+     * @param stationName   trạm bay kiện được điều phối về để giao lại, null khi chưa điều phối
+     * @param tellReceiver  người nhận đã được báo có đơn (drone đã phóng)
+     */
+    public Outcome parcelRecoveryVerified(LockerOrder order, String incidentCode, boolean found, String parcelState,
+            String stationName, Instant verifiedAt, boolean tellReceiver) {
+        List<DroneDeliveryEmailTemplate.Detail> details = new ArrayList<>();
+        details.add(new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode));
+        details.add(new DroneDeliveryEmailTemplate.Detail("Thời gian xác nhận", displayTime(verifiedAt)));
+        details.add(new DroneDeliveryEmailTemplate.Detail("Kết quả", found ? "Đã tìm thấy kiện" : "Chưa tìm thấy kiện"));
+        if (found && StringUtils.hasText(parcelState)) {
+            details.add(new DroneDeliveryEmailTemplate.Detail("Tình trạng kiện", parcelState));
+        }
+        details.add(new DroneDeliveryEmailTemplate.Detail("Tiếp theo", found
+                ? "Kiện được đưa về " + (StringUtils.hasText(stationName) ? "trạm " + stationName.trim() : "trạm Lock.R")
+                        + ". Lock.R sẽ gửi phương án xử lý (giao lại, bồi thường) trong ứng dụng."
+                : "Lock.R sẽ gửi phương án bồi thường trong ứng dụng để bạn đồng ý hoặc yêu cầu xem xét lại."));
+        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+                found
+                        ? "Đã tìm thấy kiện hàng của đơn " + order.getOrderCode()
+                        : "Chưa tìm thấy kiện hàng của đơn " + order.getOrderCode(),
+                found ? "Đã tìm thấy kiện hàng" : "Chưa tìm thấy kiện hàng",
+                found
+                        ? "Kỹ thuật viên Lock.R đã tìm thấy kiện hàng của đơn " + order.getOrderCode()
+                                + " bị rơi trong lúc bay."
+                        : "Kỹ thuật viên Lock.R chưa tìm thấy kiện hàng của đơn " + order.getOrderCode()
+                                + " bị rơi trong lúc bay.",
+                details,
+                "Bạn theo dõi sự cố trong ứng dụng Lock.R: mở đơn " + order.getOrderCode() + " ⇒ Theo dõi drone.");
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+                nameOr(order.getReceiverName(), "bạn"), order,
+                found
+                        ? "Đã tìm thấy kiện hàng gửi cho bạn (" + order.getOrderCode() + ")"
+                        : "Chưa tìm thấy kiện hàng gửi cho bạn (" + order.getOrderCode() + ")",
+                found ? "Đã tìm thấy kiện hàng" : "Chưa tìm thấy kiện hàng",
+                "Cập nhật sự cố của đơn " + order.getOrderCode() + " do "
+                        + nameOr(order.getSenderName(), "người gửi") + " gửi cho bạn.",
+                List.of(
+                        new DroneDeliveryEmailTemplate.Detail("Mã sự cố", incidentCode),
+                        new DroneDeliveryEmailTemplate.Detail("Kết quả", found ? "Đã tìm thấy kiện" : "Chưa tìm thấy kiện")),
+                "Người gửi sẽ thống nhất cách xử lý với Lock.R; Lock.R báo lại bạn khi có kết quả.");
+        return new Outcome(sender, receiver);
+    }
+
+    /// "14:05 30/10/2026" giờ Việt Nam.
+    static String displayTime(Instant at) {
+        return INCIDENT_TIME_FORMAT.format((at == null ? Instant.now() : at).atZone(DISPLAY_ZONE));
     }
 
     /// Đơn bị tạm dừng khi drone đã phóng (trời xấu trên tuyến, drone báo lỗi giữa chuyến, nắp tủ nhận lỗi).

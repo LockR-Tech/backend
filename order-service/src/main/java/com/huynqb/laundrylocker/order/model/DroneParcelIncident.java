@@ -71,6 +71,21 @@ public class DroneParcelIncident {
     private Long recoveryAssignedToUserId;
     @Column(name = "recovery_locker_id")
     private Long recoveryLockerId;
+    // Snapshot of the drone station the found parcel was dispatched to (recoveryLockerId) at verification time.
+    @Column(name = "recovery_station_dispatched_at")
+    private LocalDateTime recoveryStationDispatchedAt;
+    @Column(name = "recovery_station_name")
+    private String recoveryStationName;
+    @Column(name = "recovery_station_address", length = 500)
+    private String recoveryStationAddress;
+    @Column(name = "recovery_station_latitude")
+    private Double recoveryStationLatitude;
+    @Column(name = "recovery_station_longitude")
+    private Double recoveryStationLongitude;
+    @Column(name = "recovery_station_distance_m")
+    private Integer recoveryStationDistanceM;
+    @Column(name = "recovery_station_drone_available")
+    private Boolean recoveryStationDroneAvailable;
     @Column(name = "recovery_started_at")
     private LocalDateTime recoveryStartedAt;
     @Column(name = "recovery_submitted_at")

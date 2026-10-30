@@ -130,6 +130,42 @@ class DroneSourceLockerSelectorTest {
         verifyNoInteractions(drones);
     }
 
+    /// Kiện rơi đã tìm thấy: trạm gần nơi tìm thấy nhất CÒN DRONE thắng trạm gần hơn đang hết drone; bãi đáp lỗi,
+    /// trạm dừng bay, tủ nhận bị loại. Không trạm nào còn drone ⇒ trạm gần nhất có bãi đáp sẵn sàng (chờ drone).
+    @Test
+    void foundParcelGoesToTheNearestStationThatStillHasADrone() {
+        DroneFlightControl flightControl = mock(DroneFlightControl.class);
+        DroneSourceLockerSelector withStops = new DroneSourceLockerSelector(lookup, drones, rules, flightControl);
+        when(rules.droneMaxRouteMeters()).thenReturn(20000);
+        when(rules.droneMinPreflightBatteryPercent()).thenReturn(20);
+        when(flightControl.activeSuspensions()).thenReturn(java.util.Map.of(
+                4L, new com.huynqb.laundrylocker.order.model.DroneStationSuspension()));
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(
+                station(1L, 10.7001, 106.7001),   // gần nhất, hết drone
+                station(2L, 10.7100, 106.7100),   // xa hơn, còn drone
+                station(3L, 10.7002, 106.7002),   // bãi đáp lỗi
+                station(4L, 10.7003, 106.7003),   // đang dừng bay
+                station(9L, 10.7000, 106.7000)))); // tủ nhận
+        when(drones.getLockerLayout(1L)).thenReturn(ApiResponse.ok(new LockerLayoutDto(1L, "S", "S", "ACTIVE", true, "OK")));
+        when(drones.getLockerLayout(2L)).thenReturn(ApiResponse.ok(new LockerLayoutDto(2L, "S", "S", "ACTIVE", true, "OK")));
+        when(drones.getLockerLayout(3L)).thenReturn(ApiResponse.ok(new LockerLayoutDto(3L, "S", "S", "ACTIVE", true, "FAULT")));
+        when(drones.listDroneUnits(1L)).thenReturn(ApiResponse.ok(List.of(drone("IN_FLIGHT", 90, true))));
+        when(drones.listDroneUnits(2L)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
+
+        var withDrone = withStops.recoveryStation(10.7000, 106.7000, 9L).orElseThrow();
+        assertEquals(2L, withDrone.locker().id());
+        assertTrue(withDrone.droneAvailable());
+        assertTrue(withDrone.distanceMeters() > 0);
+
+        when(drones.listDroneUnits(2L)).thenReturn(ApiResponse.ok(List.of(drone("FAULT", 90, true))));
+        var waiting = withStops.recoveryStation(10.7000, 106.7000, 9L).orElseThrow();
+        assertEquals(1L, waiting.locker().id());
+        assertFalse(waiting.droneAvailable());
+
+        when(lookup.getLockers(null)).thenThrow(new RuntimeException("locker-service down"));
+        assertTrue(withStops.recoveryStation(10.7000, 106.7000, 9L).isEmpty());
+    }
+
     private static LockerInfo station(Long id, double lat, double lng) {
         return new LockerInfo(
                 id, 1L, "S" + id, "Trạm " + id, "ACTIVE", null, lat, lng, true, null, 4, 4);

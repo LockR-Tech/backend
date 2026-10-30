@@ -62,7 +62,8 @@ class DroneDeliveryMailerTest {
         when(notificationClient.notifyGuest(any()))
                 .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
 
-        DroneDeliveryMailer.Outcome outcome = mailer.parcelDropReported(order, "DPI-21-1", true);
+        DroneDeliveryMailer.Outcome outcome = mailer.parcelDropReported(order, "DPI-21-1",
+                java.time.Instant.parse("2026-10-30T07:05:00Z"), "10.84110, 106.80970", "drone đang trên đường", true);
 
         assertTrue(outcome.senderReached());
         assertTrue(outcome.receiverReached());
@@ -75,6 +76,40 @@ class DroneDeliveryMailerTest {
         assertTrue(mails.get(0).emailHtml().contains("CẬP NHẬT SỰ CỐ"));
         assertEquals("nhan@gmail.com", mails.get(1).email());
         assertTrue(mails.get(1).emailBody().contains("Liên hệ người gửi: 0901000111"), mails.get(1).emailBody());
+        for (GuestNotification.Request mail : mails) {
+            assertTrue(mail.emailBody().contains("Thời gian: 14:05 30/10/2026"), mail.emailBody());
+            assertTrue(mail.emailBody().contains("Vị trí báo rơi: 10.84110, 106.80970"), mail.emailBody());
+            assertTrue(mail.emailBody().contains("Mô tả: Kiện rơi khỏi drone trong lúc bay (drone đang trên đường)."),
+                    mail.emailBody());
+        }
+    }
+
+    /// Mail 2: admin xác minh kết quả thu hồi ⇒ người gửi biết tìm thấy kiện chưa, kiện ra sao.
+    @Test
+    void verifiedRecoveryTellsBothSidesWhetherTheParcelWasFound() {
+        LockerOrder order = order();
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
+
+        DroneDeliveryMailer.Outcome found = mailer.parcelRecoveryVerified(order, "DPI-21-1", true, "Hư hại nhẹ", "Trạm FPT",
+                java.time.Instant.parse("2026-10-30T08:00:00Z"), true);
+
+        assertTrue(found.senderReached());
+        assertTrue(found.receiverReached());
+        ArgumentCaptor<GuestNotification.Request> sent = ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient, times(2)).notifyGuest(sent.capture());
+        GuestNotification.Request toSender = sent.getAllValues().get(0);
+        assertEquals("gui@gmail.com", toSender.email());
+        assertTrue(toSender.subject().startsWith("Đã tìm thấy kiện hàng"), toSender.subject());
+        assertTrue(toSender.emailBody().contains("Tình trạng kiện: Hư hại nhẹ"), toSender.emailBody());
+        assertTrue(toSender.emailBody().contains("Thời gian xác nhận: 15:00 30/10/2026"), toSender.emailBody());
+        assertTrue(toSender.emailBody().contains("Kiện được đưa về trạm Trạm FPT"), toSender.emailBody());
+
+        mailer.parcelRecoveryVerified(order, "DPI-21-1", false, null, null, null, false);
+        verify(notificationClient, times(3)).notifyGuest(sent.capture());
+        GuestNotification.Request lost = sent.getAllValues().get(sent.getAllValues().size() - 1);
+        assertTrue(lost.subject().startsWith("Chưa tìm thấy kiện hàng"), lost.subject());
+        assertTrue(lost.emailBody().contains("phương án bồi thường"), lost.emailBody());
     }
 
     @Test
@@ -83,7 +118,7 @@ class DroneDeliveryMailerTest {
         when(notificationClient.notifyGuest(any()))
                 .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
 
-        DroneDeliveryMailer.Outcome outcome = mailer.parcelDropReported(order, "DPI-21-1", false);
+        DroneDeliveryMailer.Outcome outcome = mailer.parcelDropReported(order, "DPI-21-1", null, null, null, false);
 
         assertTrue(outcome.senderReached());
         assertEquals(false, outcome.receiverReached());
