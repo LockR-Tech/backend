@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 @lombok.extern.slf4j.Slf4j
@@ -54,6 +55,8 @@ public class DroneParcelIncidentService {
             "LAUNCHING", "DEPARTED", "EN_ROUTE", "APPROACHING", "ARRIVED");
     private static final Set<String> RECOVERY_ACTIONS = Set.of("ACCEPT", "START_SEARCHING");
     private static final Set<String> RECOVERY_OUTCOMES = Set.of("FOUND", "NOT_FOUND", "UNSAFE");
+    /// Kiện hư nặng / hỏng hẳn không bay giao lại được: không điều phối về trạm bay, không đề xuất giao lại.
+    private static final Set<String> NOT_REDELIVERABLE_CONDITIONS = Set.of("MAJOR_DAMAGE", "UNUSABLE");
     private static final Set<String> RESOLUTION_TYPES = Set.of(
             "FREE_REDELIVERY", "REDELIVERY_PARTIAL_COMPENSATION", "COMPENSATION_ONLY", "MANUAL_RESOLUTION");
 
@@ -315,7 +318,7 @@ public class DroneParcelIncidentService {
         } else {
             incidents = incidentRepository.findVisibleToCustomer(actorUserId);
         }
-        return incidents.stream().map(this::toResponse).toList();
+        return toResponses(incidents);
     }
 
     /// Danh sách sự cố cho app KTV drone: sự cố mình báo, mình được giao thu hồi, hoặc xảy ra trên
@@ -323,9 +326,7 @@ public class DroneParcelIncidentService {
     @Transactional(readOnly = true)
     public List<DroneParcelIncidentResponse> listForDroneTechnician(Long actorUserId, String roles) {
         requireDroneTechnician(roles);
-        return incidentRepository.findVisibleToDroneTechnician(actorUserId).stream()
-                .map(this::toResponse)
-                .toList();
+        return toResponses(incidentRepository.findVisibleToDroneTechnician(actorUserId));
     }
 
     @Transactional(readOnly = true)
@@ -431,7 +432,8 @@ public class DroneParcelIncidentService {
         incident.setStatus("AWAITING_ADMIN_REVIEW");
         incidentRepository.save(incident);
         timeline(incident, "RECOVERY_VERIFIED", "SUBMITTED", "VERIFIED", adminUserId, null, null);
-        if ("FOUND".equals(incident.getRecoveryOutcome())) {
+        if ("FOUND".equals(incident.getRecoveryOutcome())
+                && !notRedeliverable(incident)) {
             dispatchToRecoveryStation(incident, adminUserId);
         }
         announceRecoveryVerified(incident);
@@ -440,7 +442,8 @@ public class DroneParcelIncidentService {
 
     /// Kiện đã tìm thấy và admin đã xác minh ⇒ điều phối về trạm bay gần nơi tìm thấy nhất còn drone, để đơn giao
     /// lại (khi khách đồng ý) bay thẳng từ trạm đó. KTV thu hồi thấy tên, địa chỉ, toạ độ trạm để chỉ đường.
-    /// Hết drone ⇒ trạm gần nhất có bãi đáp sẵn sàng và báo admin; không có trạm ⇒ giữ tủ phụ trách cũ, báo admin.
+    /// Hết drone ⇒ trạm gần nhất có bãi đáp sẵn sàng và báo admin; không có trạm ⇒ giữ nơi bàn giao cũ, báo admin
+    /// (đơn giao lại khi đó bay từ tủ gửi cũ, ghi chú mang kiện từ kho tới trạm).
     private void dispatchToRecoveryStation(DroneParcelIncident incident, Long adminUserId) {
         if (stationSelector == null) {
             return;
@@ -460,9 +463,9 @@ public class DroneParcelIncidentService {
         if (station.isEmpty()) {
             timeline(incident, "RECOVERY_STATION_UNAVAILABLE", null, null, adminUserId,
                     "Không có trạm bay nào nhận được kiện (bãi đáp sẵn sàng, trong tầm bay tới tủ nhận) — "
-                            + "giữ nơi bàn giao cũ, admin điều phối tay", null);
+                            + "giữ nơi bàn giao cũ", null);
             afterCommit(() -> notifyAdminsQuietly("Chưa điều phối được trạm cho kiện tìm thấy",
-                    "Sự cố " + code + ": không có trạm bay nào nhận được kiện, cần điều phối tay.",
+                    "Sự cố " + code + ": không có trạm bay nào nhận được kiện, kiện giữ ở nơi bàn giao cũ.",
                     "DRONE_INCIDENT_STATION_UNAVAILABLE", incidentId));
             return;
         }
@@ -497,7 +500,7 @@ public class DroneParcelIncidentService {
             if (!droneAvailable) {
                 notifyAdminsQuietly("Trạm nhận kiện đang hết drone",
                         "Sự cố " + code + ": kiện được điều phối về trạm " + stationName
-                                + " nhưng trạm chưa có drone sẵn sàng để giao lại.",
+                                + " nhưng trạm chưa có drone sẵn sàng — cần đưa drone về trạm để giao lại.",
                         "DRONE_INCIDENT_STATION_NO_DRONE", incidentId);
             }
         });
@@ -727,6 +730,10 @@ public class DroneParcelIncidentService {
             throw new BusinessException("PARCEL_NOT_AT_HUB",
                     "Redelivery can only be proposed after the parcel is confirmed at Hub");
         }
+        if (redelivery && notRedeliverable(incident)) {
+            throw new BusinessException("PARCEL_NOT_REDELIVERABLE",
+                    "Kiện hư nặng không giao lại được — chọn bồi thường hoặc thoả thuận riêng", HttpStatus.CONFLICT);
+        }
         if ("FREE_REDELIVERY".equals(type) && (!redelivery || amount.signum() != 0)
                 || "REDELIVERY_PARTIAL_COMPENSATION".equals(type) && (!redelivery || amount.signum() <= 0)
                 || "COMPENSATION_ONLY".equals(type) && (redelivery || amount.signum() <= 0)) {
@@ -903,9 +910,34 @@ public class DroneParcelIncidentService {
         return toResponse(incident);
     }
 
+    /// Danh sách: nạp đơn một lần và nhớ KTV / phiếu kiểm tra đã hỏi, để mỗi sự cố không gọi lại
+    /// user-service và locker-service (nhiều sự cố cùng một KTV thu hồi).
+    private List<DroneParcelIncidentResponse> toResponses(List<DroneParcelIncident> incidents) {
+        Map<Long, LockerOrder> orders = new HashMap<>();
+        orderRepository.findAllById(incidents.stream().map(DroneParcelIncident::getOrderId)
+                        .filter(Objects::nonNull).distinct().toList())
+                .forEach(order -> orders.put(order.getId(), order));
+        Lookups lookups = new Lookups(orders, new HashMap<>(), new HashMap<>());
+        return incidents.stream().map(incident -> toResponse(incident, lookups)).toList();
+    }
+
+    private record Lookups(Map<Long, LockerOrder> orders,
+                           Map<Long, Optional<com.huynqb.laundrylocker.common.dto.UserSummary>> users,
+                           Map<Long, String> inspections) {
+    }
+
     private DroneParcelIncidentResponse toResponse(DroneParcelIncident incident) {
-        LockerOrder order = orderRepository.findById(incident.getOrderId()).orElse(null);
-        String inspectionStatus = synchronizedInspectionStatus(incident);
+        return toResponse(incident, null);
+    }
+
+    private DroneParcelIncidentResponse toResponse(DroneParcelIncident incident, Lookups lookups) {
+        LockerOrder order = lookups != null && lookups.orders().containsKey(incident.getOrderId())
+                ? lookups.orders().get(incident.getOrderId())
+                : orderRepository.findById(incident.getOrderId()).orElse(null);
+        String inspectionStatus = lookups == null || incident.getInspectionReportId() == null
+                ? synchronizedInspectionStatus(incident)
+                : lookups.inspections().computeIfAbsent(incident.getInspectionReportId(),
+                        ignored -> synchronizedInspectionStatus(incident));
         List<DroneIncidentEvidenceResponse> evidence = evidenceRepository
                 .findByIncidentIdOrderByCreatedAtAsc(incident.getId()).stream()
                 .map(value -> new DroneIncidentEvidenceResponse(
@@ -933,7 +965,16 @@ public class DroneParcelIncidentService {
         String recoveryTechRole = null;
         if (incident.getRecoveryAssignedToUserId() != null) {
             try {
-                com.huynqb.laundrylocker.common.dto.UserSummary tech = userClient.getUser(incident.getRecoveryAssignedToUserId()).data();
+                Long techId = incident.getRecoveryAssignedToUserId();
+                com.huynqb.laundrylocker.common.dto.UserSummary tech = lookups == null
+                        ? userClient.getUser(techId).data()
+                        : lookups.users().computeIfAbsent(techId, id -> {
+                            try {
+                                return Optional.ofNullable(userClient.getUser(id).data());
+                            } catch (RuntimeException ex) {
+                                return Optional.empty();
+                            }
+                        }).orElse(null);
                 if (tech != null) {
                     recoveryTechName = tech.fullName();
                     recoveryTechPhone = tech.phoneNumber();
@@ -1011,6 +1052,11 @@ public class DroneParcelIncidentService {
                 incident.getRecoveryStationDistanceM(),
                 incident.getRecoveryStationDroneAvailable(),
                 incident.getRecoveryStationDispatchedAt());
+    }
+
+    private static boolean notRedeliverable(DroneParcelIncident incident) {
+        return incident.getParcelCondition() != null
+                && NOT_REDELIVERABLE_CONDITIONS.contains(incident.getParcelCondition());
     }
 
     private void requestCompensation(DroneParcelIncident incident, LockerOrder order,
@@ -1320,7 +1366,7 @@ public class DroneParcelIncidentService {
                         + (parcel == null ? "" : " (" + parcel + ")")
                         + (stationName == null ? "" : " và được đưa về trạm " + stationName)
                         + ". Lock.R sẽ gửi phương án xử lý."
-                : "Kiện của đơn " + order.getOrderCode() + " chưa tìm thấy. Lock.R sẽ gửi phương án bồi thường.";
+                : "Kiện của đơn " + order.getOrderCode() + " chưa tìm thấy. Lock.R sẽ gửi phương án xử lý.";
         afterCommit(() -> {
             notifyCustomerQuietly(order.getUserId(), title, message, "DRONE_PARCEL_RECOVERY_VERIFIED", order.getId());
             if (order.getReceiverUserId() != null && !order.getReceiverUserId().equals(order.getUserId())) {
