@@ -18,4 +18,31 @@ public interface UserProfileRepository extends JpaRepository<UserProfile, Long> 
     /// Mốc tạo của người dùng từ `since` trở đi — biểu đồ tăng trưởng gom theo tháng ở tầng service.
     @Query("select u.createdAt from UserProfile u where u.createdAt >= :since")
     List<LocalDateTime> findCreatedAtSince(@Param("since") LocalDateTime since);
+
+    /// Truy vấn gốc vì entity đã lọc `deleted_at IS NULL` (@SQLRestriction).
+    @Query(value = """
+            SELECT id AS "id", email AS "email", phone_number AS "phoneNumber",
+                   first_name AS "firstName", last_name AS "lastName",
+                   deleted_at AS "deletedAt", deleted_reason AS "deletedReason"
+            FROM {h-schema}user_profiles
+            WHERE deleted_at IS NOT NULL
+            ORDER BY deleted_at DESC
+            """, nativeQuery = true)
+    List<DeletedProfile> findDeleted();
+
+    interface DeletedProfile {
+        Long getId();
+
+        String getEmail();
+
+        String getPhoneNumber();
+
+        String getFirstName();
+
+        String getLastName();
+
+        LocalDateTime getDeletedAt();
+
+        String getDeletedReason();
+    }
 }
