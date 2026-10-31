@@ -152,6 +152,8 @@ public record AdminOrderResponse(
 
     public record TimelineEvent(
             String oldStatus, String newStatus, Long changedByUserId, String changedByName, String note,
-            LocalDateTime createdAt) {
+            LocalDateTime createdAt,
+            /// Vị trí kiện lúc ghi mốc (chỉ đơn drone) — cùng số khách và KTV thấy.
+            Double latitude, Double longitude, String locationSource) {
     }
 }

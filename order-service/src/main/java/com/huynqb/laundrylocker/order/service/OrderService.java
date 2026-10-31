@@ -1646,7 +1646,8 @@ public class OrderService {
     @Transactional(readOnly = true)
     public List<OrderTimelineEvent> timeline(Long orderId) {
         return historyRepository.findByOrderIdOrderByCreatedAtAsc(orderId).stream()
-                .map(h -> new OrderTimelineEvent(h.getOldStatus(), h.getNewStatus(), h.getChangedByUserId(), h.getNote(), h.getCreatedAt()))
+                .map(h -> new OrderTimelineEvent(h.getOldStatus(), h.getNewStatus(), h.getChangedByUserId(), h.getNote(),
+                        h.getCreatedAt(), h.getLatitude(), h.getLongitude(), h.getLocationSource()))
                 .toList();
     }
 

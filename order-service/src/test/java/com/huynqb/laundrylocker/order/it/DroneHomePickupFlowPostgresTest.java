@@ -371,6 +371,16 @@ class DroneHomePickupFlowPostgresTest extends DroneFlowPostgresTestBase {
         assertTrue(codeMail.contains(delivered.getPinCode()));
         assertTrue(codeMail.contains("Lấy tại: Locker " + LOCKER_B), codeMail);
         assertTrue(codeMail.contains("Ô số 1"), codeMail);
+
+        // Mỗi mốc hành trình ghi kèm kiện đang ở đâu lúc đó (drone STANDARD không telemetry ⇒ chặng bay để trống).
+        Map<String, String> located = firstLocationSourceByStage(orderId);
+        assertEquals("PICKUP_ADDRESS", located.get("AWAITING_DISPATCH"), located.toString());
+        assertEquals("PICKUP_ADDRESS", located.get("PICKUP_ASSIGNED"), located.toString());
+        assertEquals("TECHNICIAN", located.get("PICKED_UP"), located.toString());
+        assertEquals("SOURCE_LOCKER", located.get("ACCEPTED"), located.toString());
+        assertEquals("SOURCE_LOCKER", located.get("LAUNCHING"), located.toString());
+        assertEquals("DESTINATION_LOCKER", located.get("READY_FOR_PICKUP"), located.toString());
+        assertEquals("null", located.get("EN_ROUTE"), located.toString());
     }
 
     @Test

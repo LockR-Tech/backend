@@ -106,7 +106,7 @@ public class DronePositionBroadcaster {
         };
     }
 
-    private double[] coordinates(Long lockerId) {
+    double[] coordinates(Long lockerId) {
         if (lockerId == null) {
             return null;
         }

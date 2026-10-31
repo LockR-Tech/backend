@@ -332,18 +332,28 @@ public class DroneDeliveryQueryService {
         return newestFirst.stream()
                 .map(h -> new DroneJourneyEventResponse(
                         h.getId(), h.getOldStatus(), h.getNewStatus(), h.getChangedByUserId(),
-                        name(users.get(h.getChangedByUserId())), h.getNote(), h.getCreatedAt()))
+                        name(users.get(h.getChangedByUserId())), h.getNote(), h.getCreatedAt(),
+                        h.getLatitude(), h.getLongitude(), h.getLocationSource()))
                 .toList();
     }
 
     /// Hành trình cho người nhận/người lấy hộ: chỉ các lần thật sự đổi chặng (bỏ dòng ghi chú cũ = mới),
-    /// không có người thao tác và ghi chú nội bộ của đội bay. Thứ tự giữ như `newestFirst`.
+    /// không có người thao tác và ghi chú nội bộ của đội bay. Toạ độ chỉ giữ khi kiện ở trạm, trên drone
+    /// hoặc ở tủ — không lộ điểm lấy hàng của người gửi hay vị trí KTV. Thứ tự giữ như `newestFirst`.
     static List<DroneJourneyEventResponse> stageChanges(List<OrderStatusHistory> newestFirst) {
         return newestFirst.stream()
                 .filter(h -> h.getNewStatus() != null && !Objects.equals(h.getOldStatus(), h.getNewStatus()))
                 .map(h -> new DroneJourneyEventResponse(
-                        h.getId(), h.getOldStatus(), h.getNewStatus(), null, null, null, h.getCreatedAt()))
+                        h.getId(), h.getOldStatus(), h.getNewStatus(), null, null, null, h.getCreatedAt(),
+                        sharedLocation(h) ? h.getLatitude() : null, sharedLocation(h) ? h.getLongitude() : null,
+                        sharedLocation(h) ? h.getLocationSource() : null))
                 .toList();
+    }
+
+    private static boolean sharedLocation(OrderStatusHistory h) {
+        return h.getLocationSource() != null
+                && !OrderHistoryLocator.PICKUP_ADDRESS.equals(h.getLocationSource())
+                && !OrderHistoryLocator.TECHNICIAN.equals(h.getLocationSource());
     }
 
     private DronePickupView pickupView(
