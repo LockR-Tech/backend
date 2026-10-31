@@ -353,7 +353,8 @@ public class AdminOrderQueryService {
                 .map(h -> {
                     UserSummary actor = users.get(h.getChangedByUserId());
                     return new TimelineEvent(h.getOldStatus(), h.getNewStatus(), h.getChangedByUserId(),
-                            actor == null ? null : actor.fullName(), h.getNote(), h.getCreatedAt());
+                            actor == null ? null : actor.fullName(), h.getNote(), h.getCreatedAt(),
+                            h.getLatitude(), h.getLongitude(), h.getLocationSource());
                 })
                 .toList();
     }

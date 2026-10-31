@@ -6,7 +6,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Collection;
 import java.util.List;
 
-public interface OrderStatusHistoryRepository extends JpaRepository<OrderStatusHistory, Long> {
+public interface OrderStatusHistoryRepository
+        extends JpaRepository<OrderStatusHistory, Long>, OrderStatusHistoryRepositoryCustom {
+
+    /// Đi qua `OrderStatusHistoryRepositoryCustomImpl`: dòng mới của đơn drone được gắn toạ độ kiện lúc ghi.
+    @Override
+    <S extends OrderStatusHistory> S save(S history);
 
     List<OrderStatusHistory> findByOrderIdOrderByCreatedAtAsc(Long orderId);
 

@@ -291,6 +291,17 @@ public abstract class DroneFlowPostgresTestBase extends OrderServicePostgresTest
                 droneId, drone.lockerId(), drone.code(), status, drone.batteryPercent(), drone.active()));
     }
 
+    /// Nguồn toạ độ của dòng lịch sử ĐẦU TIÊN đổi sang mỗi chặng (vd PICKED_UP → TECHNICIAN).
+    protected Map<String, String> firstLocationSourceByStage(long orderId) {
+        Map<String, String> sources = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> row : jdbc.queryForList(
+                "select new_status, location_source from order_schema.order_status_history where order_id = ? order by id",
+                orderId)) {
+            sources.putIfAbsent(String.valueOf(row.get("new_status")), String.valueOf(row.get("location_source")));
+        }
+        return sources;
+    }
+
     protected List<String> journeyNotes(long orderId) {
         return jdbc.queryForList(
                 "select note from order_schema.order_status_history where order_id = ? order by id", String.class, orderId);
