@@ -1,15 +1,74 @@
 package com.huynqb.laundrylocker.loyalty.repository;
 
 import com.huynqb.laundrylocker.loyalty.model.PointTransaction;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 public interface PointTransactionRepository extends JpaRepository<PointTransaction, Long> {
+
+    /// Nhóm giao dịch tạo nên từng con số thống kê — cùng định nghĩa với `aggregate` bên dưới.
+    String SCOPE_FILTER = """
+             where t.createdAt >= :since
+               and t.createdAt < :until
+               and (:userId = -1 or t.userId = :userId)
+               and (:anyOrder = true or t.orderId in :orderIds)
+               and (:scope = 'ALL'
+                    or (:scope = 'ISSUED'
+                        and ((t.points > 0 and t.type not in ('ORDER_REDEEM_REFUND', 'VOUCHER_EXCHANGE_REFUND'))
+                             or t.type = 'ORDER_EARN_REVERSAL'))
+                    or (:scope = 'REDEEMED'
+                        and ((t.points < 0 and t.type <> 'ORDER_EARN_REVERSAL')
+                             or t.type in ('ORDER_REDEEM_REFUND', 'VOUCHER_EXCHANGE_REFUND'))))
+            """;
+
+    @Query("select t from PointTransaction t" + SCOPE_FILTER)
+    Page<PointTransaction> findByScope(
+            @Param("scope") String scope, @Param("since") LocalDateTime since, @Param("until") LocalDateTime until,
+            @Param("userId") long userId, @Param("anyOrder") boolean anyOrder, @Param("orderIds") Collection<Long> orderIds,
+            Pageable pageable);
+
+    @Query("select t.type as type, count(t) as transactions, coalesce(sum(t.points), 0) as points"
+            + " from PointTransaction t" + SCOPE_FILTER + " group by t.type order by abs(coalesce(sum(t.points), 0)) desc")
+    List<GroupTotal> totalsByType(
+            @Param("scope") String scope, @Param("since") LocalDateTime since, @Param("until") LocalDateTime until,
+            @Param("userId") long userId, @Param("anyOrder") boolean anyOrder, @Param("orderIds") Collection<Long> orderIds);
+
+    @Query("select t.userId as userId, count(t) as transactions, coalesce(sum(t.points), 0) as points"
+            + " from PointTransaction t" + SCOPE_FILTER + " group by t.userId order by abs(coalesce(sum(t.points), 0)) desc")
+    List<UserTotal> totalsByUser(
+            @Param("scope") String scope, @Param("since") LocalDateTime since, @Param("until") LocalDateTime until,
+            @Param("userId") long userId, @Param("anyOrder") boolean anyOrder, @Param("orderIds") Collection<Long> orderIds,
+            Pageable pageable);
+
+    /// Các đơn có giao dịch khớp bộ lọc — để lọc theo loại đơn (loại đơn nằm ở order-service).
+    @Query("select distinct t.orderId from PointTransaction t" + SCOPE_FILTER + " and t.orderId is not null")
+    List<Long> orderIdsByScope(
+            @Param("scope") String scope, @Param("since") LocalDateTime since, @Param("until") LocalDateTime until,
+            @Param("userId") long userId, @Param("anyOrder") boolean anyOrder, @Param("orderIds") Collection<Long> orderIds);
+
+    interface GroupTotal {
+        String getType();
+
+        Long getTransactions();
+
+        Number getPoints();
+    }
+
+    interface UserTotal {
+        Long getUserId();
+
+        Long getTransactions();
+
+        Number getPoints();
+    }
 
     List<PointTransaction> findByUserIdOrderByCreatedAtDesc(Long userId);
 

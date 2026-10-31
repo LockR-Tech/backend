@@ -79,6 +79,8 @@ public class AdminOrderQueryService {
             String from,
             String to,
             Long userId,
+            /// Đơn người này là người nhận (có tài khoản).
+            Long receiverUserId,
             Long lockerId,
             Long storeId,
             String q,
@@ -112,6 +114,7 @@ public class AdminOrderQueryService {
                         OrderSpecifications.paymentStatusIn(criteria.paymentStatuses()),
                         OrderSpecifications.createdBetween(from, to),
                         OrderSpecifications.user(criteria.userId()),
+                        OrderSpecifications.receiver(criteria.receiverUserId()),
                         criteria.lockerId() == null ? null : OrderSpecifications.lockerIn(List.of(criteria.lockerId())),
                         OrderSpecifications.store(criteria.storeId(), lockerIdsOfStore),
                         OrderSpecifications.keyword(criteria.q(), matchedUserId)),

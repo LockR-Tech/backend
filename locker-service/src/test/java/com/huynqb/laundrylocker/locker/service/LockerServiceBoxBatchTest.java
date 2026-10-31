@@ -157,9 +157,9 @@ class LockerServiceBoxBatchTest {
 
         when(boxRepository.findById(10L)).thenReturn(Optional.of(box));
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> lockerService.deleteBox(10L));
+        BusinessException ex = assertThrows(BusinessException.class, () -> lockerService.deleteBox(10L, "Ô hỏng", 7L));
         assertEquals("BOX_IN_USE", ex.getCode());
-        verify(boxRepository, never()).delete(any());
+        verify(boxRepository, never()).saveAll(any());
     }
 
     @Test
@@ -172,9 +172,12 @@ class LockerServiceBoxBatchTest {
 
         when(boxRepository.findByLockerIdAndBoxNumber(LOCKER_ID, 10)).thenReturn(Optional.of(box));
 
-        lockerService.deleteBoxByNumber(LOCKER_ID, 10);
+        lockerService.deleteBoxByNumber(LOCKER_ID, 10, "Ô hỏng", 7L);
 
-        verify(boxRepository).delete(box);
+        verify(boxRepository).saveAll(List.of(box));
+        assertEquals("Ô hỏng", box.getDeletedReason());
+        assertEquals(7L, box.getDeletedBy());
+        assertNotNull(box.getDeletedAt());
         verify(rabbitTemplate).convertAndSend(
                 eq(DomainEventNames.EXCHANGE),
                 eq(DomainEventNames.LOCKER_LAYOUT_UPDATED),
@@ -192,11 +195,11 @@ class LockerServiceBoxBatchTest {
 
         when(boxRepository.findByLockerIdAndIdIn(LOCKER_ID, List.of(1L, 2L))).thenReturn(List.of(b1, b2));
 
-        BatchDeleteBoxesRequest request = new BatchDeleteBoxesRequest(List.of(1L, 2L), null);
-        int deleted = lockerService.deleteBoxesBatch(LOCKER_ID, request);
+        BatchDeleteBoxesRequest request = new BatchDeleteBoxesRequest(List.of(1L, 2L), null, false, "Bỏ ô");
+        int deleted = lockerService.deleteBoxesBatch(LOCKER_ID, request, 7L);
 
         assertEquals(2, deleted);
-        verify(boxRepository).deleteAll(anyList());
+        verify(boxRepository).saveAll(anyList());
         verify(rabbitTemplate, times(2)).convertAndSend(
                 eq(DomainEventNames.EXCHANGE),
                 eq(DomainEventNames.LOCKER_LAYOUT_UPDATED),
@@ -214,10 +217,10 @@ class LockerServiceBoxBatchTest {
 
         when(boxRepository.findByLockerIdAndIdIn(LOCKER_ID, List.of(1L, 2L))).thenReturn(List.of(b1, b2));
 
-        BatchDeleteBoxesRequest request = new BatchDeleteBoxesRequest(List.of(1L, 2L), null);
-        BusinessException ex = assertThrows(BusinessException.class, () -> lockerService.deleteBoxesBatch(LOCKER_ID, request));
+        BatchDeleteBoxesRequest request = new BatchDeleteBoxesRequest(List.of(1L, 2L), null, false, "Bỏ ô");
+        BusinessException ex = assertThrows(BusinessException.class, () -> lockerService.deleteBoxesBatch(LOCKER_ID, request, 7L));
 
         assertEquals("BOX_IN_USE", ex.getCode());
-        verify(boxRepository, never()).deleteAll(any());
+        verify(boxRepository, never()).saveAll(any());
     }
 }

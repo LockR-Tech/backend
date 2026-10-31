@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerDroneClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
+import com.huynqb.laundrylocker.order.dto.DeliveryStatusNotificationRequest;
 import com.huynqb.laundrylocker.order.dto.DroneStatusTransitionRequest;
 import com.huynqb.laundrylocker.order.dto.GuestNotification;
 import com.huynqb.laundrylocker.order.model.DroneMission;
@@ -90,6 +91,14 @@ class DroneMissionProgressServiceTest {
         ArgumentCaptor<NotificationRequest> inApp = ArgumentCaptor.forClass(NotificationRequest.class);
         verify(notificationClient).requestNotification(inApp.capture());
         assertTrue(inApp.getValue().message().contains("Ô số 3"));
+        assertTrue(inApp.getValue().message().matches("(?s).*lưu trữ 24 giờ, vui lòng lấy trước \\d{2}:\\d{2} ngày \\d{2}/\\d{2}/\\d{4}\\..*"));
+        assertTrue(email.getValue().emailBody().contains("vui lòng lấy trước"));
+
+        // Người gửi và người nhận có tài khoản đều thấy hạn lấy trong thông báo chặng.
+        ArgumentCaptor<DeliveryStatusNotificationRequest> stage =
+                ArgumentCaptor.forClass(DeliveryStatusNotificationRequest.class);
+        verify(notificationClient, times(2)).notifyDeliveryStatus(stage.capture());
+        stage.getAllValues().forEach(request -> assertTrue(request.note().contains("vui lòng lấy trước")));
 
         ArgumentCaptor<OrderStatusHistory> history = ArgumentCaptor.forClass(OrderStatusHistory.class);
         verify(historyRepository, times(2)).save(history.capture());

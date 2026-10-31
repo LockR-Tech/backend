@@ -3,11 +3,13 @@ package com.huynqb.laundrylocker.user.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @EntityListeners(AdminDataChangeListener.class)
 @Table(name = "user_profiles")
 @Getter
@@ -51,6 +53,16 @@ public class UserProfile {
     /// Phiên bản điều khoản đã đồng ý (app gửi lên), vd. "2026-10-31".
     @Column(name = "terms_version", length = 30)
     private String termsVersion;
+
+    /// Xoá mềm từ trang admin: còn nguyên trong DB kèm lý do, thời điểm và người xoá.
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_reason", length = 500)
+    private String deletedReason;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

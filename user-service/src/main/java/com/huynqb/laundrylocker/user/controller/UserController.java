@@ -6,10 +6,12 @@ import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.common.security.UserRoles;
+import com.huynqb.laundrylocker.common.util.DeleteReason;
 import com.huynqb.laundrylocker.user.client.AuthClient;
 import com.huynqb.laundrylocker.user.client.NotificationClient;
 import com.huynqb.laundrylocker.user.dto.AdminCreateUserRequest;
 import com.huynqb.laundrylocker.user.dto.AdminUserView;
+import com.huynqb.laundrylocker.user.dto.DeletedUserView;
 import com.huynqb.laundrylocker.user.dto.UserGrowthPoint;
 import com.huynqb.laundrylocker.user.dto.UserProfileRequest;
 import com.huynqb.laundrylocker.user.dto.UserProfileView;
@@ -256,7 +258,9 @@ public class UserController {
                                 }
                                 String provider = a.get("provider") == null ? null : a.get("provider").toString();
                                 Boolean verified = a.get("emailVerified") instanceof Boolean b ? b : null;
-                                return v.withAuth(provider, verified);
+                                Boolean hasPassword = a.get("hasPassword") instanceof Boolean b ? b : null;
+                                String lastLoginAt = a.get("lastLoginAt") == null ? null : a.get("lastLoginAt").toString();
+                                return v.withAuth(provider, verified, hasPassword, lastLoginAt);
                             })
                     .toList();
         } catch (Exception ignored) {
@@ -486,16 +490,30 @@ public class UserController {
         return ApiResponse.ok("USER_ROLES_UPDATED", "User roles updated", userProfileService.updateRoles(id, request.get("roles")));
     }
 
-    /// Xoá hồ sơ mà để nguyên tài khoản đăng nhập thì người dùng vẫn đăng nhập được, và tài khoản đó vẫn giữ
-    /// email/số điện thoại nên không tạo lại người dùng mới với chúng được ⇒ auth-service khoá hẳn tài khoản
-    /// (thu hồi refresh token) và nhả định danh trước; auth-service lỗi thì không xoá. Gọi lại an toàn nên
-    /// xoá hồ sơ lỗi sau bước này thì admin chỉ cần xoá lại. Đơn hàng/thanh toán vẫn giữ id người dùng cũ.
+    /// Xoá mềm: hồ sơ còn trong DB kèm lý do, biến khỏi mọi truy vấn. Để nguyên tài khoản đăng nhập thì người
+    /// dùng vẫn đăng nhập được, và tài khoản đó vẫn giữ email/số điện thoại nên không tạo lại người dùng mới
+    /// với chúng được ⇒ auth-service khoá hẳn tài khoản (thu hồi refresh token) và nhả định danh trước;
+    /// auth-service lỗi thì không xoá. Gọi lại an toàn nên xoá hồ sơ lỗi sau bước này thì admin chỉ cần xoá
+    /// lại. Admin xoá được admin khác, chỉ không tự xoá chính mình.
     @DeleteMapping("/api/admin/users/{id}")
-    public ApiResponse<Void> adminDelete(@PathVariable Long id) {
+    public ApiResponse<Void> adminDelete(
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader("X-User-Id") Long adminUserId) {
+        String deleteReason = DeleteReason.require(reason);
         userProfileService.get(id);
+        if (id.equals(adminUserId)) {
+            throw new BusinessException("USER_DELETE_SELF", "Không thể tự xóa tài khoản đang đăng nhập");
+        }
         callAuth(() -> authClient.deleteAccount(id));
-        userProfileService.delete(id);
+        userProfileService.softDelete(id, deleteReason, adminUserId);
         return ApiResponse.ok("USER_DELETED", "User deleted");
+    }
+
+    /// Người dùng đã xoá mềm — để trang thống kê vẫn hiện được tên chủ của giao dịch điểm cũ.
+    @GetMapping("/api/admin/users/deleted")
+    public ApiResponse<List<DeletedUserView>> adminDeletedUsers() {
+        return ApiResponse.ok(userProfileService.listDeleted());
     }
 
     @GetMapping("/api/admin/hello")

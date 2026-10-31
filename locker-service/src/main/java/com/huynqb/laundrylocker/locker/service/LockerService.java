@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.security.UserRoles;
+import com.huynqb.laundrylocker.common.util.DeleteReason;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
@@ -294,8 +295,10 @@ public class LockerService {
         return toStaffResponse(saved, new HashMap<>());
     }
 
+    /// Xoá mềm: tủ và các ô biến khỏi mọi truy vấn (@SQLRestriction) nhưng còn trong DB kèm lý do.
     @Transactional
-    public void deleteLocker(Long id) {
+    public void deleteLocker(Long id, String reason, Long actorUserId) {
+        String deleteReason = DeleteReason.require(reason);
         LockerUnit locker =
                 lockerRepository.findById(id).orElseThrow(() -> new NotFoundException("Locker", id));
         List<LockerBox> boxes = boxRepository.findByLockerIdOrderByRowIndexAscColIndexAsc(id);
@@ -305,26 +308,45 @@ public class LockerService {
             throw new BusinessException("LOCKER_IN_USE", "Không thể xóa tủ đang có ô chứa hàng hoặc đã được giữ chỗ");
         }
         boolean hasDrones = droneUnitRepository.findAllByOrderByLockerIdAscCodeAsc().stream()
-                .anyMatch(d -> id.equals(d.getLockerId()));
+                .anyMatch(d -> Boolean.TRUE.equals(d.getActive()) && id.equals(d.getLockerId()));
         if (hasDrones) {
             throw new BusinessException("LOCKER_HAS_DRONES", "Không thể xóa trạm tủ đang có Drone trực chiến. Vui lòng chuyển hoặc xử lý Drone trước.");
         }
-        if (!boxes.isEmpty()) {
-            boxRepository.deleteAll(boxes);
-        }
-        lockerRepository.delete(locker);
+        softDeleteBoxes(boxes, deleteReason, actorUserId);
+        softDeleteLocker(locker, deleteReason, actorUserId);
         publishLockerCatalogChanged(id);
     }
 
+    private void softDeleteLocker(LockerUnit locker, String reason, Long actorUserId) {
+        locker.setDeletedAt(LocalDateTime.now());
+        locker.setDeletedBy(actorUserId);
+        locker.setDeletedReason(reason);
+        lockerRepository.save(locker);
+    }
+
+    private void softDeleteBoxes(List<LockerBox> boxes, String reason, Long actorUserId) {
+        LocalDateTime now = LocalDateTime.now();
+        for (LockerBox box : boxes) {
+            box.setDeletedAt(now);
+            box.setDeletedBy(actorUserId);
+            box.setDeletedReason(reason);
+        }
+        if (!boxes.isEmpty()) {
+            boxRepository.saveAll(boxes);
+        }
+    }
+
     @Transactional
-    public int deleteLockersBatch(BatchDeleteLockersRequest request) {
+    public int deleteLockersBatch(BatchDeleteLockersRequest request, Long actorUserId) {
+        String deleteReason = DeleteReason.require(request == null ? null : request.reason());
         List<LockerUnit> targetLockers;
-        if (request != null && Boolean.TRUE.equals(request.deleteAll())) {
+        if (Boolean.TRUE.equals(request.deleteAll())) {
             targetLockers = lockerRepository.findAll();
-        } else if (request != null && request.lockerIds() != null && !request.lockerIds().isEmpty()) {
+        } else if (request.lockerIds() != null && !request.lockerIds().isEmpty()) {
             targetLockers = lockerRepository.findAllById(request.lockerIds());
         } else {
-            targetLockers = lockerRepository.findAll();
+            // Không chọn tủ nào thì không được hiểu là "xoá tất cả".
+            throw new BusinessException("NO_LOCKERS_SELECTED", "Chưa chọn tủ nào để xóa");
         }
 
         if (targetLockers.isEmpty()) {
@@ -334,7 +356,7 @@ public class LockerService {
         List<Long> targetIds = targetLockers.stream().map(LockerUnit::getId).toList();
 
         boolean hasDrones = droneUnitRepository.findAllByOrderByLockerIdAscCodeAsc().stream()
-                .anyMatch(d -> targetIds.contains(d.getLockerId()));
+                .anyMatch(d -> Boolean.TRUE.equals(d.getActive()) && targetIds.contains(d.getLockerId()));
         if (hasDrones) {
             throw new BusinessException("LOCKER_HAS_DRONES", "Không thể xóa các trạm tủ đang có Drone trực chiến. Vui lòng chuyển hoặc xử lý Drone trước.");
         }
@@ -350,12 +372,10 @@ public class LockerService {
             throw new BusinessException("LOCKER_IN_USE", "Không thể xóa các tủ đang có ô chứa hàng hoặc đã được giữ chỗ (Tủ ID: " + lockedLockerIds + ")");
         }
 
-        if (!boxes.isEmpty()) {
-            boxRepository.deleteAll(boxes);
-        }
+        softDeleteBoxes(boxes, deleteReason, actorUserId);
 
         int count = targetLockers.size();
-        lockerRepository.deleteAll(targetLockers);
+        targetLockers.forEach(locker -> softDeleteLocker(locker, deleteReason, actorUserId));
         targetIds.forEach(this::publishLockerCatalogChanged);
         return count;
     }
@@ -474,31 +494,34 @@ public class LockerService {
     }
 
     @Transactional
-    public void deleteBox(Long boxId) {
+    public void deleteBox(Long boxId, String reason, Long actorUserId) {
+        String deleteReason = DeleteReason.require(reason);
         LockerBox box = findBox(boxId);
         if ("OCCUPIED".equalsIgnoreCase(box.getStatus()) || "RESERVED".equalsIgnoreCase(box.getStatus())) {
             throw new BusinessException("BOX_IN_USE", "Không thể xóa ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ");
         }
         Long lockerId = box.getLockerId();
         Integer boxNumber = box.getBoxNumber();
-        boxRepository.delete(box);
+        softDeleteBoxes(List.of(box), deleteReason, actorUserId);
         publishLockerLayoutUpdated(lockerId, boxId, boxNumber, "DELETED", "Đã xóa ô #" + boxNumber);
     }
 
     @Transactional
-    public void deleteBoxByNumber(Long lockerId, Integer boxNumber) {
+    public void deleteBoxByNumber(Long lockerId, Integer boxNumber, String reason, Long actorUserId) {
+        String deleteReason = DeleteReason.require(reason);
         LockerBox box = boxRepository.findByLockerIdAndBoxNumber(lockerId, boxNumber)
                 .orElseThrow(() -> new NotFoundException("Box #" + boxNumber + " in locker", lockerId));
         if ("OCCUPIED".equalsIgnoreCase(box.getStatus()) || "RESERVED".equalsIgnoreCase(box.getStatus())) {
             throw new BusinessException("BOX_IN_USE", "Không thể xóa ô #" + box.getBoxNumber() + " đang chứa hàng hoặc đã được giữ chỗ");
         }
         Long boxId = box.getId();
-        boxRepository.delete(box);
+        softDeleteBoxes(List.of(box), deleteReason, actorUserId);
         publishLockerLayoutUpdated(lockerId, boxId, boxNumber, "DELETED", "Đã xóa ô #" + boxNumber);
     }
 
     @Transactional
-    public int deleteBoxesBatch(Long lockerId, BatchDeleteBoxesRequest request) {
+    public int deleteBoxesBatch(Long lockerId, BatchDeleteBoxesRequest request, Long actorUserId) {
+        String deleteReason = DeleteReason.require(request == null ? null : request.reason());
         if (!lockerRepository.existsById(lockerId)) {
             throw new NotFoundException("Locker", lockerId);
         }
@@ -536,7 +559,7 @@ public class LockerService {
             throw new BusinessException("BOX_IN_USE", "Không thể xóa các ô đang chứa hàng hoặc đã được giữ chỗ: " + inUseNumbers);
         }
 
-        boxRepository.deleteAll(targetBoxes);
+        softDeleteBoxes(targetBoxes, deleteReason, actorUserId);
 
         for (LockerBox box : targetBoxes) {
             publishLockerLayoutUpdated(lockerId, box.getId(), box.getBoxNumber(), "DELETED", "Đã xóa ô #" + box.getBoxNumber());
@@ -546,8 +569,8 @@ public class LockerService {
     }
 
     @Transactional
-    public int deleteAllBoxesInLocker(Long lockerId) {
-        return deleteBoxesBatch(lockerId, new BatchDeleteBoxesRequest(null, null, true));
+    public int deleteAllBoxesInLocker(Long lockerId, String reason, Long actorUserId) {
+        return deleteBoxesBatch(lockerId, new BatchDeleteBoxesRequest(null, null, true, reason), actorUserId);
     }
 
     @Transactional
@@ -2611,7 +2634,7 @@ public class LockerService {
         requireLandingPad(lockerRepository
                 .findById(request.lockerId())
                 .orElseThrow(() -> new NotFoundException("Locker", request.lockerId())));
-        if (droneUnitRepository.existsByCode(request.code())) {
+        if (droneUnitRepository.existsByCodeAndActiveTrue(request.code())) {
             throw new BusinessException("DRONE_CODE_DUPLICATE", "Drone code already exists: " + request.code());
         }
         DroneUnit unit = new DroneUnit();
@@ -3085,7 +3108,7 @@ public class LockerService {
             unit.setLockerId(request.lockerId());
         }
         if (StringUtils.hasText(request.code()) && !request.code().equals(unit.getCode())) {
-            if (droneUnitRepository.existsByCode(request.code())) {
+            if (droneUnitRepository.existsByCodeAndActiveTrue(request.code())) {
                 throw new BusinessException("DRONE_CODE_DUPLICATE", "Drone code already exists: " + request.code());
             }
             unit.setCode(request.code());
@@ -3104,14 +3127,27 @@ public class LockerService {
 
     /// #4 Ngung hoat dong drone (xoa mem) — an khoi danh sach van hanh, giu lich su log.
     @Transactional
-    public void decommissionDrone(Long id, Long actorUserId) {
+    public void decommissionDrone(Long id, String reason, Long actorUserId) {
+        String deleteReason = DeleteReason.require(reason);
         DroneUnit unit = findDroneUnit(id);
-        requireDroneWithoutActiveMission(unit, "decommission");
+        if (DroneStatus.RESERVED.equals(unit.getStatus()) || DroneStatus.IN_FLIGHT.equals(unit.getStatus())) {
+            throw new BusinessException(
+                    "DRONE_ACTIVE_MISSION", "Không thể xóa drone " + unit.getCode() + " đang có nhiệm vụ bay");
+        }
         unit.setActive(false);
         unit.setAssignedTechnicianId(null);
         unit.setStatus(DroneStatus.MAINTENANCE);
+        unit.setDeletedAt(LocalDateTime.now());
+        unit.setDeletedBy(actorUserId);
+        unit.setDeletedReason(deleteReason);
         droneUnitRepository.save(unit);
-        appendDroneLog(id, "Drone ngừng hoạt động (decommission)", actorUserId);
+        // Nhả bộ điều khiển để gắn sang drone khác; drone_devices.drone_id là UNIQUE.
+        droneDeviceRepository.findByDroneId(id).ifPresent(device -> {
+            device.setDroneId(null);
+            device.setDroneCode(null);
+            droneDeviceRepository.save(device);
+        });
+        appendDroneLog(id, "Xóa drone: " + deleteReason, actorUserId);
     }
 
     /// #2 Mo 1 phieu su co gan voi drone (box_id NULL) de no vao chung hang doi
@@ -3173,7 +3209,7 @@ public class LockerService {
     @Transactional
     public DroneUnitResponse recordDroneTelemetry(DroneTelemetryRequest request) {
         DroneUnit unit = droneUnitRepository
-                .findByCode(request.code())
+                .findByCodeAndActiveTrue(request.code())
                 .orElseThrow(() -> new BusinessException(
                         "DRONE_NOT_FOUND", "Drone not found: " + request.code(), org.springframework.http.HttpStatus.NOT_FOUND));
         if (request.batteryPercent() != null && !request.batteryPercent().equals(unit.getBatteryPercent())) {
@@ -3709,7 +3745,9 @@ public class LockerService {
     }
 
     public DroneUnit findDroneUnit(Long id) {
-        return droneUnitRepository.findById(id).orElseThrow(() -> new NotFoundException("DroneUnit", id));
+        return droneUnitRepository.findById(id)
+                .filter(unit -> Boolean.TRUE.equals(unit.getActive()))
+                .orElseThrow(() -> new NotFoundException("DroneUnit", id));
     }
 
     private DroneUnitResponse toDroneUnit(DroneUnit unit) {

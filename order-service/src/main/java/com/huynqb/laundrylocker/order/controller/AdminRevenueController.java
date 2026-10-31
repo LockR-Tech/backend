@@ -7,6 +7,7 @@ import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.CustomerRevenueDetai
 import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.DailyRevenueResponse;
 import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.LockerRevenueResponse;
 import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.MethodRevenueResponse;
+import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.RevenueEntriesResponse;
 import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.RevenueSummaryResponse;
 import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.ServiceRevenueResponse;
 import com.huynqb.laundrylocker.order.dto.admin.RevenueDtos.StoreRevenueResponse;
@@ -33,6 +34,14 @@ public class AdminRevenueController {
     public ApiResponse<RevenueSummaryResponse> summary(
             @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
         return ApiResponse.ok(revenueService.summary(from, to));
+    }
+
+    @GetMapping("/entries")
+    public ApiResponse<RevenueEntriesResponse> entries(
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(required = false) String kind) {
+        return ApiResponse.ok(revenueService.entries(from, to, kind));
     }
 
     @GetMapping("/daily")

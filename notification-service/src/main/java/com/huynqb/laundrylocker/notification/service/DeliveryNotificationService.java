@@ -94,7 +94,9 @@ public class DeliveryNotificationService {
     public NotificationResponse notifyDeliveryStatus(DeliveryStatusNotificationRequest request) {
         DeliveryStatus status = DeliveryStatus.fromCode(request.status());
         String title = status.title();
-        String body = status.body(request.eta());
+        String body = StringUtils.hasText(request.note())
+                ? status.body(request.eta()) + ". " + request.note().trim()
+                : status.body(request.eta());
 
         Map<String, String> data = new HashMap<>();
         data.put("orderId", String.valueOf(request.orderId()));

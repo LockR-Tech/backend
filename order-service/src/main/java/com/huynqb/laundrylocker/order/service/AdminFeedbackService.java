@@ -64,7 +64,7 @@ public class AdminFeedbackService {
 
     @Transactional(readOnly = true)
     public PageResponse<FeedbackResponse> search(
-            int page, int size, Integer minRating, Integer maxRating, Boolean resolved) {
+            int page, int size, Integer minRating, Integer maxRating, Boolean resolved, Long userId) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         Specification<OrderRating> spec = (root, query, cb) -> {
             List<Predicate> where = new ArrayList<>();
@@ -76,6 +76,9 @@ public class AdminFeedbackService {
             }
             if (resolved != null) {
                 where.add(cb.equal(root.get("resolved"), resolved));
+            }
+            if (userId != null) {
+                where.add(cb.equal(root.get("userId"), userId));
             }
             return cb.and(where.toArray(Predicate[]::new));
         };

@@ -9,6 +9,7 @@ import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.common.media.VerifiedMedia;
 import com.huynqb.laundrylocker.common.util.BusinessTime;
 import com.huynqb.laundrylocker.user.dto.AdminUserView;
+import com.huynqb.laundrylocker.user.dto.DeletedUserView;
 import com.huynqb.laundrylocker.user.dto.UserGrowthPoint;
 import com.huynqb.laundrylocker.user.dto.UserProfileRequest;
 import com.huynqb.laundrylocker.user.model.UserProfile;
@@ -23,6 +24,7 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -246,9 +248,32 @@ public class UserProfileService {
         return points;
     }
 
+    /// Xoá hẳn — chỉ để gỡ hồ sơ vừa tạo khi tạo tài khoản đăng nhập thất bại.
     @Transactional
     public void delete(Long id) {
         userProfileRepository.delete(find(id));
+    }
+
+    @Transactional
+    public void softDelete(Long id, String reason, Long actorUserId) {
+        UserProfile user = find(id);
+        user.setDeletedAt(LocalDateTime.now());
+        user.setDeletedBy(actorUserId);
+        user.setDeletedReason(reason);
+        userProfileRepository.save(user);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DeletedUserView> listDeleted() {
+        return userProfileRepository.findDeleted().stream()
+                .map(row -> new DeletedUserView(
+                        row.getId(),
+                        row.getEmail(),
+                        row.getPhoneNumber(),
+                        (Objects.toString(row.getFirstName(), "") + " " + Objects.toString(row.getLastName(), "")).trim(),
+                        row.getDeletedAt(),
+                        row.getDeletedReason()))
+                .toList();
     }
 
     @Transactional
@@ -353,7 +378,11 @@ public class UserProfileService {
                 null,
                 u.getImageUrl(),
                 u.isTermsAccepted(),
-                u.getTermsAcceptedAt());
+                u.getTermsAcceptedAt(),
+                u.getTermsVersion(),
+                u.getBirthday(),
+                null,
+                null);
     }
 
     private UserSummary toSummary(UserProfile user) {

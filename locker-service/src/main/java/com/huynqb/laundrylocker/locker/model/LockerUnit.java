@@ -3,10 +3,12 @@ package com.huynqb.laundrylocker.locker.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.time.LocalDateTime;
 
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "lockers")
 @Getter
@@ -54,6 +56,16 @@ public class LockerUnit {
     /// Đóng phiếu chỉ tự trả tủ về ACTIVE khi nguồn là TICKET.
     @Column(name = "maintenance_source", length = 20)
     private String maintenanceSource;
+
+    /// Xoá mềm từ trang admin: còn nguyên trong DB kèm lý do, thời điểm và người xoá.
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_reason", length = 500)
+    private String deletedReason;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

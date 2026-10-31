@@ -48,7 +48,7 @@ class LoyaltyVoucherExchangeTest {
     void setUp() {
         events = org.mockito.Mockito.mock(LoyaltyEvents.class);
         service = new LoyaltyService(accountRepository, transactionRepository,
-                new LoyaltyRules(TestLoyaltyRules.settings(Map.of())), events);
+                new LoyaltyRules(TestLoyaltyRules.settings(Map.of())), events, null);
         account = new LoyaltyAccount();
         account.setUserId(7L);
         account.setPoints(200_000);

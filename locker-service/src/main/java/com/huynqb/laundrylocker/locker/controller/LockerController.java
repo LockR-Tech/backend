@@ -926,8 +926,10 @@ public class LockerController {
 
     @DeleteMapping("/api/admin/drones/{id}")
     public ApiResponse<Void> adminDecommissionDrone(
-            @PathVariable Long id, @RequestHeader(value = "X-User-Id", required = false) Long userId) {
-        lockerService.decommissionDrone(id, userId);
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        lockerService.decommissionDrone(id, reason, userId);
         return ApiResponse.ok("DRONE_DECOMMISSIONED", "Drone decommissioned", null);
     }
 
@@ -1211,24 +1213,30 @@ public class LockerController {
     }
 
     @DeleteMapping("/api/admin/lockers/{id}")
-    public ApiResponse<Void> adminDelete(@PathVariable Long id) {
-        lockerService.deleteLocker(id);
+    public ApiResponse<Void> adminDelete(
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        lockerService.deleteLocker(id, reason, userId);
         return ApiResponse.ok("LOCKER_DELETED", "Locker deleted");
     }
 
     @PostMapping("/api/admin/lockers/batch-delete")
     public ApiResponse<Map<String, Object>> adminDeleteLockersBatch(
-            @RequestBody(required = false) BatchDeleteLockersRequest request) {
-        int count = lockerService.deleteLockersBatch(request);
+            @RequestBody(required = false) BatchDeleteLockersRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        int count = lockerService.deleteLockersBatch(request, userId);
         return ApiResponse.ok("LOCKERS_DELETED", "Deleted " + count + " lockers successfully", Map.of("deletedCount", count));
     }
 
     @DeleteMapping("/api/admin/lockers")
     public ApiResponse<Map<String, Object>> adminDeleteAllLockers(
             @RequestParam(name = "all", defaultValue = "false") boolean all,
-            @RequestBody(required = false) BatchDeleteLockersRequest request) {
-        BatchDeleteLockersRequest req = request != null ? request : new BatchDeleteLockersRequest(null, all);
-        int count = lockerService.deleteLockersBatch(req);
+            @RequestParam(required = false) String reason,
+            @RequestBody(required = false) BatchDeleteLockersRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        BatchDeleteLockersRequest req = request != null ? request : new BatchDeleteLockersRequest(null, all, reason);
+        int count = lockerService.deleteLockersBatch(req, userId);
         return ApiResponse.ok("LOCKERS_DELETED", "Deleted " + count + " lockers successfully", Map.of("deletedCount", count));
     }
 
@@ -1263,35 +1271,48 @@ public class LockerController {
     }
 
     @DeleteMapping("/api/admin/lockers/boxes/{boxId}")
-    public ApiResponse<Void> adminDeleteBox(@PathVariable Long boxId) {
-        lockerService.deleteBox(boxId);
+    public ApiResponse<Void> adminDeleteBox(
+            @PathVariable Long boxId,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        lockerService.deleteBox(boxId, reason, userId);
         return ApiResponse.ok("BOX_DELETED", "Box deleted");
     }
 
     @DeleteMapping("/api/admin/lockers/{id}/boxes/by-number/{boxNumber}")
     public ApiResponse<Void> adminDeleteBoxByNumber(
-            @PathVariable Long id, @PathVariable Integer boxNumber) {
-        lockerService.deleteBoxByNumber(id, boxNumber);
+            @PathVariable Long id,
+            @PathVariable Integer boxNumber,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        lockerService.deleteBoxByNumber(id, boxNumber, reason, userId);
         return ApiResponse.ok("BOX_DELETED", "Box deleted");
     }
 
     @PostMapping("/api/admin/lockers/{id}/boxes/batch-delete")
     public ApiResponse<Map<String, Object>> adminDeleteBoxesBatch(
-            @PathVariable Long id, @RequestBody BatchDeleteBoxesRequest request) {
-        int count = lockerService.deleteBoxesBatch(id, request);
+            @PathVariable Long id,
+            @RequestBody BatchDeleteBoxesRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        int count = lockerService.deleteBoxesBatch(id, request, userId);
         return ApiResponse.ok("BOXES_DELETED", "Deleted " + count + " boxes successfully", Map.of("deletedCount", count));
     }
 
     @DeleteMapping("/api/admin/lockers/{id}/boxes")
     public ApiResponse<Map<String, Object>> adminDeleteBoxesBatchWithDelete(
-            @PathVariable Long id, @RequestBody(required = false) BatchDeleteBoxesRequest request) {
-        int count = lockerService.deleteBoxesBatch(id, request);
+            @PathVariable Long id,
+            @RequestBody(required = false) BatchDeleteBoxesRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        int count = lockerService.deleteBoxesBatch(id, request, userId);
         return ApiResponse.ok("BOXES_DELETED", "Deleted " + count + " boxes successfully", Map.of("deletedCount", count));
     }
 
     @DeleteMapping("/api/admin/lockers/{id}/boxes/all")
-    public ApiResponse<Map<String, Object>> adminDeleteAllBoxesInLocker(@PathVariable Long id) {
-        int count = lockerService.deleteAllBoxesInLocker(id);
+    public ApiResponse<Map<String, Object>> adminDeleteAllBoxesInLocker(
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        int count = lockerService.deleteAllBoxesInLocker(id, reason, userId);
         return ApiResponse.ok("BOXES_DELETED", "Deleted all " + count + " boxes successfully", Map.of("deletedCount", count));
     }
 

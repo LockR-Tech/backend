@@ -49,7 +49,7 @@ class LoyaltyServiceTest {
     void setUp() {
         settings = TestLoyaltyRules.settings(TestLoyaltyRules.LEGACY_RATES);
         events = org.mockito.Mockito.mock(LoyaltyEvents.class);
-        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings), events);
+        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings), events, null);
         account = new LoyaltyAccount();
         account.setUserId(7L);
         when(accountRepository.findByUserId(7L)).thenReturn(Optional.of(account));

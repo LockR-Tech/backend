@@ -48,6 +48,13 @@ public final class OrderSpecifications {
         return userId == null ? null : (root, query, cb) -> cb.equal(root.get("userId"), userId);
     }
 
+    /// Đơn gửi tới tài khoản này: receiverUserId, đơn cũ chỉ có receiverId.
+    public static Specification<LockerOrder> receiver(Long userId) {
+        return userId == null ? null : (root, query, cb) -> cb.or(
+                cb.equal(root.get("receiverUserId"), userId),
+                cb.and(cb.isNull(root.get("receiverUserId")), cb.equal(root.get("receiverId"), userId)));
+    }
+
     /// Đơn gắn với tủ: tủ gửi/nhận (lockerId) hoặc tủ đích drone.
     public static Specification<LockerOrder> lockerIn(Collection<Long> lockerIds) {
         if (lockerIds == null || lockerIds.isEmpty()) {

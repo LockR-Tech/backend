@@ -1,6 +1,8 @@
 package com.huynqb.laundrylocker.loyalty.service;
 
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.util.BusinessTime;
+import com.huynqb.laundrylocker.loyalty.client.OrderClient;
 import com.huynqb.laundrylocker.loyalty.dto.*;
 import com.huynqb.laundrylocker.loyalty.model.LoyaltyAccount;
 import com.huynqb.laundrylocker.loyalty.model.PointTransaction;
@@ -8,6 +10,11 @@ import com.huynqb.laundrylocker.loyalty.repository.LoyaltyAccountRepository;
 import com.huynqb.laundrylocker.loyalty.repository.PointTransactionRepository;
 import com.huynqb.laundrylocker.loyalty.settings.LoyaltyRules;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -15,16 +22,32 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LoyaltyService {
+
+    private static final String TRANSACTION_SCOPE_ALL = "ALL";
+    private static final Set<String> TRANSACTION_SCOPES = Set.of(TRANSACTION_SCOPE_ALL, "ISSUED", "REDEEMED");
+    private static final int MAX_TRANSACTION_PAGE_SIZE = 100;
+    private static final int TOP_USERS_LIMIT = 20;
+    private static final LocalDateTime ALL_TIME = LocalDateTime.of(2000, 1, 1, 0, 0);
+    private static final LocalDateTime END_OF_TIME = LocalDateTime.of(2100, 1, 1, 0, 0);
+    private static final long ANY_USER = -1L;
+    /// IN rỗng là lỗi cú pháp trên Postgres ⇒ dùng id không tồn tại.
+    private static final List<Long> NO_ORDER_IDS = List.of(-1L);
+    /// Trần của /internal/orders/batch.
+    private static final int ORDER_BATCH_SIZE = 500;
 
     private final LoyaltyAccountRepository accountRepository;
     private final PointTransactionRepository transactionRepository;
@@ -32,6 +55,8 @@ public class LoyaltyService {
     private final LoyaltyRules rules;
     /// Báo app của chủ tài khoản mỗi lần điểm/tem đổi (realtime).
     private final LoyaltyEvents events;
+    /// Tra mã và loại đơn cho trang admin.
+    private final OrderClient orderClient;
 
     /// Hạng hiển thị sẵn trong thống kê (0 nếu chưa có ai) theo thứ tự tăng dần.
     private static final List<String> TIERS = List.of("BRONZE", "SILVER", "GOLD", "PLATINUM");
@@ -466,6 +491,144 @@ public class LoyaltyService {
                 asLong(transactions.getPointsRedeemedThisMonth()));
     }
 
+    /// Danh sách sau các con số trên trang /admin/loyalty; cùng mốc thời gian với `statistics()`.
+    @Transactional(readOnly = true)
+    public List<LoyaltyMemberResponse> members() {
+        LocalDateTime monthStart = time.startOfDay(time.startOfMonth(time.today()));
+        LocalDateTime activeSince = time.now().minusDays(30);
+        return accountRepository.findMembers().stream()
+                .map(row -> {
+                    int lifetime = row.getLifetimePoints() == null ? 0 : row.getLifetimePoints();
+                    LocalDateTime lastTransaction = row.getLastTransactionAt();
+                    return new LoyaltyMemberResponse(
+                            row.getUserId(),
+                            row.getPoints() == null ? 0 : row.getPoints(),
+                            lifetime,
+                            row.getStamps() == null ? 0 : row.getStamps(),
+                            resolveTier(lifetime),
+                            row.getJoinedAt(),
+                            asLong(row.getTransactionCount()),
+                            asLong(row.getPointsIssued()),
+                            asLong(row.getPointsRedeemed()),
+                            lastTransaction,
+                            !row.getJoinedAt().isBefore(monthStart),
+                            lastTransaction != null && !lastTransaction.isBefore(activeSince));
+                })
+                .toList();
+    }
+
+    /// Giao dịch tạo nên "điểm đã phát" (ISSUED), "điểm đã dùng" (REDEEMED) hoặc "tổng giao dịch" (ALL).
+    /// `from`/`to` (yyyy-MM-dd theo giờ Việt Nam) ưu tiên hơn `thisMonth`; lọc được theo người và loại đơn.
+    @Transactional(readOnly = true)
+    public LoyaltyTransactionsResponse transactions(
+            String scope, boolean thisMonth, String from, String to, Long userId, String orderType, int page, int size) {
+        String normalized = scope == null ? TRANSACTION_SCOPE_ALL : scope.trim().toUpperCase(Locale.ROOT);
+        if (!TRANSACTION_SCOPES.contains(normalized)) {
+            throw new BusinessException("LOYALTY_SCOPE_INVALID", "Phạm vi giao dịch không hợp lệ: " + scope);
+        }
+        LocalDateTime since = time.parseFrom(from);
+        if (since == null) {
+            since = thisMonth ? time.startOfDay(time.startOfMonth(time.today())) : ALL_TIME;
+        }
+        LocalDateTime parsedUntil = time.parseToExclusive(to);
+        LocalDateTime until = parsedUntil == null ? END_OF_TIME : parsedUntil;
+        long user = userId == null ? ANY_USER : userId;
+        boolean anyOrder = !StringUtils.hasText(orderType);
+        Collection<Long> orderIds = anyOrder
+                ? NO_ORDER_IDS
+                : orderIdsOfType(
+                        transactionRepository.orderIdsByScope(normalized, since, until, user, true, NO_ORDER_IDS), orderType);
+
+        Pageable pageable = PageRequest.of(
+                Math.max(page, 0),
+                Math.min(Math.max(size, 1), MAX_TRANSACTION_PAGE_SIZE),
+                Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
+        Page<PointTransaction> result =
+                transactionRepository.findByScope(normalized, since, until, user, anyOrder, orderIds, pageable);
+        long sign = "REDEEMED".equals(normalized) ? -1 : 1;
+        List<LoyaltyTransactionsResponse.TypeTotal> byType = transactionRepository
+                .totalsByType(normalized, since, until, user, anyOrder, orderIds).stream()
+                .map(row -> new LoyaltyTransactionsResponse.TypeTotal(
+                        row.getType(), row.getTransactions(), sign * asLong(row.getPoints())))
+                .toList();
+        List<LoyaltyTransactionsResponse.UserTotal> topUsers = transactionRepository
+                .totalsByUser(normalized, since, until, user, anyOrder, orderIds, PageRequest.of(0, TOP_USERS_LIMIT)).stream()
+                .map(row -> new LoyaltyTransactionsResponse.UserTotal(
+                        row.getUserId(), row.getTransactions(), sign * asLong(row.getPoints())))
+                .toList();
+        Map<Long, OrderClient.OrderBrief> orders = orderBriefs(
+                result.getContent().stream().map(PointTransaction::getOrderId).filter(Objects::nonNull).distinct().toList());
+        return new LoyaltyTransactionsResponse(
+                result.getContent().stream().map(row -> toAdminTransaction(row, orders.get(row.getOrderId()))).toList(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.getNumber(),
+                result.getSize(),
+                byType.stream().mapToLong(LoyaltyTransactionsResponse.TypeTotal::points).sum(),
+                byType,
+                topUsers);
+    }
+
+    /// Điểm cộng/trừ trong kỳ so với kỳ liền trước — hàng thẻ thống kê của /admin/loyalty.
+    @Transactional(readOnly = true)
+    public LoyaltyPeriodSummaryResponse periodSummary(String from, String to) {
+        BusinessTime.DateRange current = time.dateRange(from, to);
+        BusinessTime.DateRange previous = current.previous();
+        LoyaltyPeriodSummaryResponse.Totals now = periodTotals(current);
+        LoyaltyPeriodSummaryResponse.Totals before = periodTotals(previous);
+        return new LoyaltyPeriodSummaryResponse(
+                current.from(), current.to(), previous.from(), previous.to(), now, before,
+                pct(now.issued(), before.issued()),
+                pct(now.redeemed(), before.redeemed()),
+                pct(now.net(), before.net()),
+                pct(now.transactions(), before.transactions()));
+    }
+
+    private LoyaltyPeriodSummaryResponse.Totals periodTotals(BusinessTime.DateRange range) {
+        LocalDateTime since = time.startOfDay(range.from());
+        LocalDateTime until = time.startOfDay(range.to().plusDays(1));
+        long issued = scopeTotal("ISSUED", since, until);
+        long redeemed = -scopeTotal("REDEEMED", since, until);
+        long transactions = transactionRepository
+                .totalsByType(TRANSACTION_SCOPE_ALL, since, until, ANY_USER, true, NO_ORDER_IDS).stream()
+                .mapToLong(PointTransactionRepository.GroupTotal::getTransactions)
+                .sum();
+        return new LoyaltyPeriodSummaryResponse.Totals(issued, redeemed, issued - redeemed, transactions);
+    }
+
+    private long scopeTotal(String scope, LocalDateTime since, LocalDateTime until) {
+        return transactionRepository.totalsByType(scope, since, until, ANY_USER, true, NO_ORDER_IDS).stream()
+                .mapToLong(row -> asLong(row.getPoints()))
+                .sum();
+    }
+
+    private static Double pct(long current, long previous) {
+        return previous == 0 ? null : round2((current - previous) * 100d / Math.abs(previous));
+    }
+
+    private List<Long> orderIdsOfType(List<Long> orderIds, String orderType) {
+        List<Long> matched = orderBriefs(orderIds).values().stream()
+                .filter(order -> orderType.trim().equalsIgnoreCase(order.type()))
+                .map(OrderClient.OrderBrief::id)
+                .toList();
+        return matched.isEmpty() ? NO_ORDER_IDS : matched;
+    }
+
+    /// Mã và loại đơn chỉ để hiển thị: order-service lỗi thì trang vẫn chạy, hiện theo id đơn.
+    private Map<Long, OrderClient.OrderBrief> orderBriefs(List<Long> orderIds) {
+        Map<Long, OrderClient.OrderBrief> briefs = new HashMap<>();
+        try {
+            for (int start = 0; start < orderIds.size(); start += ORDER_BATCH_SIZE) {
+                orderClient.briefs(orderIds.subList(start, Math.min(start + ORDER_BATCH_SIZE, orderIds.size())))
+                        .data()
+                        .forEach(order -> briefs.put(order.id(), order));
+            }
+        } catch (Exception ex) {
+            log.warn("Cannot load order briefs for loyalty report: {}", ex.getMessage());
+        }
+        return briefs;
+    }
+
     private static long asLong(Number value) {
         return value == null ? 0L : value.longValue();
     }
@@ -487,6 +650,21 @@ public class LoyaltyService {
         return new LoyaltyAccountResponse(
                 account.getId(), account.getUserId(), account.getPoints(), account.getStamps(),
                 resolveTier(lifetime), lifetime);
+    }
+
+    private static AdminPointTransactionResponse toAdminTransaction(
+            PointTransaction transaction, OrderClient.OrderBrief order) {
+        return new AdminPointTransactionResponse(
+                transaction.getId(),
+                transaction.getUserId(),
+                transaction.getOrderId(),
+                order == null ? null : order.orderCode(),
+                order == null ? null : order.type(),
+                transaction.getPoints(),
+                transaction.getType(),
+                transaction.getReference(),
+                transaction.getAmount(),
+                transaction.getCreatedAt());
     }
 
     private PointTransactionResponse toTransaction(PointTransaction transaction) {
