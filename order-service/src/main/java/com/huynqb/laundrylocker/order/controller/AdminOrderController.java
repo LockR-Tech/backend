@@ -41,12 +41,13 @@ public class AdminOrderController {
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
             @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) Long receiverUserId,
             @RequestParam(required = false) Long lockerId,
             @RequestParam(required = false) Long storeId,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String sort) {
         return ApiResponse.ok(queryService.search(new AdminOrderQueryService.SearchCriteria(
-                page, size, status, type, paymentStatus, from, to, userId, lockerId, storeId, q, sort)));
+                page, size, status, type, paymentStatus, from, to, userId, receiverUserId, lockerId, storeId, q, sort)));
     }
 
     @GetMapping("/api/admin/orders/{id}/detail")

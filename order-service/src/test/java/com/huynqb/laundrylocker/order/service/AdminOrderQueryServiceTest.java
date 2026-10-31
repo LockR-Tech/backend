@@ -207,7 +207,7 @@ class AdminOrderQueryServiceTest {
 
     private AdminOrderQueryService.SearchCriteria criteria(int page, int size, String sort) {
         return new AdminOrderQueryService.SearchCriteria(
-                page, size, null, null, null, null, null, null, null, null, null, sort);
+                page, size, null, null, null, null, null, null, null, null, null, null, sort);
     }
 
     private LockerOrder order(Long id, String type, Long userId) {
