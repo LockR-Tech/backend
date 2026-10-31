@@ -129,7 +129,27 @@ public class UserProfileService {
                 summary.status(),
                 summary.roles(),
                 summary.imageUrl(),
-                hasPassword);
+                hasPassword,
+                user.isTermsAccepted(),
+                user.getTermsAcceptedAt(),
+                user.getTermsVersion());
+    }
+
+    /// Người dùng bấm "Đồng ý" Điều khoản dịch vụ trên app. Gọi lại với cùng phiên bản không đổi mốc đồng ý.
+    @Transactional
+    public com.huynqb.laundrylocker.user.dto.UserProfileView acceptTerms(Long id, String version, boolean hasPassword) {
+        UserProfile user = find(id);
+        String accepted = StringUtils.hasText(version) ? version.trim() : null;
+        if (accepted != null && accepted.length() > 30) {
+            throw new BusinessException("TERMS_VERSION_INVALID", "Phiên bản điều khoản không hợp lệ");
+        }
+        if (!user.isTermsAccepted() || !java.util.Objects.equals(user.getTermsVersion(), accepted)) {
+            user.setTermsAccepted(true);
+            user.setTermsAcceptedAt(LocalDateTime.now());
+            user.setTermsVersion(accepted);
+            userProfileRepository.save(user);
+        }
+        return getProfileView(id, hasPassword);
     }
 
     @Transactional(readOnly = true)
@@ -331,7 +351,9 @@ public class UserProfileService {
                 u.getUpdatedAt(),
                 null,
                 null,
-                u.getImageUrl());
+                u.getImageUrl(),
+                u.isTermsAccepted(),
+                u.getTermsAcceptedAt());
     }
 
     private UserSummary toSummary(UserProfile user) {

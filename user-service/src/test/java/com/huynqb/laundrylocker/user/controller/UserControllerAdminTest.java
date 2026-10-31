@@ -184,7 +184,7 @@ class UserControllerAdminTest {
         LocalDateTime created = LocalDateTime.of(2026, 1, 1, 8, 0);
         when(userProfileService.getAdminView(5L)).thenReturn(new AdminUserView(
                 5L, "old@lockr.vn", "0901000005", "Khách A", "ACTIVE", Set.of("CUSTOMER"),
-                created, created, null, null, null));
+                created, created, null, null, null, false, null));
         Map<String, Object> account = new HashMap<>();
         account.put("userId", 5L);
         account.put("provider", "GOOGLE.COM");
@@ -200,7 +200,7 @@ class UserControllerAdminTest {
     @Test
     void adminDetailStillWorksWhenAuthLookupFails() {
         when(userProfileService.getAdminView(5L)).thenReturn(new AdminUserView(
-                5L, null, null, "Khách A", "ACTIVE", Set.of("CUSTOMER"), null, null, null, null, null));
+                5L, null, null, "Khách A", "ACTIVE", Set.of("CUSTOMER"), null, null, null, null, null, false, null));
         when(authClient.accountsByUsers(any())).thenThrow(new RuntimeException("down"));
 
         assertNull(controller.adminGet(5L).data().provider());

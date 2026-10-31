@@ -41,6 +41,17 @@ public class UserProfile {
     @Column(name = "roles", nullable = false, length = 500)
     private String roles = "CUSTOMER";
 
+    /// Đã bấm "Đồng ý" Điều khoản dịch vụ trên app chưa (V6). Tài khoản cũ = false ⇒ app hỏi một lần.
+    @Column(name = "terms_accepted", nullable = false)
+    private boolean termsAccepted = false;
+
+    @Column(name = "terms_accepted_at")
+    private LocalDateTime termsAcceptedAt;
+
+    /// Phiên bản điều khoản đã đồng ý (app gửi lên), vd. "2026-10-31".
+    @Column(name = "terms_version", length = 30)
+    private String termsVersion;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

@@ -19,6 +19,7 @@ import com.huynqb.laundrylocker.order.service.DroneRefundService;
 import com.huynqb.laundrylocker.order.service.OrderAccessGuard;
 import com.huynqb.laundrylocker.order.service.OrderService;
 import com.huynqb.laundrylocker.order.service.PromotionImageService;
+import com.huynqb.laundrylocker.order.service.ReceiverOrderMailService;
 import com.huynqb.laundrylocker.order.service.ReceiverOrderQueryService;
 import com.huynqb.laundrylocker.order.service.StoreRatingQueryService;
 import com.huynqb.laundrylocker.order.service.VoucherExchangeService;
@@ -47,6 +48,7 @@ public class OrderController {
     private final OrderService orderService;
     private final PromotionImageService promotionImageService;
     private final ReceiverOrderQueryService receiverOrderQueryService;
+    private final ReceiverOrderMailService receiverOrderMailService;
     private final StoreRatingQueryService storeRatingQueryService;
     private final VoucherExchangeService voucherExchangeService;
 
@@ -59,6 +61,22 @@ public class OrderController {
     public ApiResponse<OrderResponse> createSend(
             @Valid @RequestBody SendOrderRequest request, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("ORDER_CREATED", "Send order created", orderService.createSend(request, userId));
+    }
+
+    /// Người gửi đơn gửi hàng thêm / đổi email người nhận (body `{email?}`) và, khi hàng đã vào tủ, gửi lại mã
+    /// mở tủ tới email đó. Trả `{maskedEmail, includesPickupCode, sentAt}`; chưa vào tủ ⇒ chỉ lưu email.
+    @PostMapping("/api/orders/{orderId}/receiver-email")
+    public ApiResponse<ReceiverOrderEmailResponse> sendReceiverEmail(
+            @PathVariable Long orderId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestBody(required = false) Map<String, Object> request) {
+        Object email = request == null ? null : request.get("email");
+        ReceiverOrderEmailResponse result =
+                orderService.sendReceiverEmail(orderId, userId, email == null ? null : email.toString());
+        return ApiResponse.ok(
+                result.includesPickupCode() ? "RECEIVER_EMAIL_SENT" : "RECEIVER_EMAIL_SAVED",
+                result.includesPickupCode() ? "Đã gửi mã mở tủ tới email người nhận" : "Đã lưu email người nhận",
+                result);
     }
 
     @PostMapping("/api/orders/rental")
@@ -626,6 +644,15 @@ public class OrderController {
     public ApiResponse<ReceiverOrderDetailResponse> receiverOrderDetail(
             @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(receiverOrderQueryService.detail(userId, orderId));
+    }
+
+    /// Người nhận / người lấy hộ gửi lại thông tin đơn (kèm mã mở tủ khi hàng đã vào tủ) tới email tài khoản của
+    /// mình. Cùng quy tắc quyền với chi tiết đơn nhận; mỗi đơn một lần mỗi phút.
+    @PostMapping({"/api/orders/incoming/{orderId}/email", "/api/orders/delegated-to-me/{orderId}/email"})
+    public ApiResponse<ReceiverOrderEmailResponse> resendReceiverEmail(
+            @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok("RECEIVER_EMAIL_SENT", "Đã gửi thông tin đơn qua email",
+                receiverOrderMailService.resend(userId, orderId));
     }
 
     @PostMapping("/api/orders/{orderId}/rate")

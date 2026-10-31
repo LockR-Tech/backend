@@ -18,11 +18,14 @@ public record AdminUserView(
         LocalDateTime updatedAt,
         String provider,
         Boolean emailVerified,
-        String imageUrl) {
+        String imageUrl,
+        /// Khách đã bấm "Đồng ý" Điều khoản dịch vụ trên app chưa, và lúc nào.
+        boolean termsAccepted,
+        LocalDateTime termsAcceptedAt) {
 
     public AdminUserView withAuth(String provider, Boolean emailVerified) {
         return new AdminUserView(
                 id, email, phoneNumber, fullName, status, roles, createdAt, updatedAt, provider, emailVerified,
-                imageUrl);
+                imageUrl, termsAccepted, termsAcceptedAt);
     }
 }

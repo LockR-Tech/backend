@@ -3,6 +3,8 @@ package com.huynqb.laundrylocker.order.service;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.order.dto.GuestNotification;
+import com.huynqb.laundrylocker.order.dto.ReceiverOrderEmailResponse;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
@@ -375,6 +377,73 @@ class OrderServiceBenefitsTest {
         assertFalse(updated.stackable());
     }
 
+    @Test
+    void sendOrderRequiresAValidReceiverEmail() {
+        for (String email : new String[] {null, "  "}) {
+            BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createSend(
+                    new SendOrderRequest(5L, 301L, null, "0901234567", "Nhận", email, null, null, null, null), 44L));
+            assertEquals("RECEIVER_EMAIL_REQUIRED", ex.getCode());
+        }
+        BusinessException invalid = assertThrows(BusinessException.class, () -> orderService.createSend(
+                new SendOrderRequest(5L, 301L, null, "0901234567", "Nhận", "nhan@", null, null, null, null), 44L));
+        assertEquals("RECEIVER_EMAIL_INVALID", invalid.getCode());
+        verify(orderRepository, never()).save(any(LockerOrder.class));
+    }
+
+    @Test
+    void senderResendsPickupCodeToReceiverEmailOncePerMinute() {
+        LockerOrder order = existingOrder("STORING");
+        order.setPinCode("795296");
+        order.setReceiverEmail("nhan@example.com");
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
+
+        ReceiverOrderEmailResponse result = orderService.sendReceiverEmail(21L, 44L, null);
+
+        assertTrue(result.includesPickupCode());
+        assertEquals("nh***@example.com", result.maskedEmail());
+        org.mockito.ArgumentCaptor<GuestNotification.Request> sent =
+                org.mockito.ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient).notifyGuest(sent.capture());
+        assertEquals("nhan@example.com", sent.getValue().email());
+        assertNull(sent.getValue().phone());
+        assertTrue(sent.getValue().emailBody().contains("Mã mở tủ: 795296"));
+
+        BusinessException tooSoon = assertThrows(BusinessException.class,
+                () -> orderService.sendReceiverEmail(21L, 44L, null));
+        assertEquals("RECEIVER_EMAIL_TOO_SOON", tooSoon.getCode());
+    }
+
+    @Test
+    void beforeDropSenderOnlySavesTheNewReceiverEmail() {
+        existingOrder("INITIALIZED").setPinCode("111222");
+
+        ReceiverOrderEmailResponse result = orderService.sendReceiverEmail(21L, 44L, " moi@example.com ");
+
+        assertFalse(result.includesPickupCode());
+        assertEquals("moi@example.com", stored.get().getReceiverEmail());
+        verify(notificationClient, never()).notifyGuest(any());
+    }
+
+    @Test
+    void oldOrderWithoutEmailAsksForOne() {
+        existingOrder("STORING").setPinCode("795296");
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> orderService.sendReceiverEmail(21L, 44L, null));
+        assertEquals("RECEIVER_EMAIL_MISSING", ex.getCode());
+    }
+
+    @Test
+    void onlyTheSenderCanResendTheReceiverEmail() {
+        LockerOrder order = existingOrder("STORING");
+        order.setPinCode("795296");
+        order.setReceiverEmail("nhan@example.com");
+
+        assertThrows(RuntimeException.class, () -> orderService.sendReceiverEmail(21L, 99L, null));
+        verify(notificationClient, never()).notifyGuest(any());
+    }
+
     private LockerOrder existingOrder(String status) {
         LockerOrder order = new LockerOrder();
         order.setId(21L);
@@ -392,7 +461,7 @@ class OrderServiceBenefitsTest {
     }
 
     private static SendOrderRequest send(String promotionCode, Integer pointsToUse) {
-        return new SendOrderRequest(5L, 301L, null, "0901234567", "Người nhận", null, null, null,
+        return new SendOrderRequest(5L, 301L, null, "0901234567", "Người nhận", "nhan@example.com", null, null,
                 promotionCode, pointsToUse);
     }
 
