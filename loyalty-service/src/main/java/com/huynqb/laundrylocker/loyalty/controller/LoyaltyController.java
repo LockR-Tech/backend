@@ -160,6 +160,31 @@ public class LoyaltyController {
     }
 
     /// order-service trừ điểm cho đơn vừa tạo (chỉ trong cụm — gateway chặn mọi đường /internal).
+    @GetMapping("/api/admin/loyalty/members")
+    public ApiResponse<List<LoyaltyMemberResponse>> adminMembers() {
+        return ApiResponse.ok(loyaltyService.members());
+    }
+
+    @GetMapping("/api/admin/loyalty/transactions")
+    public ApiResponse<LoyaltyTransactionsResponse> adminTransactions(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "ALL") String scope,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "false") boolean thisMonth,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String from,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String to,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) Long userId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String orderType,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(loyaltyService.transactions(scope, thisMonth, from, to, userId, orderType, page, size));
+    }
+
+    @GetMapping("/api/admin/loyalty/period-summary")
+    public ApiResponse<LoyaltyPeriodSummaryResponse> adminPeriodSummary(
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String from,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String to) {
+        return ApiResponse.ok(loyaltyService.periodSummary(from, to));
+    }
+
     @PostMapping("/internal/loyalty/redemptions")
     public ApiResponse<OrderRedemptionResponse> redeemForOrder(@Valid @RequestBody OrderRedemptionRequest request) {
         return ApiResponse.ok(loyaltyService.redeemForOrder(request));

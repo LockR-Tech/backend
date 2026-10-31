@@ -50,7 +50,7 @@ class LoyaltyOrderPointsTest {
     void setUp() {
         settings = TestLoyaltyRules.settings(Map.of());
         events = org.mockito.Mockito.mock(LoyaltyEvents.class);
-        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings), events);
+        service = new LoyaltyService(accountRepository, transactionRepository, new LoyaltyRules(settings), events, null);
         account = new LoyaltyAccount();
         account.setUserId(7L);
         account.setPoints(100);
