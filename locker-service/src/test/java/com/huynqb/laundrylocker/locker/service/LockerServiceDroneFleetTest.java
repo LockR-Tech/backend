@@ -273,7 +273,7 @@ class LockerServiceDroneFleetTest {
                 () -> service.updateDroneUnit(1L, new DroneUpdateRequest(10L, "DRONE-02")));
         BusinessException decommissionError = assertThrows(
                 BusinessException.class,
-                () -> service.decommissionDrone(1L, 7L));
+                () -> service.decommissionDrone(1L, "Bán thanh lý", 7L));
 
         assertEquals("DRONE_ACTIVE_MISSION", editError.getCode());
         assertEquals("DRONE_ACTIVE_MISSION", decommissionError.getCode());

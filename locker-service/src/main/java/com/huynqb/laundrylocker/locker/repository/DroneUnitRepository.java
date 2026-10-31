@@ -14,9 +14,10 @@ public interface DroneUnitRepository extends JpaRepository<DroneUnit, Long> {
 
     List<DroneUnit> findAllByOrderByLockerIdAscCodeAsc();
 
-    boolean existsByCode(String code);
+    /// Mã của drone đã xoá mềm (active = false) được dùng lại.
+    boolean existsByCodeAndActiveTrue(String code);
 
-    Optional<DroneUnit> findByCode(String code);
+    Optional<DroneUnit> findByCodeAndActiveTrue(String code);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select d from DroneUnit d where d.id = :id")
