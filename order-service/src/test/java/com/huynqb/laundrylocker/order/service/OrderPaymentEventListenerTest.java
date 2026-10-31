@@ -34,6 +34,9 @@ class OrderPaymentEventListenerTest {
     @Mock
     private com.huynqb.laundrylocker.order.client.NotificationClient notificationClient;
 
+    @Mock
+    private OrderService orderService;
+
     @Test
     void paymentCompletedMarksDroneOrderPaidWithoutChangingDispatchStage() {
         OrderPaymentEventListener listener = listener();
@@ -165,6 +168,42 @@ class OrderPaymentEventListenerTest {
         verify(notificationClient, never()).requestNotification(any());
     }
 
+    @Test
+    void paidSendOrderTellsTheReceiverOnce() {
+        OrderPaymentEventListener listener = listener();
+        LockerOrder order = new LockerOrder();
+        order.setId(21L);
+        order.setType("SEND");
+        order.setStatus("INITIALIZED");
+        order.setPaymentStatus("UNPAID");
+        order.setTotalPrice(new java.math.BigDecimal("15000"));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        listener.onPaymentEvent(paid(5L, "15000"));
+        listener.onPaymentEvent(paid(5L, "15000"));
+
+        assertEquals("PAID", order.getPaymentStatus());
+        verify(orderService).notifyReceiverOrderPaid(order);
+    }
+
+    @Test
+    void partialPaymentDoesNotTellTheReceiverYet() {
+        OrderPaymentEventListener listener = listener();
+        LockerOrder order = new LockerOrder();
+        order.setId(21L);
+        order.setType("SEND");
+        order.setStatus("INITIALIZED");
+        order.setPaymentStatus("UNPAID");
+        order.setTotalPrice(new java.math.BigDecimal("15000"));
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(LockerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        listener.onPaymentEvent(paid(5L, "5000"));
+
+        verify(orderService, never()).notifyReceiverOrderPaid(any());
+    }
+
     private static DomainEvent paid(long paymentId, String amount) {
         return DomainEvent.of(
                 DomainEventNames.PAYMENT_COMPLETED,
@@ -175,7 +214,8 @@ class OrderPaymentEventListenerTest {
     private OrderPaymentEventListener listener() {
         return new OrderPaymentEventListener(
                 orderRepository, droneLateRefunds,
-                new PaidOrderEffects(rabbitTemplate, notificationClient, dronePickupService, orderRepository));
+                new PaidOrderEffects(rabbitTemplate, notificationClient, dronePickupService, orderRepository),
+                orderService);
     }
 
     private static LockerOrder droneOrder(String status, String paymentStatus) {
