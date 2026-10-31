@@ -43,6 +43,10 @@ public class RevenueReportService {
 
     public static final String OVERTIME_FEE = "OVERTIME_FEE";
     static final List<String> MAIN_SERVICE_TYPES = List.of("SEND", "RENTAL", "DRONE_DELIVERY");
+    private static final String ENTRIES_PAYMENTS = "PAYMENTS";
+    private static final String ENTRIES_REFUNDS = "REFUNDS";
+    private static final String ENTRIES_NET = "NET";
+    private static final Set<String> ENTRY_KINDS = Set.of(ENTRIES_PAYMENTS, ENTRIES_REFUNDS, ENTRIES_NET);
     static final Set<String> CUSTOMER_SORTS = Set.of("totalSpent", "netSpent", "orderCount", "paidOrderCount",
             "averageOrderValue", "lastOrderAt", "lastPaidAt");
 
@@ -76,6 +80,47 @@ public class RevenueReportService {
                 current.from(), current.to(), previous.from(), previous.to(),
                 currentPeriod, previousPeriod, changes(currentPeriod, previousPeriod),
                 period(recent, todayRange), period(recent, week), period(recent, month));
+    }
+
+    /// Đúng các khoản đã cộng vào thẻ doanh thu: PAYMENTS (đã thu), REFUNDS (đã hoàn), NET (cả hai, khoản hoàn âm).
+    @Transactional(readOnly = true)
+    public RevenueEntriesResponse entries(String from, String to, String kind) {
+        DateRange range = time.dateRange(from, to);
+        String normalized = kind == null ? ENTRIES_PAYMENTS : kind.trim().toUpperCase(Locale.ROOT);
+        if (!ENTRY_KINDS.contains(normalized)) {
+            throw new BusinessException("REVENUE_ENTRY_KIND_INVALID", "Loại khoản không hợp lệ: " + kind);
+        }
+        Dataset data = load(range, null);
+        List<CollectedPayment> payments = ENTRIES_REFUNDS.equals(normalized) ? List.of() : data.paymentsIn(range);
+        List<CollectedRefund> refunds = ENTRIES_PAYMENTS.equals(normalized) ? List.of() : data.refundsIn(range);
+        Set<Long> userIds = new HashSet<>();
+        payments.forEach(p -> userIds.add(p.userId()));
+        refunds.forEach(r -> userIds.add(r.userId()));
+        userIds.remove(null);
+        Lookup<UserSummary> users = resolver.users(userIds);
+        BigDecimal refundSign = ENTRIES_NET.equals(normalized) ? BigDecimal.ONE.negate() : BigDecimal.ONE;
+
+        List<RevenueEntry> entries = new ArrayList<>();
+        payments.forEach(p -> entries.add(entry(
+                ENTRIES_PAYMENTS, data, users, p.orderId(), p.userId(), nz(p.amount()), p.method(), p.paidAt())));
+        refunds.forEach(r -> entries.add(entry(
+                ENTRIES_REFUNDS, data, users, r.orderId(), r.userId(), nz(r.amount()).multiply(refundSign), r.method(),
+                r.refundedAt())));
+        entries.sort(Comparator.comparing(RevenueEntry::at).reversed());
+        BigDecimal total = entries.stream().map(RevenueEntry::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        long orderCount = entries.stream().map(RevenueEntry::orderId).distinct().count();
+        return new RevenueEntriesResponse(range.from(), range.to(), normalized, total, orderCount, entries);
+    }
+
+    private static RevenueEntry entry(
+            String kind, Dataset data, Lookup<UserSummary> users, Long orderId, Long userId, BigDecimal amount,
+            String method, LocalDateTime at) {
+        LockerOrder order = orderId == null ? null : data.orders.get(orderId);
+        UserSummary user = userId == null ? null : users.values().get(userId);
+        return new RevenueEntry(
+                kind, orderId, order == null ? null : order.getOrderCode(), order == null ? null : order.getType(),
+                userId, user == null ? null : user.fullName(), user == null ? null : user.phoneNumber(),
+                amount, method, at);
     }
 
     // ------------------------------------------------------------------ daily

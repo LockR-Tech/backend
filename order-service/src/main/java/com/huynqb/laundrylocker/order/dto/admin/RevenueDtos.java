@@ -47,6 +47,29 @@ public final class RevenueDtos {
             BigDecimal averageOrderValuePct) {
     }
 
+    /// Một khoản thu hoặc hoàn tạo nên số trên thẻ doanh thu (amount của khoản hoàn mang dấu âm khi kind = NET).
+    public record RevenueEntry(
+            String kind,
+            Long orderId,
+            String orderCode,
+            String orderType,
+            Long userId,
+            String customerName,
+            String customerPhone,
+            BigDecimal amount,
+            String method,
+            LocalDateTime at) {
+    }
+
+    public record RevenueEntriesResponse(
+            LocalDate from,
+            LocalDate to,
+            String kind,
+            BigDecimal total,
+            long orderCount,
+            List<RevenueEntry> entries) {
+    }
+
     public record RevenueSummaryResponse(
             LocalDate from,
             LocalDate to,

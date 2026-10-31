@@ -128,6 +128,32 @@ class RevenueReportServiceTest {
     }
 
     @Test
+    void entriesAddUpToSummaryCards() {
+        RevenuePeriod current = service.summary(FROM, TO).current();
+
+        var payments = service.entries(FROM, TO, "PAYMENTS");
+        var refunds = service.entries(FROM, TO, "REFUNDS");
+        var net = service.entries(FROM, TO, "NET");
+
+        assertEquals(0, current.totalRevenue().compareTo(payments.total()));
+        assertEquals(current.paymentCount(), payments.entries().size());
+        assertEquals(current.paidOrderCount(), payments.orderCount());
+        assertEquals(0, current.refundAmount().compareTo(refunds.total()));
+        assertEquals(0, current.netRevenue().compareTo(net.total()));
+        var refund = refunds.entries().get(0);
+        assertEquals("ORD-2", refund.orderCode());
+        assertEquals("RENTAL", refund.orderType());
+        assertEquals("Trần Bình", refund.customerName());
+    }
+
+    @Test
+    void entriesRejectUnknownKind() {
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.entries(FROM, TO, "X"));
+
+        assertEquals("REVENUE_ENTRY_KIND_INVALID", ex.getCode());
+    }
+
+    @Test
     void dailySeriesBucketsByVietnamDateAndFillsEmptyDays() {
         DailyRevenueResponse daily = service.daily(FROM, TO);
 
