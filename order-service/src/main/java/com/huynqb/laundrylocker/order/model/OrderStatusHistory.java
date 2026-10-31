@@ -31,6 +31,17 @@ public class OrderStatusHistory {
     @Column(length = 1000)
     private String note;
 
+    /// Vị trí của kiện lúc ghi mốc (chỉ đơn drone) — xem `OrderHistoryLocator`.
+    @Column
+    private Double latitude;
+
+    @Column
+    private Double longitude;
+
+    /// PICKUP_ADDRESS | TECHNICIAN | SOURCE_LOCKER | DRONE | DRONE_SIMULATED | DESTINATION_LOCKER
+    @Column(name = "location_source", length = 30)
+    private String locationSource;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
