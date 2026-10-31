@@ -204,7 +204,7 @@ class UserControllerSelfServiceTest {
 
     private static UserProfileView view(boolean hasPassword) {
         return new UserProfileView(5L, "old@lockr.vn", "0901000005", "Khách A", "Khách", "A", null,
-                "ACTIVE", Set.of("CUSTOMER"), null, hasPassword);
+                "ACTIVE", Set.of("CUSTOMER"), null, hasPassword, false, null, null);
     }
 
     private static Request feignRequest() {

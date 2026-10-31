@@ -126,6 +126,16 @@ public class UserController {
         return ApiResponse.ok("USER_PROFILE_OK", "User profile", userProfileService.getProfileView(userId, hasPassword(userId)));
     }
 
+    /// Bấm "Đồng ý" Điều khoản dịch vụ trên app (lần đăng nhập đầu, hoặc khi điều khoản đổi phiên bản).
+    /// Body `{version?}`; trả lại hồ sơ đã có `termsAccepted = true`.
+    @PostMapping("/api/user/terms")
+    public ApiResponse<UserProfileView> acceptTerms(
+            @RequestHeader("X-User-Id") Long userId, @RequestBody(required = false) Map<String, Object> request) {
+        Object version = request == null ? null : request.get("version");
+        return ApiResponse.ok("TERMS_ACCEPTED", "Đã đồng ý điều khoản",
+                userProfileService.acceptTerms(userId, version == null ? null : version.toString(), hasPassword(userId)));
+    }
+
     /// Body `{firstName?, lastName?, fullName? (app cũ), email?, phoneNumber?, birthday?}` — field thiếu/rỗng = giữ nguyên.
     /// Đổi email/số điện thoại: kiểm trùng rồi đồng bộ sang tài khoản đăng nhập như đường admin, để đăng nhập
     /// bằng định danh mới vẫn được và không trùng tài khoản khác (409 USER_*_TAKEN / AUTH_*_TAKEN).
