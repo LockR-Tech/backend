@@ -13,10 +13,16 @@ import jakarta.validation.constraints.NotNull;
  * @param receiverUserId user nhận hàng (đích gửi noti)
  * @param status         một trong: dispatched/approaching/arrived/delivered/delayed/failed
  * @param eta            thời gian dự kiến (tuỳ chọn, chỉ dùng cho mốc delayed)
+ * @param note           câu ghép sau nội dung mặc định (tuỳ chọn), vd hạn lấy hàng ở mốc ready_for_pickup
  */
 public record DeliveryStatusNotificationRequest(
         @NotNull Long orderId,
         @NotNull Long receiverUserId,
         @NotBlank String status,
-        String eta) {
+        String eta,
+        String note) {
+
+    public DeliveryStatusNotificationRequest(Long orderId, Long receiverUserId, String status, String eta) {
+        this(orderId, receiverUserId, status, eta, null);
+    }
 }
