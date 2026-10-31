@@ -63,8 +63,8 @@ public class OrderController {
         return ApiResponse.ok("ORDER_CREATED", "Send order created", orderService.createSend(request, userId));
     }
 
-    /// Người gửi đơn gửi hàng thêm / đổi email người nhận (body `{email?}`) và, khi hàng đã vào tủ, gửi lại mã
-    /// mở tủ tới email đó. Trả `{maskedEmail, includesPickupCode, sentAt}`; chưa vào tủ ⇒ chỉ lưu email.
+    /// Người gửi đơn gửi hàng gửi lại thư cho người nhận (body `{email?}` để thêm / đổi email trước khi gửi).
+    /// Trả `{maskedEmail, includesPickupCode, sentAt}`; chưa vào tủ ⇒ thư báo có đơn, chưa kèm mã mở tủ.
     @PostMapping("/api/orders/{orderId}/receiver-email")
     public ApiResponse<ReceiverOrderEmailResponse> sendReceiverEmail(
             @PathVariable Long orderId,
@@ -74,8 +74,10 @@ public class OrderController {
         ReceiverOrderEmailResponse result =
                 orderService.sendReceiverEmail(orderId, userId, email == null ? null : email.toString());
         return ApiResponse.ok(
-                result.includesPickupCode() ? "RECEIVER_EMAIL_SENT" : "RECEIVER_EMAIL_SAVED",
-                result.includesPickupCode() ? "Đã gửi mã mở tủ tới email người nhận" : "Đã lưu email người nhận",
+                "RECEIVER_EMAIL_SENT",
+                result.includesPickupCode()
+                        ? "Đã gửi mã mở tủ tới email người nhận"
+                        : "Đã gửi thông tin đơn tới email người nhận",
                 result);
     }
 

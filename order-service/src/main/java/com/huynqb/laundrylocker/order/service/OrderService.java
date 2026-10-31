@@ -256,6 +256,9 @@ public class OrderService {
                     "Đơn " + saved.getOrderCode() + " đã được tạo. Bạn có thể theo dõi tại mục Hàng chờ nhận.",
                     "ORDER_CREATED", saved.getId());
         }
+        // Thư 1/4 cho người nhận: báo có đơn sắp tới, CHƯA kèm mã — PIN lúc này là mã bỏ hàng của người gửi.
+        emailReceiverAfterCommit(saved, "Bạn sắp nhận kiện hàng " + saved.getOrderCode() + " qua tủ Lock.R",
+                () -> receiverOrderCreatedEmailBody(saved, senderName(saved), pickupPlace(saved), rules.sendPickupHours()));
         return toResponse(saved);
     }
 
@@ -819,12 +822,22 @@ public class OrderService {
         }
         order.setPinCode(generatePinCode());
         order.setPinCodeIssuedAt(LocalDateTime.now());
-        return toResponse(orderRepository.save(order));
+        LockerOrder saved = orderRepository.save(order);
+        // Thư 3/4: hàng đã trong tủ thì mã người nhận đang giữ vừa hết hiệu lực — gửi mã mới cho họ. Đơn đã ủy
+        // quyền thì mã thuộc người lấy hộ, không gửi cho người nhận.
+        if ("SEND".equalsIgnoreCase(saved.getType())
+                && Set.of("STORING", "RETURNED").contains(saved.getStatus())
+                && !StringUtils.hasText(saved.getDelegatePhone())) {
+            emailReceiverAfterCommit(saved, "Mã mở tủ mới cho đơn " + saved.getOrderCode(),
+                    () -> receiverEmailBody(saved, senderName(saved), pickupPlace(saved),
+                            formatDeadline(saved.getPickupDeadline())));
+        }
+        return toResponse(saved);
     }
 
-    /// Người gửi đơn gửi hàng lưu / đổi email người nhận và (khi hàng đã vào tủ) gửi lại mã mở tủ tới email đó.
-    /// Hàng chưa vào tủ ⇒ chỉ lưu email: lúc bỏ hàng Lock.R tự gửi mã như thường. Mỗi đơn gửi lại tối đa một
-    /// lần mỗi [#RECEIVER_EMAIL_COOLDOWN].
+    /// Người gửi đơn gửi hàng bấm "Gửi lại thông tin cho người nhận" (có thể kèm email mới): gửi lại thư tới
+    /// email người nhận. Hàng chưa vào tủ ⇒ thư báo có đơn sắp tới (không kèm mã); đã vào tủ ⇒ thư kèm mã mở
+    /// tủ + hạn lấy. Mỗi đơn gửi lại tối đa một lần mỗi [#RECEIVER_EMAIL_COOLDOWN].
     @Transactional
     public ReceiverOrderEmailResponse sendReceiverEmail(Long id, Long userId, String email) {
         LockerOrder order = find(id);
@@ -852,10 +865,8 @@ public class OrderService {
             throw new BusinessException("RECEIVER_EMAIL_MISSING", "Đơn chưa có email người nhận. Nhập email rồi gửi lại.");
         }
         String masked = DroneMissionProgressService.maskEmail(order.getReceiverEmail());
-        boolean ready = "STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus());
-        if (!ready || !StringUtils.hasText(order.getPinCode())) {
-            return new ReceiverOrderEmailResponse(masked, false, null);
-        }
+        boolean ready = ("STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus()))
+                && StringUtils.hasText(order.getPinCode());
 
         Instant now = Instant.now();
         Instant previous = receiverEmailSentAt.get(order.getId());
@@ -865,12 +876,16 @@ public class OrderService {
                     "Vừa gửi email cho đơn này. Thử lại sau " + wait + " giây.", HttpStatus.TOO_MANY_REQUESTS);
         }
         PickupPlace place = pickupPlace(order);
-        String deadline = formatDeadline(order.getPickupDeadline());
+        String subject = ready
+                ? "Mã mở tủ Lock.R cho đơn " + order.getOrderCode()
+                : "Bạn sắp nhận kiện hàng " + order.getOrderCode() + " qua tủ Lock.R";
+        String body = ready
+                ? receiverEmailBody(order, senderName(order), place, formatDeadline(order.getPickupDeadline()))
+                : receiverOrderCreatedEmailBody(order, senderName(order), place, rules.sendPickupHours());
         boolean sent;
         try {
-            var response = notificationClient.notifyGuest(new GuestNotification.Request(
-                    null, order.getReceiverEmail(), "Mã mở tủ Lock.R cho đơn " + order.getOrderCode(), null,
-                    receiverEmailBody(order, senderName(order), place, deadline)));
+            var response = notificationClient.notifyGuest(
+                    new GuestNotification.Request(null, order.getReceiverEmail(), subject, null, body));
             var result = response == null ? null : response.data();
             sent = result != null && result.emailSent();
         } catch (Exception ex) {
@@ -883,8 +898,68 @@ public class OrderService {
         }
         receiverEmailSentAt.put(order.getId(), now);
         addHistory(order.getId(), order.getStatus(), order.getStatus(), userId,
-                "Người gửi gửi lại mã mở tủ tới email người nhận " + masked + ".");
-        return new ReceiverOrderEmailResponse(masked, true, LocalDateTime.now());
+                (ready ? "Người gửi gửi lại mã mở tủ tới email người nhận " : "Người gửi gửi lại thông tin đơn tới email người nhận ")
+                        + masked + ".");
+        return new ReceiverOrderEmailResponse(masked, ready, LocalDateTime.now());
+    }
+
+    /// Thư tự động cho người nhận đơn gửi hàng (ngoài thư có mã lúc bỏ hàng — xem [#notifyParcelReadyForReceiver]).
+    /// Gửi SAU commit để đơn bị rollback không sinh thư; dựng nội dung lúc gửi (tra tên người gửi, tủ qua mạng).
+    /// Không bao giờ ném lỗi: thư hỏng không được làm hỏng thao tác trên đơn.
+    private void emailReceiverAfterCommit(LockerOrder order, String subject, java.util.function.Supplier<String> body) {
+        if (!rules.receiverNotifyEmail() || !StringUtils.hasText(order.getReceiverEmail())) {
+            return;
+        }
+        String email = order.getReceiverEmail().trim();
+        Long orderId = order.getId();
+        Runnable send = () -> {
+            try {
+                notificationClient.notifyGuest(new GuestNotification.Request(null, email, subject, null, body.get()));
+            } catch (Exception ex) {
+                log.warn("Could not email the receiver of order {}: {}", orderId, ex.getMessage());
+            }
+        };
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            send.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                send.run();
+            }
+        });
+    }
+
+    /// Thư lúc tạo đơn gửi hàng: ai gửi, gửi tới tủ nào, và mã sẽ tới khi hàng vào tủ. Không có mã mở tủ.
+    static String receiverOrderCreatedEmailBody(LockerOrder order, String senderName, PickupPlace place, int pickupHours) {
+        boolean hasSender = StringUtils.hasText(senderName);
+        StringBuilder body = new StringBuilder("Xin chào")
+                .append(StringUtils.hasText(order.getReceiverName()) ? " " + order.getReceiverName().trim() : "")
+                .append(",\n\n")
+                .append(hasSender ? senderName.trim() : "Một người dùng Lock.R")
+                .append(" vừa tạo đơn gửi cho bạn một kiện hàng qua tủ Lock.R.\n\n")
+                .append("Mã đơn: ").append(order.getOrderCode()).append("\n");
+        if (hasSender) {
+            body.append("Người gửi: ").append(senderName.trim()).append("\n");
+        }
+        body.append("Nơi lấy: ").append(place.label()).append("\n");
+        if (StringUtils.hasText(order.getCustomerNote())) {
+            body.append("Lời nhắn của người gửi: ").append(order.getCustomerNote().trim()).append("\n");
+        }
+        return body.append("\nKhi người gửi bỏ hàng vào tủ, Lock.R sẽ gửi email kèm mã mở tủ. ")
+                .append("Bạn có ").append(pickupHours).append(" giờ để lấy hàng kể từ lúc đó.\n")
+                .append("Bạn chưa cần tới tủ ngay bây giờ.\n")
+                .toString();
+    }
+
+    /// Thư khi đơn gửi hàng bị huỷ trước lúc bỏ hàng — người nhận đã được báo có đơn ở thư lúc tạo.
+    static String receiverOrderCanceledEmailBody(LockerOrder order, String senderName) {
+        return "Xin chào" + (StringUtils.hasText(order.getReceiverName()) ? " " + order.getReceiverName().trim() : "")
+                + ",\n\nĐơn " + order.getOrderCode()
+                + (StringUtils.hasText(senderName) ? " mà " + senderName.trim() + " định gửi cho bạn" : " gửi cho bạn")
+                + " qua tủ Lock.R đã bị hủy trước khi hàng được bỏ vào tủ.\n\n"
+                + "Bạn không cần tới tủ lấy hàng. Nếu cần, hãy liên hệ trực tiếp với người gửi.\n";
     }
 
     static final Duration RECEIVER_EMAIL_COOLDOWN = Duration.ofSeconds(60);
@@ -2109,6 +2184,12 @@ public class OrderService {
         // đây: trả lượt mã giảm giá + hoàn điểm thưởng (idempotent).
         if ("CANCELED".equals(order.getStatus()) && !"CANCELED".equalsIgnoreCase(oldStatus)) {
             benefits.releaseBenefits(order);
+            // Thư 4/4: đơn gửi hàng huỷ trước lúc bỏ hàng (khách huỷ, tự huỷ chưa trả / chưa bỏ hàng, báo lỗi ô,
+            // admin huỷ) — người nhận đã nhận thư báo có đơn lúc tạo nên phải biết không còn hàng tới.
+            if ("SEND".equalsIgnoreCase(order.getType()) && "INITIALIZED".equalsIgnoreCase(oldStatus)) {
+                emailReceiverAfterCommit(order, "Đơn " + order.getOrderCode() + " gửi cho bạn đã bị hủy",
+                        () -> receiverOrderCanceledEmailBody(order, senderName(order)));
+            }
         }
         // Đơn drone kết thúc thì chặng giao kết thúc theo. Client hiển thị đơn drone
         // bằng deliveryStage: để nguyên READY_FOR_PICKUP thì đơn khách đã lấy hàng vẫn

@@ -415,14 +415,75 @@ class OrderServiceBenefitsTest {
     }
 
     @Test
-    void beforeDropSenderOnlySavesTheNewReceiverEmail() {
+    void beforeDropResendSendsOrderInfoWithoutTheDropPin() {
         existingOrder("INITIALIZED").setPinCode("111222");
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
 
         ReceiverOrderEmailResponse result = orderService.sendReceiverEmail(21L, 44L, " moi@example.com ");
 
         assertFalse(result.includesPickupCode());
         assertEquals("moi@example.com", stored.get().getReceiverEmail());
+        org.mockito.ArgumentCaptor<GuestNotification.Request> sent =
+                org.mockito.ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient).notifyGuest(sent.capture());
+        assertEquals("moi@example.com", sent.getValue().email());
+        assertTrue(sent.getValue().emailBody().contains("Mã đơn: ORD-21"));
+        assertFalse(sent.getValue().emailBody().contains("111222"));
+    }
+
+    @Test
+    void createdSendOrderEmailsTheReceiverWithoutAnyPin() {
+        when(lockerClient.getBox(any())).thenReturn(null);
+        OrderResponse created = orderService.createSend(send(null, null), 44L);
+
+        org.mockito.ArgumentCaptor<GuestNotification.Request> sent =
+                org.mockito.ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient).notifyGuest(sent.capture());
+        assertEquals("nhan@example.com", sent.getValue().email());
+        assertNull(sent.getValue().phone());
+        assertTrue(sent.getValue().emailBody().contains("Mã đơn: " + created.orderCode()));
+        assertFalse(sent.getValue().emailBody().contains("Mã mở tủ:"));
+        assertFalse(sent.getValue().emailBody().contains(stored.get().getPinCode()));
+    }
+
+    @Test
+    void resettingPinOfStoredParcelEmailsTheNewPinToTheReceiver() {
+        LockerOrder order = existingOrder("STORING");
+        order.setPinCode("123456");
+        order.setReceiverEmail("nhan@example.com");
+
+        orderService.resetPin(21L, 44L);
+
+        org.mockito.ArgumentCaptor<GuestNotification.Request> sent =
+                org.mockito.ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient).notifyGuest(sent.capture());
+        assertTrue(sent.getValue().emailBody().contains("Mã mở tủ: " + order.getPinCode()));
+    }
+
+    @Test
+    void resettingTheDropPinDoesNotEmailTheReceiver() {
+        LockerOrder order = existingOrder("INITIALIZED");
+        order.setPinCode("123456");
+        order.setReceiverEmail("nhan@example.com");
+
+        orderService.resetPin(21L, 44L);
+
         verify(notificationClient, never()).notifyGuest(any());
+    }
+
+    @Test
+    void cancelingSendOrderBeforeDropTellsTheReceiver() {
+        LockerOrder order = existingOrder("INITIALIZED");
+        order.setReceiverEmail("nhan@example.com");
+
+        orderService.cancel(21L, null, 44L);
+
+        org.mockito.ArgumentCaptor<GuestNotification.Request> sent =
+                org.mockito.ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient).notifyGuest(sent.capture());
+        assertEquals("nhan@example.com", sent.getValue().email());
+        assertTrue(sent.getValue().emailBody().contains("đã bị hủy"));
     }
 
     @Test
