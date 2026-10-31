@@ -37,11 +37,15 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -219,6 +223,9 @@ public class OrderService {
 
     @Transactional
     public OrderResponse createSend(SendOrderRequest request, Long userId) {
+        // Gửi hàng qua tủ bắt buộc có email người nhận: mã mở tủ luôn tới được người nhận (kể cả chưa có
+        // tài khoản Lock.R) và người gửi gửi lại được từ chi tiết đơn khi cần.
+        requireReceiverEmail(request.receiverEmail());
         Long boxId = request.boxId();
         if (boxId == null) {
             boxId = findAvailableCell(request.lockerId(), request.size(), "STANDARD");
@@ -235,10 +242,7 @@ public class OrderService {
 
         // Email người nhận ghi sau khi tạo, giống cách createRental đặt số giờ thuê:
         // CreateOrderRequest là record vị trí dùng chung cho mọi loại đơn, thêm trường
-        // vào đó sẽ phải sửa mọi nơi gọi chỉ vì một loại đơn cần.
-        if (!StringUtils.hasText(request.receiverEmail())) {
-            return created;
-        }
+        // vào đó sẽ phải sửa mọi nơi gọi chỉ vì một loại đơn cần. Email đã kiểm bắt buộc ở đầu hàm.
         LockerOrder order = find(created.id());
         order.setReceiverEmail(request.receiverEmail().trim());
         Long receiverUserId = receiverAccount(order.getReceiverEmail(), order.getReceiverPhone());
@@ -818,6 +822,88 @@ public class OrderService {
         return toResponse(orderRepository.save(order));
     }
 
+    /// Người gửi đơn gửi hàng lưu / đổi email người nhận và (khi hàng đã vào tủ) gửi lại mã mở tủ tới email đó.
+    /// Hàng chưa vào tủ ⇒ chỉ lưu email: lúc bỏ hàng Lock.R tự gửi mã như thường. Mỗi đơn gửi lại tối đa một
+    /// lần mỗi [#RECEIVER_EMAIL_COOLDOWN].
+    @Transactional
+    public ReceiverOrderEmailResponse sendReceiverEmail(Long id, Long userId, String email) {
+        LockerOrder order = find(id);
+        assertOwner(order, userId);
+        if (!"SEND".equalsIgnoreCase(order.getType())) {
+            throw new BusinessException("ORDER_TYPE_INVALID", "Chỉ đơn gửi hàng qua tủ mới gửi mã cho người nhận qua email");
+        }
+        validateStatus(order, PIN_RESETTABLE);
+        if (StringUtils.hasText(order.getDelegatePhone())) {
+            throw new BusinessException("ORDER_DELEGATED",
+                    "Đơn đã ủy quyền lấy hộ — mã mới thuộc về người lấy hộ, không gửi cho email người nhận.");
+        }
+        if (StringUtils.hasText(email)) {
+            String trimmed = requireReceiverEmail(email);
+            if (!trimmed.equalsIgnoreCase(String.valueOf(order.getReceiverEmail()))) {
+                String previous = order.getReceiverEmail();
+                order.setReceiverEmail(trimmed);
+                orderRepository.save(order);
+                addHistory(order.getId(), order.getStatus(), order.getStatus(), userId,
+                        (previous == null ? "Thêm" : "Đổi") + " email người nhận: "
+                                + DroneMissionProgressService.maskEmail(trimmed) + ".");
+            }
+        }
+        if (!StringUtils.hasText(order.getReceiverEmail())) {
+            throw new BusinessException("RECEIVER_EMAIL_MISSING", "Đơn chưa có email người nhận. Nhập email rồi gửi lại.");
+        }
+        String masked = DroneMissionProgressService.maskEmail(order.getReceiverEmail());
+        boolean ready = "STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus());
+        if (!ready || !StringUtils.hasText(order.getPinCode())) {
+            return new ReceiverOrderEmailResponse(masked, false, null);
+        }
+
+        Instant now = Instant.now();
+        Instant previous = receiverEmailSentAt.get(order.getId());
+        if (previous != null && previous.plus(RECEIVER_EMAIL_COOLDOWN).isAfter(now)) {
+            long wait = Duration.between(now, previous.plus(RECEIVER_EMAIL_COOLDOWN)).toSeconds() + 1;
+            throw new BusinessException("RECEIVER_EMAIL_TOO_SOON",
+                    "Vừa gửi email cho đơn này. Thử lại sau " + wait + " giây.", HttpStatus.TOO_MANY_REQUESTS);
+        }
+        PickupPlace place = pickupPlace(order);
+        String deadline = formatDeadline(order.getPickupDeadline());
+        boolean sent;
+        try {
+            var response = notificationClient.notifyGuest(new GuestNotification.Request(
+                    null, order.getReceiverEmail(), "Mã mở tủ Lock.R cho đơn " + order.getOrderCode(), null,
+                    receiverEmailBody(order, senderName(order), place, deadline)));
+            var result = response == null ? null : response.data();
+            sent = result != null && result.emailSent();
+        } catch (Exception ex) {
+            log.warn("Could not resend pickup code of order {} by email: {}", order.getId(), ex.getMessage());
+            sent = false;
+        }
+        if (!sent) {
+            throw new BusinessException("RECEIVER_EMAIL_FAILED",
+                    "Chưa gửi được email lúc này. Thử lại sau ít phút.", HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        receiverEmailSentAt.put(order.getId(), now);
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), userId,
+                "Người gửi gửi lại mã mở tủ tới email người nhận " + masked + ".");
+        return new ReceiverOrderEmailResponse(masked, true, LocalDateTime.now());
+    }
+
+    static final Duration RECEIVER_EMAIL_COOLDOWN = Duration.ofSeconds(60);
+    private static final Pattern RECEIVER_EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$");
+    private final Map<Long, Instant> receiverEmailSentAt = new ConcurrentHashMap<>();
+
+    /// Email người nhận bắt buộc và đúng dạng; trả email đã cắt khoảng trắng.
+    static String requireReceiverEmail(String email) {
+        String trimmed = email == null ? "" : email.trim();
+        if (trimmed.isEmpty()) {
+            throw new BusinessException("RECEIVER_EMAIL_REQUIRED",
+                    "Nhập email người nhận để Lock.R gửi mã mở tủ cho họ.");
+        }
+        if (trimmed.length() > 255 || !RECEIVER_EMAIL.matcher(trimmed).matches()) {
+            throw new BusinessException("RECEIVER_EMAIL_INVALID", "Email người nhận không hợp lệ.");
+        }
+        return trimmed;
+    }
+
     @Transactional
     public OrderResponse delegate(Long id, Long userId, DelegateOrderRequest request) {
         LockerOrder order = find(id);
@@ -1137,6 +1223,11 @@ public class OrderService {
         // Đặt lại đi qua đúng đường đặt mới (giữ ô + giá theo cấu hình). Loại khác không đặt lại:
         // đường tạo đơn chung tính giá theo món, đơn không có món thành 0đ và được tự ghi PAID.
         if ("SEND".equals(type)) {
+            // Đơn gửi tạo trước khi bắt buộc email người nhận: không có chỗ nhập email khi đặt lại.
+            if (original.getReceiverEmail() == null || original.getReceiverEmail().isBlank()) {
+                throw new BusinessException("RECEIVER_EMAIL_REQUIRED",
+                        "Đơn cũ chưa có email người nhận. Hãy tạo đơn gửi mới và nhập email người nhận.");
+            }
             return createSend(
                     new SendOrderRequest(
                             original.getLockerId(),

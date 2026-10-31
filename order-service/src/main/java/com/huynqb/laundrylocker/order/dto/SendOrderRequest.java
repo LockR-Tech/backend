@@ -12,7 +12,8 @@ public record SendOrderRequest(
         String size,
         @NotBlank String receiverPhone,
         String receiverName,
-        /// Tuỳ chọn. Có thì mã mở tủ gửi được cho người nhận CHƯA có tài khoản Lock.R.
+        /// Bắt buộc (kiểm ở OrderService.createSend, lỗi RECEIVER_EMAIL_REQUIRED): mã mở tủ luôn gửi được cho
+        /// người nhận, kể cả chưa có tài khoản Lock.R, và người gửi gửi lại được từ chi tiết đơn.
         @Email(message = "receiverEmail không hợp lệ") String receiverEmail,
         String note,
         BigDecimal totalPrice,

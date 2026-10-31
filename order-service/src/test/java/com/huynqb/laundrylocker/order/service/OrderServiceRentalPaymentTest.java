@@ -324,6 +324,24 @@ class OrderServiceRentalPaymentTest {
         verify(orderRepository, never()).save(any(LockerOrder.class));
     }
 
+    /// Đơn gửi cũ (trước khi bắt buộc email người nhận) đặt lại thì báo rõ phải tạo đơn mới.
+    @Test
+    void reorderOfSendWithoutReceiverEmailAsksForNewOrder() {
+        LockerOrder original = new LockerOrder();
+        original.setId(31L);
+        original.setUserId(44L);
+        original.setType("SEND");
+        original.setStatus("COMPLETED");
+        original.setReceiverPhone("0901000002");
+        when(orderRepository.findById(31L)).thenReturn(Optional.of(original));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.reorder(31L, 44L));
+
+        assertEquals("RECEIVER_EMAIL_REQUIRED", ex.getCode());
+        assertTrue(ex.getMessage().contains("tạo đơn gửi mới"));
+        verify(orderRepository, never()).save(any(LockerOrder.class));
+    }
+
     @Test
     void reorderUsesStoredRentalDurationHoursInsteadOfCreatedAtToDeadlineGap() {
         LockerOrder original = new LockerOrder();
