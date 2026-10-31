@@ -64,7 +64,8 @@ public class OrderController {
     }
 
     /// Người gửi đơn gửi hàng gửi lại thư cho người nhận (body `{email?}` để thêm / đổi email trước khi gửi).
-    /// Trả `{maskedEmail, includesPickupCode, sentAt}`; chưa vào tủ ⇒ thư báo có đơn, chưa kèm mã mở tủ.
+    /// Trả `{maskedEmail, includesPickupCode, sentAt}`; chưa vào tủ ⇒ thư báo có đơn, chưa kèm mã mở tủ; đơn chưa
+    /// thanh toán ⇒ chỉ lưu email, `sentAt` null.
     @PostMapping("/api/orders/{orderId}/receiver-email")
     public ApiResponse<ReceiverOrderEmailResponse> sendReceiverEmail(
             @PathVariable Long orderId,
@@ -73,6 +74,10 @@ public class OrderController {
         Object email = request == null ? null : request.get("email");
         ReceiverOrderEmailResponse result =
                 orderService.sendReceiverEmail(orderId, userId, email == null ? null : email.toString());
+        if (result.sentAt() == null) {
+            return ApiResponse.ok("RECEIVER_EMAIL_SAVED",
+                    "Đã lưu email người nhận — Lock.R gửi thư khi đơn được thanh toán", result);
+        }
         return ApiResponse.ok(
                 "RECEIVER_EMAIL_SENT",
                 result.includesPickupCode()

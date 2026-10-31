@@ -256,10 +256,23 @@ public class OrderService {
                     "Đơn " + saved.getOrderCode() + " đã được tạo. Bạn có thể theo dõi tại mục Hàng chờ nhận.",
                     "ORDER_CREATED", saved.getId());
         }
-        // Thư 1/4 cho người nhận: báo có đơn sắp tới, CHƯA kèm mã — PIN lúc này là mã bỏ hàng của người gửi.
-        emailReceiverAfterCommit(saved, "Bạn sắp nhận kiện hàng " + saved.getOrderCode() + " qua tủ Lock.R",
-                () -> receiverOrderCreatedEmailBody(saved, senderName(saved), pickupPlace(saved), rules.sendPickupHours()));
+        // Đơn 0đ (mã giảm giá / điểm trừ hết) đã PAID ngay lúc tạo ⇒ báo người nhận luôn; đơn có phí đợi
+        // payment.completed (OrderPaymentEventListener).
+        if (isOrderPaid(saved)) {
+            notifyReceiverOrderPaid(saved);
+        }
         return toResponse(saved);
+    }
+
+    /// Thư 1/4 cho người nhận: đơn gửi hàng vừa thanh toán xong (chưa bỏ hàng) ⇒ báo có kiện sắp tới, CHƯA kèm
+    /// mã — PIN lúc này là mã bỏ hàng của người gửi. Gửi lúc thanh toán chứ không lúc tạo: đơn bỏ dở không trả
+    /// tiền tự huỷ sau vài phút, người nhận không cần biết tới.
+    public void notifyReceiverOrderPaid(LockerOrder order) {
+        if (!"SEND".equalsIgnoreCase(order.getType()) || !"INITIALIZED".equalsIgnoreCase(order.getStatus())) {
+            return;
+        }
+        emailReceiverAfterCommit(order, "Bạn sắp nhận kiện hàng " + order.getOrderCode() + " qua tủ Lock.R",
+                () -> receiverOrderCreatedEmailBody(order, senderName(order), pickupPlace(order), rules.sendPickupHours()));
     }
 
     private Long receiverAccount(String email, String phone) {
@@ -836,8 +849,9 @@ public class OrderService {
     }
 
     /// Người gửi đơn gửi hàng bấm "Gửi lại thông tin cho người nhận" (có thể kèm email mới): gửi lại thư tới
-    /// email người nhận. Hàng chưa vào tủ ⇒ thư báo có đơn sắp tới (không kèm mã); đã vào tủ ⇒ thư kèm mã mở
-    /// tủ + hạn lấy. Mỗi đơn gửi lại tối đa một lần mỗi [#RECEIVER_EMAIL_COOLDOWN].
+    /// email người nhận. Đã trả tiền, chưa bỏ hàng ⇒ thư báo có đơn sắp tới (không kèm mã); đã vào tủ ⇒ thư kèm
+    /// mã mở tủ + hạn lấy; chưa trả tiền ⇒ chỉ lưu email (`sentAt` null). Mỗi đơn gửi lại tối đa một lần mỗi
+    /// [#RECEIVER_EMAIL_COOLDOWN].
     @Transactional
     public ReceiverOrderEmailResponse sendReceiverEmail(Long id, Long userId, String email) {
         LockerOrder order = find(id);
@@ -867,6 +881,10 @@ public class OrderService {
         String masked = DroneMissionProgressService.maskEmail(order.getReceiverEmail());
         boolean ready = ("STORING".equalsIgnoreCase(order.getStatus()) || "RETURNED".equalsIgnoreCase(order.getStatus()))
                 && StringUtils.hasText(order.getPinCode());
+        // Chưa thanh toán ⇒ người nhận chưa được báo (thư 1 đi lúc thanh toán): chỉ lưu email.
+        if (!ready && !isOrderPaid(order)) {
+            return new ReceiverOrderEmailResponse(masked, false, null);
+        }
 
         Instant now = Instant.now();
         Instant previous = receiverEmailSentAt.get(order.getId());
@@ -2184,9 +2202,11 @@ public class OrderService {
         // đây: trả lượt mã giảm giá + hoàn điểm thưởng (idempotent).
         if ("CANCELED".equals(order.getStatus()) && !"CANCELED".equalsIgnoreCase(oldStatus)) {
             benefits.releaseBenefits(order);
-            // Thư 4/4: đơn gửi hàng huỷ trước lúc bỏ hàng (khách huỷ, tự huỷ chưa trả / chưa bỏ hàng, báo lỗi ô,
-            // admin huỷ) — người nhận đã nhận thư báo có đơn lúc tạo nên phải biết không còn hàng tới.
-            if ("SEND".equalsIgnoreCase(order.getType()) && "INITIALIZED".equalsIgnoreCase(oldStatus)) {
+            // Thư 4/4: đơn gửi hàng ĐÃ THANH TOÁN mà huỷ trước lúc bỏ hàng (khách huỷ, tự huỷ vì không bỏ hàng,
+            // báo lỗi ô, admin huỷ) — người nhận đã nhận thư báo có đơn lúc thanh toán nên phải biết không còn
+            // hàng tới. Đơn chưa trả tiền chưa từng gửi thư ⇒ huỷ im lặng.
+            if ("SEND".equalsIgnoreCase(order.getType()) && "INITIALIZED".equalsIgnoreCase(oldStatus)
+                    && order.getPaidAt() != null) {
                 emailReceiverAfterCommit(order, "Đơn " + order.getOrderCode() + " gửi cho bạn đã bị hủy",
                         () -> receiverOrderCanceledEmailBody(order, senderName(order)));
             }

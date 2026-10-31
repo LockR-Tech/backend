@@ -28,6 +28,8 @@ public class OrderPaymentEventListener {
     private final DroneLateRefundScheduler droneLateRefunds;
     /// Báo "đã thanh toán" + mở lượt lấy hàng drone — dùng chung với đơn 0đ (OrderBenefitService).
     private final PaidOrderEffects paidEffects;
+    /// Đơn gửi hàng vừa thanh toán ⇒ thư báo người nhận có kiện sắp tới (OrderService#notifyReceiverOrderPaid).
+    private final OrderService orderService;
 
     @RabbitListener(queues = RabbitConfig.ORDER_PAYMENT_QUEUE)
     @Transactional
@@ -78,7 +80,7 @@ public class OrderPaymentEventListener {
                                 log.info("Order {} marked PAID via payment event", orderId);
                                 // Đơn đã huỷ: khoản này sắp được hoàn, không báo "thanh toán thành công".
                                 if (!canceled) {
-                                    paidEffects.afterPaid(saved);
+                                    afterPaid(saved);
                                 }
                             }
                         });
@@ -117,8 +119,13 @@ public class OrderPaymentEventListener {
         order.setPaidAt(LocalDateTime.now());
         LockerOrder saved = orderRepository.save(order);
         log.info("Order {} marked PAID via payment {}", order.getId(), paymentId);
-        paidEffects.afterPaid(saved);
+        afterPaid(saved);
         return true;
+    }
+
+    private void afterPaid(LockerOrder saved) {
+        paidEffects.afterPaid(saved);
+        orderService.notifyReceiverOrderPaid(saved);
     }
 
     private static java.math.BigDecimal decimal(Object value) {
