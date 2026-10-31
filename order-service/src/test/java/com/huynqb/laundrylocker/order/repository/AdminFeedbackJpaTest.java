@@ -91,7 +91,7 @@ class AdminFeedbackJpaTest {
 
     @Test
     void listFiltersByStarsAndStatusNewestFirstWithCustomerAndOrder() {
-        PageResponse<FeedbackResponse> all = service.search(0, 2, null, null, null);
+        PageResponse<FeedbackResponse> all = service.search(0, 2, null, null, null, null);
         assertEquals(3, all.totalElements());
         assertEquals(2, all.totalPages());
         assertEquals(List.of(5, 2), all.content().stream().map(FeedbackResponse::rating).toList());
@@ -101,9 +101,17 @@ class AdminFeedbackJpaTest {
         assertEquals("SEND · ORD-1", first.orderDescription());
         assertFalse(first.resolved());
 
-        assertEquals(List.of(2), service.search(0, 20, null, 3, null).content().stream()
+        assertEquals(List.of(2), service.search(0, 20, null, 3, null, null).content().stream()
                 .map(FeedbackResponse::rating).toList());
-        assertEquals(2, service.search(0, 20, 4, null, false).totalElements());
+        assertEquals(2, service.search(0, 20, 4, null, false, null).totalElements());
+    }
+
+    @Test
+    void listFiltersByCustomerForTheUserDetailPage() {
+        assertEquals(List.of(5, 2), service.search(0, 20, null, null, null, 44L).content().stream()
+                .map(FeedbackResponse::rating).toList());
+        assertEquals(1, service.search(0, 20, null, null, null, 45L).totalElements());
+        assertEquals(0, service.search(0, 20, null, null, null, 46L).totalElements());
     }
 
     @Test
@@ -115,7 +123,7 @@ class AdminFeedbackJpaTest {
         FeedbackDetailResponse detail = service.detail(id);
         assertEquals("Quản trị", detail.resolvedBy());
         assertEquals(LocalDateTime.of(2026, 10, 10, 5, 0), detail.resolvedAt());
-        assertEquals(1, service.search(0, 20, null, null, true).totalElements());
+        assertEquals(1, service.search(0, 20, null, null, true, null).totalElements());
 
         assertFalse(service.updateStatus(id, "PENDING", 99L).resolved());
         assertNull(service.detail(id).resolvedAt());

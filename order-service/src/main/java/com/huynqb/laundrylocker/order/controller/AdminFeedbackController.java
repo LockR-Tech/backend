@@ -33,8 +33,9 @@ public class AdminFeedbackController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) Integer minRating,
             @RequestParam(required = false) Integer maxRating,
-            @RequestParam(required = false) Boolean isResolved) {
-        return ApiResponse.ok(feedbackService.search(page, size, minRating, maxRating, isResolved));
+            @RequestParam(required = false) Boolean isResolved,
+            @RequestParam(required = false) Long userId) {
+        return ApiResponse.ok(feedbackService.search(page, size, minRating, maxRating, isResolved, userId));
     }
 
     @GetMapping("/api/admin/feedback/{id}")
