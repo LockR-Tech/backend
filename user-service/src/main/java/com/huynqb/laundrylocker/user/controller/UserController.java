@@ -258,7 +258,9 @@ public class UserController {
                                 }
                                 String provider = a.get("provider") == null ? null : a.get("provider").toString();
                                 Boolean verified = a.get("emailVerified") instanceof Boolean b ? b : null;
-                                return v.withAuth(provider, verified);
+                                Boolean hasPassword = a.get("hasPassword") instanceof Boolean b ? b : null;
+                                String lastLoginAt = a.get("lastLoginAt") == null ? null : a.get("lastLoginAt").toString();
+                                return v.withAuth(provider, verified, hasPassword, lastLoginAt);
                             })
                     .toList();
         } catch (Exception ignored) {

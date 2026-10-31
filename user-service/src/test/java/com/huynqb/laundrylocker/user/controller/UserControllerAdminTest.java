@@ -200,23 +200,27 @@ class UserControllerAdminTest {
         LocalDateTime created = LocalDateTime.of(2026, 1, 1, 8, 0);
         when(userProfileService.getAdminView(5L)).thenReturn(new AdminUserView(
                 5L, "old@lockr.vn", "0901000005", "Khách A", "ACTIVE", Set.of("CUSTOMER"),
-                created, created, null, null, null, false, null));
+                created, created, null, null, null, false, null, null, null, null, null));
         Map<String, Object> account = new HashMap<>();
         account.put("userId", 5L);
         account.put("provider", "GOOGLE.COM");
         account.put("emailVerified", true);
+        account.put("hasPassword", false);
+        account.put("lastLoginAt", "2026-10-30T08:00:00");
         when(authClient.accountsByUsers(List.of(5L))).thenReturn(ApiResponse.ok(List.of(account)));
 
         AdminUserView view = controller.adminGet(5L).data();
 
         assertEquals("GOOGLE.COM", view.provider());
+        assertEquals(false, view.hasPassword());
+        assertEquals("2026-10-30T08:00:00", view.lastLoginAt());
         assertEquals(created, view.createdAt());
     }
 
     @Test
     void adminDetailStillWorksWhenAuthLookupFails() {
         when(userProfileService.getAdminView(5L)).thenReturn(new AdminUserView(
-                5L, null, null, "Khách A", "ACTIVE", Set.of("CUSTOMER"), null, null, null, null, null, false, null));
+                5L, null, null, "Khách A", "ACTIVE", Set.of("CUSTOMER"), null, null, null, null, null, false, null, null, null, null, null));
         when(authClient.accountsByUsers(any())).thenThrow(new RuntimeException("down"));
 
         assertNull(controller.adminGet(5L).data().provider());

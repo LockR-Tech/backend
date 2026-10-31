@@ -281,6 +281,7 @@ public class AuthService {
                             info.put("status", account.getStatus());
                             // false = chưa tự đặt mật khẩu (Google/Firebase/OTP) ⇒ app cho đặt lần đầu.
                             info.put("hasPassword", !Boolean.FALSE.equals(account.getPasswordSet()));
+                            info.put("lastLoginAt", account.getLastLoginAt());
                             return info;
                         })
                 .toList();

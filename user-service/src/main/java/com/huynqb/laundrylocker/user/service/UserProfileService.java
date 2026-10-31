@@ -378,7 +378,11 @@ public class UserProfileService {
                 null,
                 u.getImageUrl(),
                 u.isTermsAccepted(),
-                u.getTermsAcceptedAt());
+                u.getTermsAcceptedAt(),
+                u.getTermsVersion(),
+                u.getBirthday(),
+                null,
+                null);
     }
 
     private UserSummary toSummary(UserProfile user) {
