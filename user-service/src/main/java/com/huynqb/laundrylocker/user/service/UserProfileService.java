@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.user.service;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.common.i18n.ServerText;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.common.media.MediaPurpose;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
@@ -152,6 +153,18 @@ public class UserProfileService {
             userProfileRepository.save(user);
         }
         return getProfileView(id, hasPassword);
+    }
+
+    /// App báo ngôn ngữ đang chọn (lúc đăng nhập và mỗi lần đổi) để thư/SMS gửi ngoài app dùng đúng ngôn ngữ.
+    @Transactional
+    public String updateLanguage(Long id, String language) {
+        String normalized = ServerText.wantsEnglish(language) ? "en" : "vi";
+        UserProfile user = find(id);
+        if (!normalized.equals(user.getLanguage())) {
+            user.setLanguage(normalized);
+            userProfileRepository.save(user);
+        }
+        return normalized;
     }
 
     @Transactional(readOnly = true)
@@ -398,7 +411,8 @@ public class UserProfileService {
                 fullName,
                 user.getStatus(),
                 parseRoles(user.getRoles()),
-                user.getImageUrl());
+                user.getImageUrl(),
+                user.getLanguage());
     }
 
     private Set<String> parseRoles(String roles) {

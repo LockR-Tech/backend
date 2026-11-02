@@ -8,7 +8,8 @@ sẽ hiện tiếng Việt cho khách dùng tiếng Anh. Chạy sau khi thêm/đ
     python -I scripts/i18n/server_text_missing.py --json     # in khung JSON để dán vào bảng rồi dịch
 
 Mẫu câu: biểu thức `"a" + x + "b"` ⇒ "a{}b"; `"..%s".formatted(..)` ⇒ %s thành {}. Bỏ qua log.*,
-comment, text block, thư/SMS (file *Mail*, *Email*, *Sms*), prompt và tài liệu của assistant-service,
+comment, text block (khung HTML thư — các câu trong đó thêm tay vào bảng), file *Sms* (SMS viết không
+dấu, mẫu SMS thêm tay), prompt và tài liệu của assistant-service,
 mô tả cài đặt admin (*SettingsCatalog*).
 """
 import json
@@ -145,7 +146,7 @@ def templates_in(src):
 
 
 EXCLUDE = re.compile(
-    r'(Mail|Email|Sms|scripts/|SettingsCatalog|HardwareConfigValidator|GatewayProvisioning|RevenueReport'
+    r'(Sms|scripts/|SettingsCatalog|HardwareConfigValidator|GatewayProvisioning|RevenueReport'
     r'|DroneDeliverySimulator|common-lib/src/main/java/com/huynqb/laundrylocker/common/i18n/'
     r'|assistant-service/(?!src/main/java/com/huynqb/laundrylocker/assistant/(chat/AssistantService'
     r'|controller/AssistantExceptionHandler)))')

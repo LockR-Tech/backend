@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
+import com.huynqb.laundrylocker.common.i18n.ServerText;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.common.util.DeleteReason;
@@ -136,6 +137,18 @@ public class UserController {
         Object version = request == null ? null : request.get("version");
         return ApiResponse.ok("TERMS_ACCEPTED", "Đã đồng ý điều khoản",
                 userProfileService.acceptTerms(userId, version == null ? null : version.toString(), hasPassword(userId)));
+    }
+
+    /// App báo ngôn ngữ đang chọn: body `{language}` hoặc header `X-App-Language`. Thư/SMS gửi ngoài app
+    /// (order-service) soạn theo ngôn ngữ này.
+    @PutMapping("/api/user/language")
+    public ApiResponse<Map<String, String>> updateLanguage(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = ServerText.LANGUAGE_HEADER, required = false) String header,
+            @RequestBody(required = false) Map<String, Object> request) {
+        Object body = request == null ? null : request.get("language");
+        String language = userProfileService.updateLanguage(userId, body == null ? header : body.toString());
+        return ApiResponse.ok("USER_LANGUAGE_UPDATED", "User language updated", Map.of("language", language));
     }
 
     /// Body `{firstName?, lastName?, fullName? (app cũ), email?, phoneNumber?, birthday?}` — field thiếu/rỗng = giữ nguyên.
