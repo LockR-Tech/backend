@@ -185,7 +185,7 @@ public class DroneParcelIncidentService {
         mission.setStatus("DROP_REPORTED");
         mission.setEndedAt(LocalDateTime.now());
         mission.setEndedByUserId(actorUserId);
-        mission.setEndNote("Parcel drop incident " + incident.getIncidentCode());
+        mission.setEndNote("Sự cố rơi kiện " + incident.getIncidentCode());
         mission.setFailedStage(oldMissionStatus);
         missionRepository.save(mission);
         String oldOrderStage = order.getDeliveryStage();
@@ -198,7 +198,7 @@ public class DroneParcelIncidentService {
             lockerDroneClient.transitionDroneStatus(
                     mission.getDroneUnitId(),
                     new DroneStatusTransitionRequest(
-                            "IN_FLIGHT", "FAULT", "Parcel drop incident " + incident.getIncidentCode(), false));
+                            "IN_FLIGHT", "FAULT", "Sự cố rơi kiện " + incident.getIncidentCode(), false));
         } catch (Exception ignored) {
             // Fleet state may already be FAULT/offline. The incident remains the
             // source of truth and the drone is never set back to IDLE here.

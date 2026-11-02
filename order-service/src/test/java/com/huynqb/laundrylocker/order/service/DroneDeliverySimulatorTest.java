@@ -57,9 +57,10 @@ class DroneDeliverySimulatorTest {
                 telemetryRegistry, sessionRepository);
     }
 
+    /// 3 s/chặng làm drone bay 3 km trong 20 s, KTV không kịp thao tác trong lúc bay (test 2026-11-02).
     @Test
-    void defaultsDemoStagesToThreeSecondsForFastEndToEndTesting() {
-        assertEquals(3000, TestOrderRules.defaults().droneDemoStageDelayMs());
+    void defaultsDemoStagesToFifteenSecondsSoTechniciansCanFollowTheFlight() {
+        assertEquals(15_000, TestOrderRules.defaults().droneDemoStageDelayMs());
     }
 
     @Test
