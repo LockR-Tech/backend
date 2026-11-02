@@ -8,7 +8,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -32,5 +34,14 @@ class GlobalExceptionHandlerTest {
         mvc.perform(post("/probe"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("HEADER_REQUIRED"));
+    }
+
+    /// POST vào API chỉ nhận GET từng trả 500 INTERNAL_ERROR (test 2026-11-02).
+    @Test
+    void wrongHttpMethodIsMethodNotAllowed() throws Exception {
+        mvc.perform(get("/probe"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string("Allow", "POST"))
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
     }
 }
