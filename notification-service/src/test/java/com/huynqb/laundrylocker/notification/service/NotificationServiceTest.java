@@ -65,6 +65,39 @@ class NotificationServiceTest {
     }
 
     @Test
+    @DisplayName("đăng ký token kèm X-App-Language lưu ngôn ngữ; app cũ không gửi thì giữ giá trị cũ")
+    void upsertTokenStoresLanguage() {
+        FcmToken existing = new FcmToken();
+        existing.setLanguage("en");
+        when(fcmTokenRepository.findByToken("tok-1")).thenReturn(Optional.of(existing));
+
+        service.upsertFcmToken(new com.huynqb.laundrylocker.notification.dto.FcmTokenRequest(7L, "tok-1", "ANDROID", null));
+        assertThat(existing.getLanguage()).isEqualTo("en");
+
+        service.upsertFcmToken(new com.huynqb.laundrylocker.notification.dto.FcmTokenRequest(7L, "tok-1", "ANDROID", "vi"));
+        assertThat(existing.getLanguage()).isEqualTo("vi");
+
+        service.upsertFcmToken(new com.huynqb.laundrylocker.notification.dto.FcmTokenRequest(7L, "tok-1", "ANDROID", "en-US"));
+        assertThat(existing.getLanguage()).isEqualTo("en");
+    }
+
+    @Test
+    @DisplayName("tin realtime tới người dùng app tiếng Anh được dịch, bản lưu DB vẫn tiếng Việt")
+    void realtimeNotificationFollowsUserLanguage() {
+        when(fcmPushNotificationService.prefersEnglish(7L)).thenReturn(true);
+
+        NotificationResponse stored = service.create(new com.huynqb.laundrylocker.common.dto.NotificationRequest(
+                7L, "Thanh toán thành công", "Đơn hàng ORD-1 đã được thanh toán thành công", "PAYMENT_COMPLETED",
+                null, null), null);
+
+        assertThat(stored.title()).isEqualTo("Thanh toán thành công");
+        org.mockito.ArgumentCaptor<NotificationResponse> sent = org.mockito.ArgumentCaptor.forClass(NotificationResponse.class);
+        verify(webSocketNotificationService).sendToUser(eq(7L), sent.capture());
+        assertThat(sent.getValue().title()).isEqualTo("Payment successful");
+        assertThat(sent.getValue().message()).isEqualTo("Order ORD-1 has been paid successfully");
+    }
+
+    @Test
     @DisplayName("người dùng đánh dấu đã đọc notification của chính mình")
     void ownerCanMarkOwnNotificationRead() {
         NotificationMessage own = notification(5L, 7L);

@@ -1,6 +1,7 @@
 package com.huynqb.laundrylocker.notification.controller;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.i18n.ServerText;
 import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import com.huynqb.laundrylocker.notification.dto.*;
@@ -116,8 +117,10 @@ public class NotificationController {
     @PostMapping("/api/notifications/fcm-tokens")
     public ApiResponse<Void> saveCurrentUserFcmToken(
             @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader(value = ServerText.LANGUAGE_HEADER, required = false) String language,
             @Valid @RequestBody DeviceTokenRequest request) {
-        notificationService.upsertFcmToken(new FcmTokenRequest(userId, request.token(), request.deviceType()));
+        notificationService.upsertFcmToken(
+                new FcmTokenRequest(userId, request.token(), request.deviceType(), language));
         return ApiResponse.ok("FCM_TOKEN_SAVED", "FCM token saved");
     }
 

@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.notification.service;
 
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.messaging.*;
+import com.huynqb.laundrylocker.common.i18n.ServerText;
 import com.huynqb.laundrylocker.notification.model.FcmToken;
 import com.huynqb.laundrylocker.notification.repository.FcmTokenRepository;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +11,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -28,8 +31,7 @@ public class FcmPushNotificationService {
             log.debug("Firebase not initialized, skipping FCM push for user {}", userId);
             return;
         }
-        List<String> tokens = fcmTokenRepository.findByUserId(userId).stream().map(FcmToken::getToken).toList();
-        sendInBatches(tokens, title, body, data);
+        sendByLanguage(fcmTokenRepository.findByUserId(userId), title, body, data);
     }
 
     @Async
@@ -38,7 +40,37 @@ public class FcmPushNotificationService {
             log.debug("Firebase not initialized, skipping FCM broadcast");
             return;
         }
-        sendInBatches(fcmTokenRepository.findAllDistinctTokens(), title, body, data);
+        sendByLanguage(fcmTokenRepository.findAll(), title, body, data);
+    }
+
+    /// Máy đăng ký token gần nhất của người này đang dùng app tiếng Anh?
+    public boolean prefersEnglish(Long userId) {
+        return fcmTokenRepository.findByUserId(userId).stream()
+                .max(Comparator.comparing(t -> t.getUpdatedAt() != null ? t.getUpdatedAt() : t.getCreatedAt(),
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .map(t -> ServerText.wantsEnglish(t.getLanguage()))
+                .orElse(false);
+    }
+
+    /// Máy chọn tiếng Anh nhận bản dịch tiêu đề/nội dung (cả trong `data`, app đọc khi chỉ có data).
+    private void sendByLanguage(List<FcmToken> tokens, String title, String body, Map<String, String> data) {
+        List<String> vietnamese = new ArrayList<>();
+        List<String> english = new ArrayList<>();
+        for (FcmToken token : tokens) {
+            (ServerText.wantsEnglish(token.getLanguage()) ? english : vietnamese).add(token.getToken());
+        }
+        sendInBatches(vietnamese.stream().distinct().toList(), title, body, data);
+        if (!english.isEmpty()) {
+            Map<String, String> englishData = null;
+            if (data != null) {
+                englishData = new HashMap<>();
+                for (Map.Entry<String, String> entry : data.entrySet()) {
+                    englishData.put(entry.getKey(), ServerText.toEnglish(entry.getValue()));
+                }
+            }
+            sendInBatches(english.stream().distinct().toList(),
+                    ServerText.toEnglish(title), ServerText.toEnglish(body), englishData);
+        }
     }
 
     public void sendToToken(String token, String title, String body, Map<String, String> data) {

@@ -25,6 +25,10 @@ public class FcmToken {
     @Column(name = "device_type", length = 30)
     private String deviceType;
 
+    /// `en` khi app gửi `X-App-Language: en` lúc đăng ký; NULL/`vi` ⇒ push tiếng Việt.
+    @Column(length = 8)
+    private String language;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
