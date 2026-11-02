@@ -109,6 +109,55 @@ class OrderDetailViewsTest {
                 OrderDetailViews.milestones(order, null).stream().map(OrderMilestone::code).toList());
     }
 
+    @Test
+    void droneMilestonesCarryTheParcelLocationAndHideSenderPointsFromTheReceiver() {
+        LockerOrder order = new LockerOrder();
+        order.setType("DRONE_DELIVERY");
+        order.setCreatedAt(T0);
+        order.setPickupLatitude(10.70);
+        order.setPickupLongitude(106.70);
+        order.setParcelDroppedAt(T0.plusMinutes(20));
+        order.setCompletedAt(T0.plusHours(1));
+        List<OrderStatusHistory> history = List.of(
+                located(history(null, "AWAITING_DISPATCH", T0), 10.70, 106.70, OrderHistoryLocator.PICKUP_ADDRESS),
+                located(history("PICKUP_ASSIGNED", "PICKED_UP", T0.plusMinutes(20)), 10.71, 106.71,
+                        OrderHistoryLocator.TECHNICIAN),
+                located(history("ARRIVED", "READY_FOR_PICKUP", T0.plusMinutes(40)), 10.72, 106.72,
+                        OrderHistoryLocator.DESTINATION_LOCKER),
+                located(history("READY_FOR_PICKUP", "COMPLETED", T0.plusHours(1)), 10.72, 106.72,
+                        OrderHistoryLocator.DESTINATION_LOCKER));
+
+        List<OrderMilestone> sender = OrderDetailViews.milestones(order, history);
+        List<OrderMilestone> receiver = OrderDetailViews.milestones(order, history, false);
+
+        assertEquals(List.of("CREATED", "PARCEL_DROPPED", "STORED", "COMPLETED"),
+                sender.stream().map(OrderMilestone::code).toList());
+        assertEquals(10.70, sender.get(0).latitude());
+        assertEquals(OrderHistoryLocator.TECHNICIAN, sender.get(1).locationSource());
+        assertEquals(10.72, sender.get(2).latitude());
+        assertEquals(OrderHistoryLocator.DESTINATION_LOCKER, sender.get(3).locationSource());
+        assertNull(receiver.get(0).latitude());
+        assertNull(receiver.get(1).latitude());
+        assertEquals(10.72, receiver.get(2).latitude());
+    }
+
+    @Test
+    void nonDroneMilestonesHaveNoLocation() {
+        LockerOrder order = new LockerOrder();
+        order.setType("SEND");
+        order.setCreatedAt(T0);
+
+        assertNull(OrderDetailViews.milestones(order, List.of(
+                located(history(null, "INITIALIZED", T0), 10.7, 106.7, OrderHistoryLocator.SOURCE_LOCKER))).get(0).latitude());
+    }
+
+    private static OrderStatusHistory located(OrderStatusHistory h, double lat, double lng, String source) {
+        h.setLatitude(lat);
+        h.setLongitude(lng);
+        h.setLocationSource(source);
+        return h;
+    }
+
     private static OrderStatusHistory note(String status, String note, LocalDateTime at) {
         OrderStatusHistory h = history(status, status, at);
         h.setNote(note);

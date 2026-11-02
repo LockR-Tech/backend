@@ -47,6 +47,7 @@ public class DroneTelemetryService {
     private final TransactionTemplate transactions;
     /// Bán kính đã rời / đang tiếp cận / đã tới — admin chỉnh ở nhóm "Kết nối tủ & định vị drone".
     private final OrderRules rules;
+    private final DroneFlightTrackRecorder trackRecorder;
 
     /// Toạ độ tủ không đổi trong lúc bay; nhớ lại để không gọi locker-service mỗi giây.
     private final Map<Long, double[]> lockerCoordinates = new ConcurrentHashMap<>();
@@ -62,7 +63,8 @@ public class DroneTelemetryService {
             LockerDroneClient lockerDroneClient,
             DroneTelemetryRegistry registry,
             TransactionTemplate transactions,
-            OrderRules rules) {
+            OrderRules rules,
+            DroneFlightTrackRecorder trackRecorder) {
         this.missionRepository = missionRepository;
         this.orderRepository = orderRepository;
         this.progressService = progressService;
@@ -72,6 +74,7 @@ public class DroneTelemetryService {
         this.registry = registry;
         this.transactions = transactions;
         this.rules = rules;
+        this.trackRecorder = trackRecorder;
     }
 
     /// Xử lý một bản tin đã qua kiểm chữ ký. Không ném lỗi ra ngoài: hỏng một bản tin
@@ -105,7 +108,20 @@ public class DroneTelemetryService {
         if (shouldAdvance(stage, frame, route)) {
             stage = transactions.execute(status -> advanceWhileReached(order.getId(), droneCode, frame, route));
         }
+        recordTrack(order.getId(), mission.getId(), droneCode, stage, frame, now);
         publishPositionQuietly(order.getId(), droneCode, stage, frame, route, now);
+    }
+
+    /// Lưu điểm vào đường bay của đơn, kể cả khi notification-service lỗi.
+    private void recordTrack(Long orderId, Long missionId, String droneCode, String stage, DroneTelemetryFrame frame, long now) {
+        if (stage == null || !frame.hasPosition() || !DroneMissionProgressService.IN_FLIGHT_STAGES.contains(stage)) {
+            return;
+        }
+        Double altitude = frame.position() == null ? null : frame.position().relativeAltM();
+        trackRecorder.record(new DroneFlightTrackRecorder.Point(
+                orderId, missionId, droneCode, stage, frame.lat(), frame.lng(), altitude, frame.headingDeg(),
+                frame.groundSpeedMs(), frame.batteryPercent(), DroneFlightTrackRecorder.DRONE,
+                frame.observedAtMs() == null ? now : frame.observedAtMs()));
     }
 
     /// Khoá đơn rồi mới kiểm lại điều kiện: điều phối viên có thể vừa xác nhận tay cùng chặng.

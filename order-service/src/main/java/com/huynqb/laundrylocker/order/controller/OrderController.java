@@ -37,6 +37,7 @@ public class OrderController {
 
     private final DroneOrderMaintenanceService droneOrderMaintenanceService;
     private final DroneDeliveryQueryService droneDeliveryQueryService;
+    private final com.huynqb.laundrylocker.order.service.DroneFlightTrackRecorder flightTrackRecorder;
     private final DroneMissionProgressService droneMissionProgressService;
     private final DroneRefundService droneRefundService;
     private final DroneParcelService droneParcelService;
@@ -373,6 +374,14 @@ public class OrderController {
     @GetMapping("/api/admin/drone-orders/{orderId}")
     public ApiResponse<DroneDeliveryOrderResponse> adminDroneOrder(@PathVariable Long orderId) {
         return ApiResponse.ok(droneDeliveryQueryService.getForAdmin(orderId));
+    }
+
+    /// Nhật ký vị trí bay của đơn, cũ → mới. Đơn không tồn tại hoặc không phải đơn drone ⇒ 404 như chi tiết đơn.
+    @GetMapping("/api/admin/drone-orders/{orderId}/flight-track")
+    public ApiResponse<List<com.huynqb.laundrylocker.order.dto.DroneFlightTrackPointResponse>> adminDroneFlightTrack(
+            @PathVariable Long orderId) {
+        droneDeliveryQueryService.getForAdmin(orderId);
+        return ApiResponse.ok(flightTrackRecorder.track(orderId));
     }
 
     // ---- Thời tiết: khách, KTV, admin cùng xem một kết quả với bước kiểm tra lúc đặt đơn / phóng drone.

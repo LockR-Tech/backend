@@ -9,5 +9,11 @@ import java.time.LocalDateTime;
 /// @param code  mã mốc ổn định cho client (CREATED, PAID, DROP_OPENED, PARCEL_DROPPED, STORED,
 ///              DELEGATED, BLOCKED, FAILED, EXPIRED, PARCEL_RETURNED, CANCELED, COMPLETED)
 /// @param label nhãn tiếng Việt để hiển thị thẳng
-public record OrderMilestone(String code, String label, LocalDateTime occurredAt) {
+/// @param latitude vị trí kiện lúc đạt mốc (chỉ đơn drone), null khi không có số đo; cùng số với hành trình
+public record OrderMilestone(String code, String label, LocalDateTime occurredAt,
+                             Double latitude, Double longitude, String locationSource) {
+
+    public OrderMilestone(String code, String label, LocalDateTime occurredAt) {
+        this(code, label, occurredAt, null, null, null);
+    }
 }
