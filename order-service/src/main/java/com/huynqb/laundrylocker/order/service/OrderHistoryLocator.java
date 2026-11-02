@@ -42,6 +42,9 @@ public class OrderHistoryLocator {
     public static final String DRONE = "DRONE";
     public static final String DRONE_SIMULATED = "DRONE_SIMULATED";
     public static final String DESTINATION_LOCKER = "DESTINATION_LOCKER";
+    /// Đơn cũ (trước khi ghi toạ độ lúc ghi mốc): điểm ước trên đoạn tủ gửi → tủ nhận theo chặng bay,
+    /// xem `DroneHistoryLocationBackfill`.
+    public static final String ESTIMATED_ROUTE = "ESTIMATED_ROUTE";
 
     /// Vị trí KTV cũ hơn mức này coi như không còn biết KTV đang ở đâu.
     static final Duration TECHNICIAN_LOCATION_MAX_AGE = Duration.ofMinutes(10);
