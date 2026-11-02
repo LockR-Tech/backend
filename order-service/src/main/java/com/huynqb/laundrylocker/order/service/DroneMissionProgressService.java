@@ -374,7 +374,7 @@ public class DroneMissionProgressService {
                     "Lock.R: Kien hang " + order.getOrderCode() + " giao bang drone da vao " + where
                             + ". Ma mo tu: " + order.getPinCode() + ". Luu tru " + rules.dronePickupHours()
                             + " gio, lay truoc " + smsDeadlineText(order) + ".",
-                    emailBody));
+                    emailBody).inLanguage(RecipientLanguage.receiver(userClient, order)));
             GuestNotification.Result result = response == null ? null : response.data();
             return result == null ? new GuestNotification.Result(false, false, false, false) : result;
         } catch (Exception ignored) {

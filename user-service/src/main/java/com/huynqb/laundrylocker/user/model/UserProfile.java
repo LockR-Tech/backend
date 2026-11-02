@@ -54,6 +54,10 @@ public class UserProfile {
     @Column(name = "terms_version", length = 30)
     private String termsVersion;
 
+    /// Ngôn ngữ app (`vi`/`en`) do app báo qua `PUT /api/user/language`; null ⇒ tiếng Việt.
+    @Column(length = 8)
+    private String language;
+
     /// Xoá mềm từ trang admin: còn nguyên trong DB kèm lý do, thời điểm và người xoá.
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;

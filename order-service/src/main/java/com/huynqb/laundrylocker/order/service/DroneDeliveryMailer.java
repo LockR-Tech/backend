@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.order.service;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
+import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.GuestNotification;
 import com.huynqb.laundrylocker.order.dto.admin.LockerInfo;
 import com.huynqb.laundrylocker.order.model.DroneMission;
@@ -41,6 +42,8 @@ public class DroneDeliveryMailer {
     private final NotificationClient notificationClient;
     private final LockerLookupClient lockerLookupClient;
     private final LockerCellClient lockerCellClient;
+    /// Ngôn ngữ thư của người gửi/người nhận — [RecipientLanguage].
+    private final UserClient userClient;
 
     /// Kết quả gửi: địa chỉ (đã che) của những người thực sự nhận được thư.
     public record Outcome(boolean senderReached, boolean receiverReached) {
@@ -115,9 +118,11 @@ public class DroneDeliveryMailer {
                 "Khi hàng vào tủ, bạn sẽ nhận email có mã mở ô và thời hạn lấy hàng.");
 
         return new Outcome(
-                send(order.getSenderEmail(), "Đơn hàng " + order.getOrderCode() + " đã được drone phóng đi", senderBody,
+                send(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
+                        "Đơn hàng " + order.getOrderCode() + " đã được drone phóng đi", senderBody,
                         senderHtml),
-                send(order.getReceiverEmail(), "Bạn có đơn hàng " + order.getOrderCode() + " đang được giao bằng drone",
+                send(order.getReceiverEmail(), RecipientLanguage.receiver(userClient, order),
+                        "Bạn có đơn hàng " + order.getOrderCode() + " đang được giao bằng drone",
                         receiverBody, receiverHtml));
     }
 
@@ -161,7 +166,7 @@ public class DroneDeliveryMailer {
                         new DroneDeliveryEmailTemplate.Detail("Hoàn tiền", refundMessage),
                         new DroneDeliveryEmailTemplate.Detail("Kiện hàng", returnMessage)),
                 "Bạn xem chi tiết đơn và trạng thái hoàn tiền trong ứng dụng Lock.R.");
-        boolean sender = send(order.getSenderEmail(),
+        boolean sender = send(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
                 "Đơn hàng " + order.getOrderCode() + " giao không hoàn tất", senderBody, senderHtml);
 
         boolean receiver = false;
@@ -182,7 +187,7 @@ public class DroneDeliveryMailer {
                             new DroneDeliveryEmailTemplate.Detail("Kiện hàng", "Đơn vị vận hành sẽ trả kiện cho người gửi."),
                             new DroneDeliveryEmailTemplate.Detail("Liên hệ người gửi", nameOr(order.getSenderPhone(), "—"))),
                     "Bạn có thể liên hệ người gửi nếu cần hỗ trợ thêm.");
-            receiver = send(order.getReceiverEmail(),
+            receiver = send(order.getReceiverEmail(), RecipientLanguage.receiver(userClient, order),
                     "Đơn hàng " + order.getOrderCode() + " gửi cho bạn không hoàn tất", receiverBody, receiverHtml);
         }
         return new Outcome(sender, receiver);
@@ -215,7 +220,8 @@ public class DroneDeliveryMailer {
         senderDetails.add(new DroneDeliveryEmailTemplate.Detail("Tiếp theo",
                 "Sau khi kiểm tra kiện, Lock.R gửi phương án xử lý (giao lại, bồi thường) trong ứng "
                         + "dụng để bạn đồng ý hoặc yêu cầu xem xét lại."));
-        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+        boolean sender = sendNotice(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
+                nameOr(order.getSenderName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " gặp sự cố khi đang bay",
                 "Kiện hàng gặp sự cố trên đường bay",
                 "Rất tiếc, kiện hàng của đơn " + order.getOrderCode() + " đã rơi khỏi drone khi đang bay tới tủ nhận.",
@@ -227,7 +233,7 @@ public class DroneDeliveryMailer {
                 "Lock.R đang thu hồi kiện và sẽ thống nhất cách xử lý với người gửi."));
         receiverDetails.add(new DroneDeliveryEmailTemplate.Detail("Liên hệ người gửi",
                 nameOr(order.getSenderPhone(), "—")));
-        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(), RecipientLanguage.receiver(userClient, order),
                 nameOr(order.getReceiverName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " gửi cho bạn bị chậm do sự cố",
                 "Đơn hàng gửi cho bạn bị chậm",
@@ -260,7 +266,8 @@ public class DroneDeliveryMailer {
                 ? "Kiện được đưa về " + (StringUtils.hasText(stationName) ? "trạm " + stationName.trim() : "trạm Lock.R")
                         + ". Lock.R sẽ gửi phương án xử lý trong ứng dụng."
                 : "Lock.R sẽ gửi phương án xử lý trong ứng dụng để bạn đồng ý hoặc yêu cầu xem xét lại."));
-        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+        boolean sender = sendNotice(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
+                nameOr(order.getSenderName(), "bạn"), order,
                 found
                         ? "Đã tìm thấy kiện hàng của đơn " + order.getOrderCode()
                         : "Chưa tìm thấy kiện hàng của đơn " + order.getOrderCode(),
@@ -272,7 +279,7 @@ public class DroneDeliveryMailer {
                                 + " bị rơi trong lúc bay.",
                 details,
                 "Bạn theo dõi sự cố trong ứng dụng Lock.R: mở đơn " + order.getOrderCode() + " ⇒ Theo dõi drone.");
-        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(), RecipientLanguage.receiver(userClient, order),
                 nameOr(order.getReceiverName(), "bạn"), order,
                 found
                         ? "Đã tìm thấy kiện hàng gửi cho bạn (" + order.getOrderCode() + ")"
@@ -295,7 +302,8 @@ public class DroneDeliveryMailer {
     /// Đơn bị tạm dừng khi drone đã phóng (trời xấu trên tuyến, drone báo lỗi giữa chuyến, nắp tủ nhận lỗi).
     public Outcome deliveryPaused(LockerOrder order, String reasonLabel, String note, boolean tellReceiver) {
         String why = reasonLabel + (StringUtils.hasText(note) ? " — " + note.trim() : "");
-        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+        boolean sender = sendNotice(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
+                nameOr(order.getSenderName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " đang tạm dừng do sự cố",
                 "Đơn hàng đang tạm dừng",
                 "Đơn hàng " + order.getOrderCode() + " gặp sự cố trên đường giao và đang được đội bay xử lý.",
@@ -304,7 +312,7 @@ public class DroneDeliveryMailer {
                         new DroneDeliveryEmailTemplate.Detail("Đang xử lý",
                                 "Đội bay theo dõi drone, cho hạ cánh an toàn hoặc quay về trạm nếu cần.")),
                 "Lock.R sẽ báo lại khi đơn tiếp tục hoặc có hướng xử lý khác.");
-        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(), RecipientLanguage.receiver(userClient, order),
                 nameOr(order.getReceiverName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " gửi cho bạn đang tạm dừng",
                 "Đơn hàng gửi cho bạn đang tạm dừng",
@@ -319,12 +327,13 @@ public class DroneDeliveryMailer {
     public Outcome deliveryResumed(LockerOrder order, String clearedLabel, boolean tellReceiver) {
         List<DroneDeliveryEmailTemplate.Detail> details = List.of(
                 new DroneDeliveryEmailTemplate.Detail("Sự cố đã xử lý", clearedLabel));
-        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+        boolean sender = sendNotice(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
+                nameOr(order.getSenderName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " tiếp tục được giao",
                 "Đơn hàng tiếp tục được giao",
                 "Sự cố ảnh hưởng tới đơn " + order.getOrderCode() + " đã được khắc phục, đơn tiếp tục được giao.",
                 details, "Bạn theo dõi hành trình trong ứng dụng Lock.R.");
-        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(), RecipientLanguage.receiver(userClient, order),
                 nameOr(order.getReceiverName(), "bạn"), order,
                 "Đơn hàng " + order.getOrderCode() + " gửi cho bạn tiếp tục được giao",
                 "Đơn hàng tiếp tục được giao",
@@ -348,7 +357,8 @@ public class DroneDeliveryMailer {
         if (StringUtils.hasText(note)) {
             details.add(new DroneDeliveryEmailTemplate.Detail("Nội dung", note.trim()));
         }
-        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+        boolean sender = sendNotice(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
+                nameOr(order.getSenderName(), "bạn"), order,
                 "Phương án xử lý sự cố đơn " + order.getOrderCode(),
                 "Lock.R đã gửi phương án xử lý",
                 "Lock.R đã kiểm tra sự cố rơi kiện của đơn " + order.getOrderCode() + " và gửi phương án xử lý.",
@@ -365,7 +375,8 @@ public class DroneDeliveryMailer {
                 ? "Kiện được giao lại miễn phí bằng đơn mới " + redeliveryOrderCode
                         + "; khi drone phóng sẽ có email báo đơn đang trên đường."
                 : "Kiện không được giao lại.";
-        boolean sender = sendNotice(order.getSenderEmail(), nameOr(order.getSenderName(), "bạn"), order,
+        boolean sender = sendNotice(order.getSenderEmail(), RecipientLanguage.sender(userClient, order),
+                nameOr(order.getSenderName(), "bạn"), order,
                 "Đã ghi nhận phương án xử lý đơn " + order.getOrderCode(),
                 "Đã ghi nhận phương án bạn chọn",
                 "Lock.R đã ghi nhận bạn đồng ý phương án xử lý sự cố của đơn " + order.getOrderCode() + ".",
@@ -374,7 +385,7 @@ public class DroneDeliveryMailer {
                         new DroneDeliveryEmailTemplate.Detail("Phương án", resolutionLabel),
                         new DroneDeliveryEmailTemplate.Detail("Tiếp theo", next)),
                 "Tiền bồi thường (nếu có) được chuyển về tài khoản ngân hàng bạn đã lưu trong ứng dụng.");
-        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(),
+        boolean receiver = tellReceiver && sendNotice(order.getReceiverEmail(), RecipientLanguage.receiver(userClient, order),
                 nameOr(order.getReceiverName(), "bạn"), order,
                 redelivery
                         ? "Đơn hàng gửi cho bạn sẽ được giao lại (" + redeliveryOrderCode + ")"
@@ -394,7 +405,7 @@ public class DroneDeliveryMailer {
     }
 
     /// Thư cập nhật sự cố: bản HTML theo template, bản chữ trơn dựng từ cùng nội dung.
-    private boolean sendNotice(String email, String recipientName, LockerOrder order, String subject,
+    private boolean sendNotice(String email, String language, String recipientName, LockerOrder order, String subject,
             String headline, String introduction, List<DroneDeliveryEmailTemplate.Detail> details, String footer) {
         if (!StringUtils.hasText(email)) {
             return false;
@@ -407,10 +418,10 @@ public class DroneDeliveryMailer {
         body.append('\n').append(footer).append('\n');
         String html = DroneDeliveryEmailTemplate.incident(
                 recipientName, order.getOrderCode(), headline, introduction, details, footer);
-        return send(email, subject, body.toString(), html);
+        return send(email, language, subject, body.toString(), html);
     }
 
-    private boolean send(String email, String subject, String body, String htmlBody) {
+    private boolean send(String email, String language, String subject, String body, String htmlBody) {
         if (!StringUtils.hasText(email)) {
             return false;
         }
@@ -418,7 +429,8 @@ public class DroneDeliveryMailer {
             // Không gửi SMS (phone = null), nhưng notification-service bắt buộc `smsMessage`
             // khác rỗng với mọi yêu cầu — thiếu thì cả yêu cầu bị từ chối 400 và thư không đi.
             var response = notificationClient.notifyGuest(
-                    new GuestNotification.Request(null, email.trim(), subject, "Lock.R: " + subject, body, htmlBody));
+                    new GuestNotification.Request(null, email.trim(), subject, "Lock.R: " + subject, body, htmlBody,
+                            language));
             GuestNotification.Result result = response == null ? null : response.data();
             return result != null && result.emailSent();
         } catch (Exception ex) {

@@ -8,17 +8,19 @@ import jakarta.validation.constraints.NotBlank;
 /// chứ không phải `userId`, nên không tạo bản ghi thông báo trong app.
 ///
 /// `phone` và `email` đều tuỳ chọn nhưng phải có ít nhất một; `smsMessage` ngắn gọn cho
-/// SMS, `emailBody` dài hơn cho email.
+/// SMS, `emailBody` dài hơn cho email. Nơi gọi luôn soạn tiếng Việt; `language = en` ⇒ dịch trước khi gửi
+/// (ADR-0010), null/`vi` ⇒ gửi nguyên.
 public record GuestNotificationRequest(
         String phone,
         @Email(message = "email không hợp lệ") String email,
         @NotBlank(message = "subject không được rỗng") String subject,
         @NotBlank(message = "smsMessage không được rỗng") String smsMessage,
         String emailBody,
-        String emailHtml) {
+        String emailHtml,
+        String language) {
 
     public GuestNotificationRequest(String phone, String email, String subject, String smsMessage, String emailBody) {
-        this(phone, email, subject, smsMessage, emailBody, null);
+        this(phone, email, subject, smsMessage, emailBody, null, null);
     }
 
     /// Nội dung email; rơi về nội dung SMS khi nơi gọi không soạn riêng.

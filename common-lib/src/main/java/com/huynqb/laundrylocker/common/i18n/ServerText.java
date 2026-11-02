@@ -35,14 +35,18 @@ public final class ServerText {
             "[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ"
                     + "ÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{(\\d*)}");
+    /// Đoạn chữ giữa hai thẻ HTML.
+    private static final Pattern HTML_TEXT = Pattern.compile(">([^<>]+)<");
     /// Giờ in kiểu `HH:mm 'ngày' dd/MM/yyyy` nằm trong phần ghép động.
     private static final Pattern DATE_TIME = Pattern.compile("(\\d{1,2}:\\d{2}) ngày (\\d{1,2}/\\d{1,2}/\\d{4})");
-    private static final Pattern SENTENCE_BREAK =Pattern.compile("(?<=[.!?;:])\\s+|\\s+—\\s+|\\s+-\\s+|\\s*\\|\\s*");
+    private static final Pattern SENTENCE_BREAK = Pattern.compile("(?<=[.!?;:])\\s+|\\s+—\\s+|\\s+-\\s+|\\s*\\|\\s*");
     /// Mẫu chỉ có vài chữ cố định ("Tủ {}") dễ khớp nhầm tên do admin đặt ⇒ không dùng làm mẫu, trừ khi
     /// có từ hai chỗ ghép trở lên ("Mã {}: {}").
     private static final int MIN_TEMPLATE_LITERAL = 6;
     private static final int MIN_FRAGMENT = 12;
     private static final int CACHE_LIMIT = 10_000;
+    /// Số lớp câu lồng trong phần ghép động được dịch tiếp (đoạn HTML đã bắt đầu ở lớp 1).
+    private static final int MAX_DEPTH = 3;
 
     private static final ServerText INSTANCE = load();
 
@@ -97,6 +101,37 @@ public final class ServerText {
         return wantsEnglish(language) ? toEnglish(text) : text;
     }
 
+    /// Thư HTML: dịch từng đoạn chữ nằm giữa hai thẻ (đã bỏ/khôi phục mã thực thể HTML) và đổi `lang="vi"`.
+    /// Template thư chèn từng câu server soạn vào một thẻ riêng nên mỗi đoạn chữ là một câu trọn vẹn.
+    public static String htmlToEnglish(String html) {
+        if (html == null || html.isEmpty()) {
+            return html;
+        }
+        Matcher m = HTML_TEXT.matcher(html);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            String text = m.group(1);
+            String translated = text;
+            if (VIETNAMESE.matcher(text).find()) {
+                // Mỗi ô của bảng chi tiết là một đoạn riêng ("Ô số 3") nên được dùng cả mẫu ngắn.
+                translated = escapeHtml(INSTANCE.translate(unescapeHtml(text), 1));
+            }
+            m.appendReplacement(out, Matcher.quoteReplacement(">" + translated + "<"));
+        }
+        m.appendTail(out);
+        return out.toString().replace("lang=\"vi\"", "lang=\"en\"");
+    }
+
+    /// SMS viết tiếng Việt không dấu (`"Lock.R: Ban co kien hang …"`) nên không qua được bước nhận diện tiếng
+    /// Việt của [#toEnglish]: khớp thẳng với mẫu câu SMS trong bảng.
+    public static String smsToEnglish(String sms) {
+        if (sms == null || sms.isBlank()) {
+            return sms;
+        }
+        String translated = INSTANCE.translateWhole(sms, MAX_DEPTH);
+        return translated == null ? sms : translated.replace(", o so ", ", box no. ");
+    }
+
     String translate(String text) {
         if (text == null || text.isEmpty() || !VIETNAMESE.matcher(text).find()) {
             return text;
@@ -144,6 +179,14 @@ public final class ServerText {
         if (whole != null) {
             return whole;
         }
+        // "Nhãn: giá trị" (thư chữ trơn): nhãn có trong bảng thì dịch phần sau như một câu trọn.
+        int colon = text.indexOf(": ");
+        if (colon > 0) {
+            String label = translateWhole(text.substring(0, colon + 1), depth);
+            if (label != null) {
+                return label + " " + translatePart(text.substring(colon + 2), depth);
+            }
+        }
         Matcher breaks = SENTENCE_BREAK.matcher(text);
         if (breaks.find()) {
             breaks.reset();
@@ -174,10 +217,15 @@ public final class ServerText {
             return null;
         }
         String hit = exact.get(key);
+        if (hit == null && key.endsWith(":")) {
+            // Nhãn trong thư chữ trơn ("Mã sự cố: DPI-7") tách ra còn "Mã sự cố:" — bảng chỉ có "Mã sự cố".
+            String label = exact.get(key.substring(0, key.length() - 1).strip());
+            hit = label == null ? null : label + ":";
+        }
         if (hit != null) {
             return keepPadding(text, hit);
         }
-        UnaryOperator<String> nested = depth < 2 ? value -> translate(value, depth + 1) : value -> value;
+        UnaryOperator<String> nested = depth < MAX_DEPTH ? value -> translate(value, depth + 1) : value -> value;
         String translated = applyFirst(templates, text, key, nested);
         if (translated == null && depth > 0) {
             translated = applyFirst(shortTemplates, text, key, nested);
@@ -225,6 +273,16 @@ public final class ServerText {
                 || ",.;:".indexOf(first) >= 0;
     }
 
+    private static String unescapeHtml(String text) {
+        return text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+                .replace("&#39;", "'").replace("&amp;", "&");
+    }
+
+    private static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
     private static String keepPadding(String original, String translated) {
         int start = 0;
         while (start < original.length() && Character.isWhitespace(original.charAt(start))) {
@@ -264,10 +322,12 @@ public final class ServerText {
             Matcher m = PLACEHOLDER.matcher(source);
             int last = 0;
             int literal = 0;
+            // Mẫu một dòng không được khớp xuyên dòng ("Đơn {}: {}" nuốt cả hai dòng của một đoạn thư).
+            String group = source.contains("\n") ? "(.*?)" : "([^\\n]*?)";
             while (m.find()) {
                 String text = source.substring(last, m.start());
                 literal += text.length();
-                regex.append(Pattern.quote(text)).append("(.*?)");
+                regex.append(Pattern.quote(text)).append(group);
                 last = m.end();
             }
             String tail = source.substring(last);
@@ -280,6 +340,15 @@ public final class ServerText {
             Matcher m = pattern.matcher(text);
             if (!m.matches()) {
                 return null;
+            }
+            // Mẫu ít chữ cố định ("Mã {}: {}" của mã giảm giá): phần ghép trước phần cuối phải là một từ, để
+            // "Mã mở tủ: 123456" không bị hiểu thành mã "mở tủ".
+            if (literalLength < MIN_TEMPLATE_LITERAL) {
+                for (int i = 1; i < m.groupCount(); i++) {
+                    if (m.group(i).chars().anyMatch(Character::isWhitespace)) {
+                        return null;
+                    }
+                }
             }
             List<String> values = new ArrayList<>(m.groupCount());
             for (int i = 1; i <= m.groupCount(); i++) {

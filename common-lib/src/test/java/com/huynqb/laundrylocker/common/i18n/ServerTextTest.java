@@ -74,6 +74,51 @@ class ServerTextTest {
     }
 
     @Test
+    void plainTextEmailTranslatesLineByLineButKeepsWhatTheCustomerTyped() {
+        // Dựng như OrderService.receiverEmailBody: lời nhắn do người gửi gõ phải giữ nguyên.
+        String vi = "Xin chào Trần An,\n\n"
+                + "Nguyễn Bình đã gửi cho bạn một kiện hàng trong tủ Lock.R.\n\n"
+                + "Mã đơn: ORD-1\n"
+                + "Người gửi: Nguyễn Bình\n"
+                + "Nơi lấy: Tủ Thư viện (Toà Alpha), ô số 4\n"
+                + "Mã mở tủ: 123456\n"
+                + "Hạn lấy hàng: 14:30 03/11/2026\n"
+                + "Lời nhắn của người gửi: Nhớ lấy trước 5 giờ chiều nhé\n"
+                + "\nNhập mã này trên màn hình tủ để mở ô và lấy hàng. Không chia sẻ mã cho người khác.\n";
+        assertEquals("Hello Trần An,\n\n"
+                + "Nguyễn Bình has sent you a parcel in a Lock.R locker.\n\n"
+                + "Order code: ORD-1\n"
+                + "Sender: Nguyễn Bình\n"
+                + "Pickup at: Tủ Thư viện (Toà Alpha), box no. 4\n"
+                + "Locker code: 123456\n"
+                + "Pickup deadline: 14:30 03/11/2026\n"
+                + "Message from the sender: Nhớ lấy trước 5 giờ chiều nhé\n"
+                + "\nEnter this code on the locker screen to open the box and collect your parcel. "
+                + "Do not share the code with anyone.\n", ServerText.toEnglish(vi));
+    }
+
+    @Test
+    void htmlEmailTranslatesTextBetweenTags() {
+        String html = "<html lang=\"vi\"><body><span>DRONE ĐANG GIAO</span>"
+                + "<p>Xin chào bạn,</p><div>MÃ ĐƠN HÀNG <strong>ORD-1</strong></div>"
+                + "<td>Người nhận</td><td>Trần &amp; An</td>"
+                + "<p>Khi hàng vào tủ, bạn sẽ nhận email có mã mở ô và thời hạn lấy hàng.</p></body></html>";
+        assertEquals("<html lang=\"en\"><body><span>DRONE ON THE WAY</span>"
+                + "<p>Hello there,</p><div>ORDER CODE <strong>ORD-1</strong></div>"
+                + "<td>Recipient</td><td>Trần &amp; An</td>"
+                + "<p>When the parcel is in the locker, you will get an email with the box code and pickup deadline.</p>"
+                + "</body></html>", ServerText.htmlToEnglish(html));
+    }
+
+    @Test
+    void asciiSmsUsesSmsTemplates() {
+        assertEquals("Lock.R: You have parcel ORD-1 at Tu Thu vien, box no. 4. Locker code: 123456. Pick up by: 14:30 03/11/2026.",
+                ServerText.smsToEnglish(
+                        "Lock.R: Ban co kien hang ORD-1 tai Tu Thu vien, o so 4. Ma mo tu: 123456. Han lay: 14:30 03/11/2026."));
+        assertEquals("Hello", ServerText.smsToEnglish("Hello"));
+    }
+
+    @Test
     void multiLineTextTranslatesEachLine() {
         assertEquals("Order cancelled\nPaid", ServerText.toEnglish("Đơn đã hủy\nĐã thanh toán"));
     }
