@@ -381,7 +381,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 bool(DRONE_DEMO_ENABLED, DRONE_DEMO, "Cho phép chế độ drone DEMO",
                         "Bật bộ giả lập chặng bay cho đơn drone.", true),
                 integer(DRONE_DEMO_STAGE_DELAY_MS, DRONE_DEMO, "Thời gian mỗi chặng bay giả lập",
-                        "Khoảng thời gian (ms) giữa các bước bay trong chế độ giả lập.", 3000, 1000, 600_000, "ms"),
+                        "Khoảng thời gian (ms) giữa các bước bay trong chế độ giả lập.", 15_000, 1000, 600_000, "ms"),
                 string(DRONE_DEMO_ALLOWED_USER_IDS, DRONE_DEMO, "User được dùng drone DEMO",
                         "Danh sách user id cách nhau bởi dấu phẩy. Để trống = áp dụng cho mọi người.", "", List.of()));
     }

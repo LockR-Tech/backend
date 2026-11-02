@@ -5,16 +5,19 @@ import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 
@@ -68,6 +71,25 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleUnreadable(HttpMessageNotReadableException ex) {
         return ResponseEntity.badRequest().body(ApiResponse.error("REQUEST_BODY_INVALID",
                 "Nội dung yêu cầu không đọc được hoặc sai định dạng"));
+    }
+
+    /// Gọi sai phương thức (vd. POST vào API chỉ nhận GET) là lỗi của client — trước đây rơi vào nhánh chung và
+    /// trả 500 INTERNAL_ERROR (test 2026-11-02, `POST /api/loyalty/redeem-preview`).
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED);
+        if (ex.getSupportedHttpMethods() != null && !ex.getSupportedHttpMethods().isEmpty()) {
+            response.allow(ex.getSupportedHttpMethods().toArray(HttpMethod[]::new));
+        }
+        return response.body(ApiResponse.error("METHOD_NOT_ALLOWED",
+                "Phương thức " + ex.getMethod() + " không được hỗ trợ cho đường dẫn này"));
+    }
+
+    /// Đường dẫn không có API nào: 404 thay vì 500.
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResource(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("NOT_FOUND", "Không tìm thấy đường dẫn " + ex.getResourcePath()));
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
