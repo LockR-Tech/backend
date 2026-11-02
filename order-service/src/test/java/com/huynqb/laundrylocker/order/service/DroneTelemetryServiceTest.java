@@ -56,6 +56,8 @@ class DroneTelemetryServiceTest {
     private DronePositionClient positionClient;
     @Mock
     private LockerDroneClient lockerDroneClient;
+    @Mock
+    private DroneFlightTrackRecorder trackRecorder;
 
     private DroneTelemetryService service;
     private LockerOrder order;
@@ -67,7 +69,7 @@ class DroneTelemetryServiceTest {
         service = new DroneTelemetryService(
                 missionRepository, orderRepository, progressService, references, positionClient, lockerDroneClient,
                 new DroneTelemetryRegistry(15), new TransactionTemplate(mock(PlatformTransactionManager.class)),
-                com.huynqb.laundrylocker.order.settings.TestOrderRules.defaults());
+                com.huynqb.laundrylocker.order.settings.TestOrderRules.defaults(), trackRecorder);
         order = new LockerOrder();
         order.setId(21L);
         order.setType("DRONE_DELIVERY");
@@ -103,6 +105,32 @@ class DroneTelemetryServiceTest {
 
         assertEquals("DEPARTED", mission.getStatus());
         verify(progressService).advance(eq(order), eq(mission), isNull(), any());
+    }
+
+    @Test
+    void everyInFlightPositionIsKeptInTheFlightTrack() {
+        mission.setStatus("DEPARTED");
+        mission.setId(9L);
+
+        service.ingest(DRONE, frame("IN_AIR", 10.8450, 106.8100, 3, 8.0, 14.8));
+
+        ArgumentCaptor<DroneFlightTrackRecorder.Point> point = ArgumentCaptor.forClass(DroneFlightTrackRecorder.Point.class);
+        verify(trackRecorder).record(point.capture());
+        assertEquals(21L, point.getValue().orderId());
+        assertEquals(9L, point.getValue().missionId());
+        assertEquals("EN_ROUTE", point.getValue().stage());
+        assertEquals(10.8450, point.getValue().latitude());
+        assertEquals(106.8100, point.getValue().longitude());
+        assertEquals(DroneFlightTrackRecorder.DRONE, point.getValue().source());
+    }
+
+    @Test
+    void positionsOutsideAFlightAreNotTracked() {
+        mission.setStatus("DEPOSITED");
+
+        service.ingest(DRONE, frame("ON_GROUND", 10.8499, 106.8100, 3, 0.0, 14.8));
+
+        verify(trackRecorder, never()).record(any());
     }
 
     @Test

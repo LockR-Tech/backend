@@ -35,6 +35,7 @@ public class DronePositionBroadcaster {
 
     private final AdminReferenceResolver references;
     private final DronePositionClient positionClient;
+    private final DroneFlightTrackRecorder trackRecorder;
 
     /// Nhớ toạ độ tủ để không gọi locker-service mỗi giây, nhưng chỉ trong một phút: admin dời tủ
     /// (sửa toạ độ) thì chuyến bay mô phỏng kế tiếp phải bay tới chỗ mới mà không cần khởi động lại.
@@ -51,6 +52,10 @@ public class DronePositionBroadcaster {
         try {
             DronePositionUpdate position = positionOf(order, mission, now, stageDelayMs);
             if (position != null) {
+                trackRecorder.record(new DroneFlightTrackRecorder.Point(
+                        order.getId(), mission.getId(), mission.getDroneCode(), mission.getStatus(),
+                        position.lat(), position.lng(), null, position.heading(), null, null,
+                        DroneFlightTrackRecorder.DRONE_SIMULATED, position.ts()));
                 positionClient.publish(order.getId(), position);
             }
         } catch (Exception ignored) {
