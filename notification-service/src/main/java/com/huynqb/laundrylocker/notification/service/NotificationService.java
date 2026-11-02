@@ -4,6 +4,7 @@ import com.huynqb.laundrylocker.common.dto.NotificationRequest;
 import com.huynqb.laundrylocker.common.event.DomainEvent;
 import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
+import com.huynqb.laundrylocker.common.i18n.ServerText;
 import com.huynqb.laundrylocker.notification.dto.AdminBroadcastRequest;
 import com.huynqb.laundrylocker.notification.dto.FcmTokenRequest;
 import com.huynqb.laundrylocker.notification.dto.NotificationResponse;
@@ -72,7 +73,7 @@ public class NotificationService {
 
         fcmPushNotificationService.sendToUser(saved.getUserId(), saved.getTitle(), saved.getMessage(), data);
         NotificationResponse response = toResponse(saved);
-        webSocketNotificationService.sendToUser(saved.getUserId(), response);
+        webSocketNotificationService.sendToUser(saved.getUserId(), inUserLanguage(response));
         publishNotificationRequested(saved);
 
         if (isOrderRelated(saved.getType(), saved.getReferenceType())) {
@@ -135,6 +136,9 @@ public class NotificationService {
         token.setUserId(request.userId());
         token.setToken(request.token());
         token.setDeviceType(request.deviceType());
+        if (StringUtils.hasText(request.language())) {
+            token.setLanguage(ServerText.wantsEnglish(request.language()) ? "en" : "vi");
+        }
         fcmTokenRepository.save(token);
     }
 
@@ -472,6 +476,18 @@ public class NotificationService {
         data.put("body", notification.getMessage() == null ? "" : notification.getMessage());
         data.put("content", notification.getMessage() == null ? "" : notification.getMessage());
         return data;
+    }
+
+    /// Tin realtime không đi qua response HTTP nên không được [com.huynqb.laundrylocker.common.i18n.EnglishResponseAdvice]
+    /// dịch: theo ngôn ngữ của máy đăng ký token gần nhất.
+    private NotificationResponse inUserLanguage(NotificationResponse response) {
+        if (response.userId() == null || !fcmPushNotificationService.prefersEnglish(response.userId())) {
+            return response;
+        }
+        return new NotificationResponse(
+                response.id(), response.userId(), ServerText.toEnglish(response.title()),
+                ServerText.toEnglish(response.message()), response.type(), response.isRead(), response.referenceId(),
+                response.referenceType(), response.status(), response.readAt(), response.createdAt());
     }
 
     private NotificationResponse toResponse(NotificationMessage notification) {
