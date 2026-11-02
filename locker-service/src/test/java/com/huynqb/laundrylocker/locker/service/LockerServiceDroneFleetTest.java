@@ -442,7 +442,7 @@ class LockerServiceDroneFleetTest {
                 .thenReturn(Optional.of(droneUnit(7L, 42L, DroneStatus.IN_FLIGHT, 70)));
 
         service.transitionDroneStatusInternal(
-                7L, DroneStatus.IN_FLIGHT, DroneStatus.FAULT, "Parcel drop incident DPI-89", false);
+                7L, DroneStatus.IN_FLIGHT, DroneStatus.FAULT, "Sự cố rơi kiện DPI-89", false);
 
         verify(reportRepository, never()).save(any(LockerReport.class));
     }

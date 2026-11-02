@@ -3695,8 +3695,10 @@ public class LockerService {
     }
 
     public List<DroneMaintenanceLogResponse> droneLogs(Long droneUnitId) {
+        // Mỗi KTV tra tên một lần; trước đây không trả tên nên app hiện "KTV #800023" (test 2026-11-02).
+        Map<Long, Optional<UserSummary>> users = new HashMap<>();
         return droneMaintenanceLogRepository.findByDroneUnitIdOrderByCreatedAtAsc(droneUnitId).stream()
-                .map(this::toDroneLog)
+                .map(log -> toDroneLog(log, users))
                 .toList();
     }
 
@@ -3771,8 +3773,14 @@ public class LockerService {
     }
 
     private DroneMaintenanceLogResponse toDroneLog(DroneMaintenanceLog log) {
+        return toDroneLog(log, new HashMap<>());
+    }
+
+    private DroneMaintenanceLogResponse toDroneLog(DroneMaintenanceLog log, Map<Long, Optional<UserSummary>> users) {
+        UserSummary actor = cachedUser(log.getActorUserId(), users);
         return new DroneMaintenanceLogResponse(
-                log.getId(), log.getDroneUnitId(), log.getActorUserId(), log.getNote(), log.getCreatedAt());
+                log.getId(), log.getDroneUnitId(), log.getActorUserId(), log.getNote(), log.getCreatedAt(),
+                actor == null ? null : actor.fullName());
     }
 
     private LockerStatsResponse toStats(LockerUnit locker) {
