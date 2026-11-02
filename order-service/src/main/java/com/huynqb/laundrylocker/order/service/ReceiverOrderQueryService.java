@@ -181,7 +181,7 @@ public class ReceiverOrderQueryService {
                 order.getPaidAt(),
                 order.getUpdatedAt(),
                 order.getCompletedAt(),
-                OrderDetailViews.milestones(order, history));
+                OrderDetailViews.milestones(order, history, false));
     }
 
     /// Hàng đã nằm trong ô và mở được bằng PIN/QR của đơn.

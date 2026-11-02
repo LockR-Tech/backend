@@ -350,7 +350,7 @@ public class DroneDeliveryQueryService {
                 .toList();
     }
 
-    private static boolean sharedLocation(OrderStatusHistory h) {
+    static boolean sharedLocation(OrderStatusHistory h) {
         return h.getLocationSource() != null
                 && !OrderHistoryLocator.PICKUP_ADDRESS.equals(h.getLocationSource())
                 && !OrderHistoryLocator.TECHNICIAN.equals(h.getLocationSource());

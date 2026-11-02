@@ -62,6 +62,13 @@ public final class OrderDetailViews {
     /// chuyển sang trạng thái/chặng đó trong `historyOldestFirst` (rỗng ⇒ bỏ qua các mốc này).
     /// Không đưa ghi chú hay người thao tác của lịch sử ra ngoài.
     public static List<OrderMilestone> milestones(LockerOrder order, List<OrderStatusHistory> historyOldestFirst) {
+        return milestones(order, historyOldestFirst, true);
+    }
+
+    /// Như trên; đơn drone kèm vị trí kiện lúc đạt mốc — lấy từ dòng lịch sử mới nhất tới thời điểm đó.
+    /// `revealPrivateLocations` = false (người nhận): bỏ điểm lấy hàng của người gửi và vị trí KTV.
+    public static List<OrderMilestone> milestones(
+            LockerOrder order, List<OrderStatusHistory> historyOldestFirst, boolean revealPrivateLocations) {
         List<OrderStatusHistory> history = historyOldestFirst == null ? List.of() : historyOldestFirst;
         boolean drone = "DRONE_DELIVERY".equalsIgnoreCase(order.getType());
         List<OrderMilestone> result = new ArrayList<>();
@@ -92,6 +99,29 @@ public final class OrderDetailViews {
                 order.getCompletedAt() != null ? order.getCompletedAt() : firstReached(history, "COMPLETED"));
         // Sắp xếp ổn định: hai mốc cùng thời điểm giữ thứ tự nghiệp vụ ở trên.
         result.sort(Comparator.comparing(OrderMilestone::occurredAt));
+        return drone ? located(result, history, revealPrivateLocations) : List.copyOf(result);
+    }
+
+    /// Mốc đọc từ cột thời gian của đơn có thể lệch vài trăm mili-giây so với dòng lịch sử cùng giao dịch.
+    private static final java.time.Duration LOCATION_MATCH_TOLERANCE = java.time.Duration.ofSeconds(2);
+
+    private static List<OrderMilestone> located(
+            List<OrderMilestone> milestones, List<OrderStatusHistory> history, boolean revealPrivate) {
+        List<OrderMilestone> result = new ArrayList<>(milestones.size());
+        for (OrderMilestone m : milestones) {
+            OrderStatusHistory at = null;
+            for (OrderStatusHistory h : history) {
+                if (h.getCreatedAt() == null || h.getCreatedAt().isAfter(m.occurredAt().plus(LOCATION_MATCH_TOLERANCE))) {
+                    break;
+                }
+                if (h.getLatitude() != null && h.getLongitude() != null
+                        && (revealPrivate || DroneDeliveryQueryService.sharedLocation(h))) {
+                    at = h;
+                }
+            }
+            result.add(at == null ? m : new OrderMilestone(m.code(), m.label(), m.occurredAt(),
+                    at.getLatitude(), at.getLongitude(), at.getLocationSource()));
+        }
         return List.copyOf(result);
     }
 
