@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.notification.channel;
 
+import com.huynqb.laundrylocker.common.i18n.ServerText;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.mail.internet.MimeMessage;
 import org.springframework.beans.factory.ObjectProvider;
@@ -54,6 +55,11 @@ public class GuestEmailSender {
 
     /// Gửi HTML có text thay thế để hỗ trợ client email không render HTML.
     public boolean send(String to, String subject, String body, String htmlBody) {
+        return send(to, subject, body, htmlBody, false);
+    }
+
+    /// `english`: thư đã dịch — khung HTML dựng sẵn (khi nơi gọi chỉ gửi chữ trơn) cũng được dịch.
+    public boolean send(String to, String subject, String body, String htmlBody, boolean english) {
         if (!StringUtils.hasText(to)) return false;
 
         if (!isReal()) {
@@ -68,7 +74,8 @@ public class GuestEmailSender {
             helper.setFrom(fromEmail());
             helper.setTo(to.trim());
             helper.setSubject(subject);
-            helper.setText(body, StringUtils.hasText(htmlBody) ? htmlBody : LockREmailTemplate.render(subject, body));
+            String html = StringUtils.hasText(htmlBody) ? htmlBody : LockREmailTemplate.render(subject, body);
+            helper.setText(body, english && !StringUtils.hasText(htmlBody) ? ServerText.htmlToEnglish(html) : html);
             helper.addInline("lockr-logo", new ClassPathResource("email/lockr-logo.png"), "image/png");
             sender.send(message);
             return true;

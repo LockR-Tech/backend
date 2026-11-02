@@ -83,7 +83,8 @@ public class ReceiverOrderMailService {
         boolean sent;
         try {
             var response = notificationClient.notifyGuest(new GuestNotification.Request(
-                    null, email, "Thông tin đơn " + order.orderCode() + " trên Lock.R", null, emailBody(order)));
+                    null, email, "Thông tin đơn " + order.orderCode() + " trên Lock.R", null, emailBody(order))
+                    .inLanguage(RecipientLanguage.ofUser(userClient, userId)));
             GuestNotification.Result result = response == null ? null : response.data();
             sent = result != null && result.emailSent();
         } catch (Exception ex) {

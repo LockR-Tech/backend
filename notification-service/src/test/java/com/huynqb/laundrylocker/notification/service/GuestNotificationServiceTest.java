@@ -73,6 +73,33 @@ class GuestNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("người nhận dùng tiếng Anh: tiêu đề, nội dung, HTML và SMS được dịch trước khi gửi")
+    void englishRecipientGetsTranslatedEmailAndSms() {
+        when(smsSender.send(anyString(), anyString())).thenReturn(true);
+        when(emailSender.send(anyString(), anyString(), anyString(), any(), eq(true))).thenReturn(true);
+
+        service.notifyGuest(new GuestNotificationRequest(
+                "0901234567", "an@example.com", "Mã mở tủ Lock.R cho đơn ORD-1",
+                "Lock.R: Ban co kien hang ORD-1 tai Tu A, o so 4. Ma mo tu: 482913. Han lay: 14:30 03/11/2026.",
+                "Xin chào An,\n\nMã đơn: ORD-1\n", "<html lang=\"vi\"><p>Xin chào An,</p></html>", "en"));
+
+        verify(emailSender).send(eq("an@example.com"), eq("Lock.R locker code for order ORD-1"),
+                eq("Hello An,\n\nOrder code: ORD-1\n"), eq("<html lang=\"en\"><p>Hello An,</p></html>"), eq(true));
+        verify(smsSender).send(eq("0901234567"),
+                eq("Lock.R: You have parcel ORD-1 at Tu A, box no. 4. Locker code: 482913. Pick up by: 14:30 03/11/2026."));
+    }
+
+    @Test
+    @DisplayName("không ghi ngôn ngữ (nơi gọi cũ) hoặc tiếng Việt: gửi nguyên văn")
+    void vietnameseOrMissingLanguageIsSentAsIs() {
+        when(emailSender.send(anyString(), anyString(), anyString(), any())).thenReturn(true);
+
+        service.notifyGuest(request(null, "an@example.com"));
+
+        verify(emailSender).send("an@example.com", "Mã mở tủ Lock.R", "Mã mở tủ: 482913", null);
+    }
+
+    @Test
     @DisplayName("báo lại kênh nào đang chạy thật để phân biệt 'gửi hỏng' với 'chưa cấu hình'")
     void exposesChannelAvailability() {
         when(smsSender.send(anyString(), anyString())).thenReturn(false);

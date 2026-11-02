@@ -1,9 +1,11 @@
 package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.order.client.LockerCellClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
+import com.huynqb.laundrylocker.order.client.UserClient;
 import com.huynqb.laundrylocker.order.dto.CellDto;
 import com.huynqb.laundrylocker.order.dto.GuestNotification;
 import com.huynqb.laundrylocker.order.model.DroneMission;
@@ -26,8 +28,9 @@ class DroneDeliveryMailerTest {
     private final NotificationClient notificationClient = mock(NotificationClient.class);
     private final LockerLookupClient lockerLookupClient = mock(LockerLookupClient.class);
     private final LockerCellClient lockerCellClient = mock(LockerCellClient.class);
+    private final UserClient userClient = mock(UserClient.class);
     private final DroneDeliveryMailer mailer =
-            new DroneDeliveryMailer(notificationClient, lockerLookupClient, lockerCellClient);
+            new DroneDeliveryMailer(notificationClient, lockerLookupClient, lockerCellClient, userClient);
 
     @Test
     void launchEmailsTellBothSidesWhichLockerAndWhichBoxTheParcelGoesTo() {
@@ -154,6 +157,83 @@ class DroneDeliveryMailerTest {
 
         order.setReservedBoxId(null);
         assertEquals("tủ #7 · chưa gán ô", mailer.destinationWithBox(order));
+    }
+
+    @Test
+    void mailsCarryEachRecipientsAppLanguage() {
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
+        when(userClient.getUser(5L)).thenReturn(ApiResponse.ok(user(5L, "en")));
+        when(userClient.getUser(9L)).thenReturn(ApiResponse.ok(user(9L, "vi")));
+        ArgumentCaptor<GuestNotification.Request> sent = ArgumentCaptor.forClass(GuestNotification.Request.class);
+
+        // Người nhận chưa có tài khoản ⇒ theo ngôn ngữ người gửi.
+        LockerOrder guestReceiver = order();
+        guestReceiver.setUserId(5L);
+        mailer.launched(guestReceiver, null);
+        // Người nhận có tài khoản ⇒ ngôn ngữ của chính họ.
+        LockerOrder memberReceiver = order();
+        memberReceiver.setUserId(5L);
+        memberReceiver.setReceiverUserId(9L);
+        mailer.launched(memberReceiver, null);
+
+        verify(notificationClient, times(4)).notifyGuest(sent.capture());
+        List<String> languages = sent.getAllValues().stream().map(GuestNotification.Request::language).toList();
+        assertEquals(List.of("en", "en", "en", "vi"), languages);
+        // Nội dung vẫn soạn tiếng Việt — notification-service dịch lúc gửi.
+        assertTrue(sent.getAllValues().get(0).subject().startsWith("Đơn hàng ORD-21"));
+    }
+
+    /// Mọi thư drone phải có bản dịch trọn câu: tên/địa chỉ trong dữ liệu mẫu không dấu nên bản tiếng Anh không
+    /// được còn ký tự tiếng Việt nào (câu thiếu trong bảng dịch sẽ lộ ra ở đây).
+    @Test
+    void everyDroneMailHasACompleteEnglishVersion() {
+        when(notificationClient.notifyGuest(any()))
+                .thenReturn(ApiResponse.ok(new GuestNotification.Result(false, true, false, true)));
+        when(lockerCellClient.getCell(301L))
+                .thenReturn(ApiResponse.ok(new CellDto(301L, 3, "M", "DRONE", 0, 2, "RESERVED", null)));
+        LockerOrder order = order();
+        order.setSenderName("Nguyen Van Gui");
+        order.setReceiverName("Tran Thi Nhan");
+        order.setPickupAddress("12 Le Loi");
+        order.setParcelFragile(true);
+        DroneMission mission = new DroneMission();
+        mission.setDroneCode("DRONE-A1");
+        java.time.Instant at = java.time.Instant.parse("2026-11-02T07:30:00Z");
+
+        mailer.launched(order, mission);
+        mailer.failed(order, "Thời tiết xấu", null, 12L, true, true, true);
+        mailer.failed(order, "Drone lỗi", null, null, false, false, false);
+        mailer.parcelDropReported(order, "DPI-7", at, "10.84110, 106.80970", "drone đang trên đường", true);
+        mailer.parcelRecoveryVerified(order, "DPI-7", true, "còn nguyên vẹn", "Station 2", at, true);
+        mailer.parcelRecoveryVerified(order, "DPI-7", false, null, null, at, true);
+        mailer.deliveryPaused(order, "Thời tiết xấu", null, true);
+        mailer.deliveryResumed(order, "Thời tiết xấu", true);
+        mailer.incidentProposal(order, "DPI-7", "Giao lại miễn phí", "hư hại nhẹ", "50000đ", null);
+        mailer.incidentResolutionAccepted(order, "DPI-7", "Giao lại miễn phí", "ORD-99", true);
+        mailer.incidentResolutionAccepted(order, "DPI-7", "Bồi thường", null, true);
+
+        ArgumentCaptor<GuestNotification.Request> sent = ArgumentCaptor.forClass(GuestNotification.Request.class);
+        verify(notificationClient, org.mockito.Mockito.atLeast(18)).notifyGuest(sent.capture());
+        java.util.regex.Pattern vietnamese = java.util.regex.Pattern.compile(
+                "[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
+                java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
+        for (GuestNotification.Request mail : sent.getAllValues()) {
+            for (String english : List.of(
+                    com.huynqb.laundrylocker.common.i18n.ServerText.toEnglish(mail.subject()),
+                    com.huynqb.laundrylocker.common.i18n.ServerText.toEnglish(mail.emailBody()),
+                    com.huynqb.laundrylocker.common.i18n.ServerText.htmlToEnglish(mail.emailHtml()))) {
+                // "50000đ": ký hiệu tiền giữ nguyên như trong app.
+                List<String> left = english.lines()
+                        .filter(line -> vietnamese.matcher(line.replaceAll("\\d[\\d.,]*\\s?đ", "")).find())
+                        .toList();
+                assertEquals(List.of(), left);
+            }
+        }
+    }
+
+    private static UserSummary user(Long id, String language) {
+        return new UserSummary(id, null, null, null, "ACTIVE", java.util.Set.of(), null, language);
     }
 
     private static LockerOrder order() {

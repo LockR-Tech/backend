@@ -573,7 +573,8 @@ public class OrderService {
         try {
             var response = notificationClient.notifyGuest(
                     new GuestNotification.Request(phone, email, "Mã mở tủ Lock.R cho đơn "
-                            + order.getOrderCode(), sms, emailBody));
+                            + order.getOrderCode(), sms, emailBody)
+                            .inLanguage(RecipientLanguage.receiver(userClient, order)));
             var result = response == null ? null : response.data();
             return result == null
                     ? new GuestNotification.Result(false, false, false, false)
@@ -903,7 +904,8 @@ public class OrderService {
         boolean sent;
         try {
             var response = notificationClient.notifyGuest(
-                    new GuestNotification.Request(null, order.getReceiverEmail(), subject, null, body));
+                    new GuestNotification.Request(null, order.getReceiverEmail(), subject, null, body)
+                            .inLanguage(RecipientLanguage.receiver(userClient, order)));
             var result = response == null ? null : response.data();
             sent = result != null && result.emailSent();
         } catch (Exception ex) {
@@ -932,7 +934,8 @@ public class OrderService {
         Long orderId = order.getId();
         Runnable send = () -> {
             try {
-                notificationClient.notifyGuest(new GuestNotification.Request(null, email, subject, null, body.get()));
+                notificationClient.notifyGuest(new GuestNotification.Request(null, email, subject, null, body.get())
+                        .inLanguage(RecipientLanguage.receiver(userClient, order)));
             } catch (Exception ex) {
                 log.warn("Could not email the receiver of order {}: {}", orderId, ex.getMessage());
             }
