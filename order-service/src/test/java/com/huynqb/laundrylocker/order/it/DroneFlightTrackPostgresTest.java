@@ -10,6 +10,7 @@ import com.huynqb.laundrylocker.order.settings.OrderSettingsCatalog;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,9 @@ class DroneFlightTrackPostgresTest extends DroneFlowPostgresTestBase {
     @BeforeEach
     void clearTrack() {
         jdbc.execute("TRUNCATE order_schema.drone_flight_track_points RESTART IDENTITY");
+        // Bean dùng chung cả bộ test và id đơn được đếm lại từ 1: mốc chống ghi dày của lớp test trước cho
+        // cùng id sẽ làm điểm đầu tiên ở đây bị bỏ.
+        ((Map<?, ?>) ReflectionTestUtils.getField(recorder, "lastRecordedAtMs")).clear();
     }
 
     @Test
