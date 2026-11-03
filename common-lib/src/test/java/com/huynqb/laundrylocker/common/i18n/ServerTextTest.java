@@ -36,6 +36,20 @@ class ServerTextTest {
     }
 
     @Test
+    void droneTechnicianTextsHaveEnglish() {
+        // Lý do lỗi drone / nhật ký bảo trì / ghi chú kết thúc nhiệm vụ khi báo rơi kiện.
+        assertEquals("Parcel drop incident DPI-20261102-0007",
+                ServerText.toEnglish("Sự cố rơi kiện DPI-20261102-0007"));
+        // Câu "Sự cố rơi kiện drone" (tiêu đề thông báo admin) vẫn khớp nguyên câu.
+        assertEquals("Drone parcel drop incident", ServerText.toEnglish("Sự cố rơi kiện drone"));
+        // Ghi chú app KTV drone gửi khi nghiệm thu / cập nhật ảnh tiến độ.
+        assertEquals("[INSPECTION PASSED] Fixed and checked that the drone works normally.",
+                ServerText.toEnglish("[NGHIỆM THU THÀNH CÔNG] Đã khắc phục và kiểm tra Drone hoạt động bình thường."));
+        assertEquals("Drone repair progress photos updated",
+                ServerText.toEnglish("Cập nhật ảnh tiến độ sửa chữa Drone"));
+    }
+
+    @Test
     void vietnameseInsideDynamicPartIsTranslatedToo() {
         // "Mã {}: {}": lý do bên trong cũng là câu server soạn.
         assertEquals("Code SALE10: is invalid or has expired",

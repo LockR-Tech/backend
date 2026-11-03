@@ -1287,5 +1287,13 @@
   "{} (phiếu sự cố #{})": "{} (issue ticket #{})",
   "({})": "({})",
   "{} mà {} định gửi cho bạn": "{} that {} was going to send you",
-  "{} gửi cho bạn": "{} sent to you"
+  "{} gửi cho bạn": "{} sent to you",
+  "Sự cố rơi kiện {}": "Parcel drop incident {}",
+  "Phương thức {} không được hỗ trợ cho đường dẫn này": "Method {} is not supported for this path",
+  "Không tìm thấy đường dẫn {}": "Path {} not found",
+  "Đã khắc phục và kiểm tra Drone hoạt động bình thường.": "Fixed and checked that the drone works normally.",
+  "Cập nhật ảnh tiến độ sửa chữa Drone": "Drone repair progress photos updated",
+  "Ảnh kiện lúc kỹ thuật viên lấy hàng": "Parcel photo taken when the technician picked it up",
+  "Bằng chứng thu hồi kiện": "Parcel recovery evidence",
+  "Ảnh kiểm tra định kỳ": "Routine inspection photo"
 }
