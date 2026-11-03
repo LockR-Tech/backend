@@ -29,6 +29,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String MAX_OVERTIME_PERCENT = "app.order.pickup-max-overtime-percent";
     public static final String RENTAL_OVERTIME_RATE_PERCENT = "app.order.rental-overtime-rate-percent";
     public static final String SEND_PICKUP_HOURS = "app.order.send-pickup-hours-limit";
+    public static final String SEND_STORAGE_MAX_HOURS = "app.order.send-storage-max-hours";
+    public static final String SEND_STORAGE_QUICK_HOURS = "app.order.send-storage-quick-hours";
     public static final String DRONE_PICKUP_HOURS = "app.order.drone-pickup-hours-limit";
     public static final String AUTO_CANCEL_HOURS = "app.order.auto-cancel-hours";
     public static final String DRONE_UNPAID_CANCEL_MINUTES = "app.order.drone-unpaid-cancel-minutes";
@@ -156,7 +158,13 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         50, 0, 1000, "%").asPublic(),
 
                 integer(SEND_PICKUP_HOURS, DEADLINES, "Hạn người nhận lấy hàng gửi",
-                        "Tính từ lúc người gửi bỏ hàng vào ô.", 48, 1, 720, "giờ").asPublic(),
+                        "Số giờ giữ hàng đã gồm trong phí gửi, tính từ lúc người gửi bỏ hàng vào ô. Người gửi chọn "
+                                + "giữ lâu hơn thì trả thêm phần giờ vượt theo giá thuê ô thường.", 48, 1, 720, "giờ").asPublic(),
+                integer(SEND_STORAGE_MAX_HOURS, DEADLINES, "Số giờ giữ hàng gửi tối đa",
+                        "Tổng số giờ người gửi được chọn (kể cả gia hạn). Nhỏ hơn hạn lấy hàng gửi thì coi bằng hạn đó.",
+                        168, 1, 8760, "giờ").asPublic(),
+                integerList(SEND_STORAGE_QUICK_HOURS, DEADLINES, "Nút chọn nhanh số giờ giữ hàng gửi",
+                        "Danh sách giờ hiển thị trên app, phân tách bằng dấu phẩy.", "48,72,96,168", 1, 8760, "giờ").asPublic(),
                 integer(DRONE_PICKUP_HOURS, DEADLINES, "Hạn lấy hàng giao bằng drone",
                         "Tính từ lúc drone thả hàng vào ô.", 24, 1, 720, "giờ").asPublic(),
                 integer(AUTO_CANCEL_HOURS, DEADLINES, "Tự huỷ đơn chưa bỏ hàng sau",

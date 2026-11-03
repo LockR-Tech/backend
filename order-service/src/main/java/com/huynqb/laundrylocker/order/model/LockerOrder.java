@@ -205,6 +205,13 @@ public class LockerOrder {
     @Column(name = "rental_duration_hours")
     private Integer rentalDurationHours;
 
+    /// Gia hạn giữ hàng của đơn gửi hàng đang chờ thanh toán (V40): chỉ cộng vào hạn lấy khi trả xong.
+    @Column(name = "pending_extension_hours")
+    private Integer pendingExtensionHours;
+
+    @Column(name = "pending_extension_fee")
+    private BigDecimal pendingExtensionFee;
+
     @Column(name = "last_reminder_at")
     private LocalDateTime lastReminderAt;
 

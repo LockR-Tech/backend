@@ -19,5 +19,7 @@ public record SendOrderRequest(
         BigDecimal totalPrice,
         String promotionCode,
         /// Số điểm thưởng muốn dùng (tuỳ chọn); loyalty-service kẹp theo quy tắc admin.
-        Integer pointsToUse) {
+        Integer pointsToUse,
+        /// Số giờ giữ hàng tính từ lúc bỏ hàng (tuỳ chọn, app cũ không gửi ⇒ số giờ đã gồm trong phí gửi).
+        Integer storageHours) {
 }

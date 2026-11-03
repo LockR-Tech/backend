@@ -92,6 +92,17 @@ public class OrderRules {
         return settings.getInt(SEND_PICKUP_HOURS);
     }
 
+    /// Tổng số giờ giữ hàng gửi tối đa; không nhỏ hơn số giờ đã gồm trong phí gửi.
+    public int sendStorageMaxHours() {
+        return Math.max(sendPickupHours(), settings.getInt(SEND_STORAGE_MAX_HOURS));
+    }
+
+    /// Giá đơn gửi hàng giữ [hours] giờ: phí gửi đã gồm [#sendPickupHours] giờ, phần giờ vượt tính như thuê ô
+    /// STANDARD (giá giờ, trần giá ngày). Đơn gửi chỉ dùng ô STANDARD.
+    public BigDecimal sendStoragePrice(int hours) {
+        return sendBaseFee().add(rentalPrice("STANDARD", Math.max(0, hours - sendPickupHours())));
+    }
+
     public int dronePickupHours() {
         return settings.getInt(DRONE_PICKUP_HOURS);
     }

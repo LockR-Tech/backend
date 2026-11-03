@@ -124,8 +124,13 @@ public class OrderPaymentEventListener {
     }
 
     private void afterPaid(LockerOrder saved) {
+        boolean wasSendExtension = saved.getPendingExtensionHours() != null && saved.getPendingExtensionHours() > 0;
+        // Tiền gia hạn giữ hàng của đơn gửi vừa về ⇒ cộng giờ vào hạn lấy hàng.
+        orderService.applyPaidSendExtension(saved);
         paidEffects.afterPaid(saved);
-        orderService.notifyReceiverOrderPaid(saved);
+        if (!wasSendExtension) {
+            orderService.notifyReceiverOrderPaid(saved);
+        }
     }
 
     private static java.math.BigDecimal decimal(Object value) {
