@@ -70,6 +70,21 @@ class OrderAccessPolicyTest {
     }
 
     @Test
+    void pendingSendExtensionDoesNotBlockDropOrPickupOfPaidOrder() {
+        LockerOrder initializing = order("SEND", "INITIALIZED", "UNPAID", 65000, null);
+        initializing.setPaidAmount(BigDecimal.valueOf(15000));
+        initializing.setPendingExtensionHours(24);
+        initializing.setPendingExtensionFee(BigDecimal.valueOf(50000));
+        assertNull(OrderAccessPolicy.blockReason(initializing, defaults, NOW));
+
+        LockerOrder storing = order("SEND", "STORING", "UNPAID", 65000, NOW.plusHours(5));
+        storing.setPaidAmount(BigDecimal.valueOf(15000));
+        storing.setPendingExtensionHours(24);
+        storing.setPendingExtensionFee(BigDecimal.valueOf(50000));
+        assertNull(OrderAccessPolicy.blockReason(storing, defaults, NOW, BigDecimal.ZERO));
+    }
+
+    @Test
     void sendPickupWithPaidOvertimeFeeCanOpen() {
         LockerOrder paidOvertime = order("SEND", "STORING", "PAID", 25000, NOW.minusHours(5));
         paidOvertime.setExtraFee(BigDecimal.valueOf(10000));

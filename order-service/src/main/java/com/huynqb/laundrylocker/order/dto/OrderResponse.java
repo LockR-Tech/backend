@@ -98,5 +98,8 @@ public record OrderResponse(
         /// chưa mở ô bằng mã. Null = không có sự cố đang mở.
         LocalDateTime boxIncidentOpenedAt,
         /// Đơn drone lấy hàng tận nhà, KTV chưa cầm kiện: mã người gửi đọc cho KTV. Null các trường hợp khác.
-        String dronePickupCode) {
+        String dronePickupCode,
+        /// Đơn gửi hàng: lần gia hạn giữ hàng đang chờ thanh toán (giờ, tiền). Null khi không có.
+        Integer pendingExtensionHours,
+        BigDecimal pendingExtensionFee) {
 }

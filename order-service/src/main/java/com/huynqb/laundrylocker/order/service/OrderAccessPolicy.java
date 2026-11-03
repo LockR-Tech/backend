@@ -86,9 +86,17 @@ public final class OrderAccessPolicy {
     }
 
     private static boolean owesPayment(LockerOrder order) {
-        BigDecimal total = order.getTotalPrice();
-        return total != null
-                && total.compareTo(BigDecimal.ZERO) > 0
-                && !"PAID".equalsIgnoreCase(order.getPaymentStatus());
+        if ("PAID".equalsIgnoreCase(order.getPaymentStatus())) {
+            return false;
+        }
+        // Gia hạn giữ hàng chờ trả của đơn gửi là phần người gửi muốn mua thêm: không chặn mở ô.
+        BigDecimal total = order.getTotalPrice() == null || order.getPendingExtensionFee() == null
+                ? order.getTotalPrice()
+                : order.getTotalPrice().subtract(order.getPendingExtensionFee());
+        if (total == null || total.compareTo(BigDecimal.ZERO) <= 0) {
+            return false;
+        }
+        BigDecimal paid = order.getPaidAmount();
+        return paid == null || paid.compareTo(total) < 0;
     }
 }

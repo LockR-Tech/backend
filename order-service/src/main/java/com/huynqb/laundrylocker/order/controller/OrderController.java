@@ -127,6 +127,22 @@ public class OrderController {
         return ApiResponse.ok("ORDER_RENTAL_EXTENDED", "Rental extended", orderService.extendRental(orderId, userId, hours));
     }
 
+    /// Người gửi gia hạn thời gian giữ hàng của đơn gửi hàng qua tủ. Body `{hours}`; đơn đã trả thì phần
+    /// gia hạn chờ thanh toán (`pendingExtensionHours`), trả xong mới cộng vào hạn lấy hàng.
+    @PostMapping("/api/orders/{orderId}/extend-send")
+    public ApiResponse<OrderResponse> extendSend(
+            @PathVariable Long orderId,
+            @RequestBody Map<String, Object> request,
+            @RequestHeader("X-User-Id") Long userId) {
+        int hours;
+        try {
+            hours = Integer.parseInt(String.valueOf(request.getOrDefault("hours", "0")));
+        } catch (NumberFormatException ex) {
+            throw new BusinessException("INVALID_REQUEST", "hours must be a whole number");
+        }
+        return ApiResponse.ok("ORDER_SEND_EXTENDED", "Send storage extended", orderService.extendSend(orderId, userId, hours));
+    }
+
     @PostMapping("/api/orders/{orderId}/assess-overtime")
     public ApiResponse<OrderResponse> assessOvertime(
             @PathVariable Long orderId,

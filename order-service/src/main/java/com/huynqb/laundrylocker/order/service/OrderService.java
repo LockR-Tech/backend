@@ -201,7 +201,7 @@ public class OrderService {
             // goes to the receiver — the sender can no longer open the cell.
             order.setPinCode(generatePinCode());
             order.setPinCodeIssuedAt(LocalDateTime.now());
-            order.setPickupDeadline(LocalDateTime.now().plusHours(rules.sendPickupHours()));
+            order.setPickupDeadline(LocalDateTime.now().plusHours(sendStorageHours(order)));
             notifyParcelReadyForReceiver(order);
             return transition(order, "STORING", userId, null,
                     "Sender dropped parcel; pickup PIN issued to receiver " + order.getReceiverPhone());
@@ -226,6 +226,7 @@ public class OrderService {
         // Gửi hàng qua tủ bắt buộc có email người nhận: mã mở tủ luôn tới được người nhận (kể cả chưa có
         // tài khoản Lock.R) và người gửi gửi lại được từ chi tiết đơn khi cần.
         requireReceiverEmail(request.receiverEmail());
+        int storageHours = requestedSendHours(request.storageHours());
         Long boxId = request.boxId();
         if (boxId == null) {
             boxId = findAvailableCell(request.lockerId(), request.size(), "STANDARD");
@@ -238,13 +239,14 @@ public class OrderService {
                         null, request.receiverPhone(), request.receiverName(),
                         null, null, request.note(), null, null, null, request.promotionCode(), null, null,
                         request.pointsToUse()),
-                rules.sendBaseFee());
+                rules.sendStoragePrice(storageHours));
 
         // Email người nhận ghi sau khi tạo, giống cách createRental đặt số giờ thuê:
         // CreateOrderRequest là record vị trí dùng chung cho mọi loại đơn, thêm trường
         // vào đó sẽ phải sửa mọi nơi gọi chỉ vì một loại đơn cần. Email đã kiểm bắt buộc ở đầu hàm.
         LockerOrder order = find(created.id());
         order.setReceiverEmail(request.receiverEmail().trim());
+        order.setRentalDurationHours(storageHours);
         Long receiverUserId = receiverAccount(order.getReceiverEmail(), order.getReceiverPhone());
         if (receiverUserId != null) {
             order.setReceiverId(receiverUserId);
@@ -272,7 +274,7 @@ public class OrderService {
             return;
         }
         emailReceiverAfterCommit(order, "Bạn sắp nhận kiện hàng " + order.getOrderCode() + " qua tủ Lock.R",
-                () -> receiverOrderCreatedEmailBody(order, senderName(order), pickupPlace(order), rules.sendPickupHours()));
+                () -> receiverOrderCreatedEmailBody(order, senderName(order), pickupPlace(order), sendStorageHours(order)));
     }
 
     private Long receiverAccount(String email, String phone) {
@@ -372,6 +374,160 @@ public class OrderService {
         return toDroneDeliveryResponse(order);
     }
 
+    /// Người gửi gia hạn thời gian giữ hàng của đơn gửi hàng (trước hoặc sau khi bỏ hàng). Đơn chưa trả đồng
+    /// nào ⇒ cộng thẳng vào số giờ và giá. Đơn đã trả ⇒ ghi thành lần gia hạn chờ thanh toán, chỉ cộng giờ khi
+    /// tiền về ([#applyPaidSendExtension]); chưa trả thì người nhận vẫn lấy hàng theo hạn cũ.
+    @Transactional
+    public OrderResponse extendSend(Long id, Long userId, int hours) {
+        LockerOrder order = orderRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Order", id));
+        assertOwner(order, userId);
+        if (!"SEND".equalsIgnoreCase(order.getType())) {
+            throw new BusinessException("ORDER_STATUS_INVALID", "Chỉ đơn gửi hàng qua tủ mới gia hạn giữ hàng ở đây");
+        }
+        validateStatus(order, Set.of("INITIALIZED", "STORING"));
+        assertNoOpenBoxIncident(order);
+        assertRentalHours(hours, 1, rules.extendMaxHours());
+        if (order.getPendingExtensionHours() != null && order.getPendingExtensionHours() > 0) {
+            throw new BusinessException("SEND_EXTENSION_PENDING",
+                    "Lần gia hạn " + order.getPendingExtensionHours() + " giờ trước chưa thanh toán. "
+                            + "Thanh toán xong rồi mới gia hạn tiếp.");
+        }
+        int current = sendStorageHours(order);
+        int max = rules.sendStorageMaxHours();
+        if (current + hours > max) {
+            throw new BusinessException("SEND_STORAGE_HOURS_INVALID",
+                    "Tổng thời gian giữ hàng tối đa " + max + " giờ (đơn đang giữ " + current + " giờ).");
+        }
+        BigDecimal fee = rules.sendStoragePrice(current + hours).subtract(rules.sendStoragePrice(current))
+                .max(BigDecimal.ZERO);
+        boolean nothingPaid = paidAmountOf(order).signum() <= 0 && !isOrderPaid(order);
+        if (fee.signum() > 0) {
+            order.setTotalPrice(order.getTotalPrice().add(fee));
+            if (order.getOriginalPrice() != null) {
+                order.setOriginalPrice(order.getOriginalPrice().add(fee));
+            }
+        }
+        String note;
+        if (fee.signum() == 0 || nothingPaid) {
+            applySendHours(order, hours);
+            note = "Gia hạn giữ hàng thêm " + hours + " giờ";
+        } else {
+            order.setPendingExtensionHours(hours);
+            order.setPendingExtensionFee(fee);
+            order.setPaymentStatus("UNPAID");
+            order.setPaidAt(null);
+            note = "Gia hạn giữ hàng thêm " + hours + " giờ (" + fee.toBigInteger() + " đ) — chờ thanh toán";
+        }
+        LockerOrder saved = orderRepository.save(order);
+        addHistory(saved.getId(), saved.getStatus(), saved.getStatus(), userId, note);
+        if (saved.getPendingExtensionHours() == null) {
+            notifySendExtended(saved, hours);
+        }
+        publishStatusChanged(saved, saved.getStatus());
+        return toResponse(saved);
+    }
+
+    /// Tiền gia hạn giữ hàng đã về: cộng giờ vào đơn và hạn lấy hàng, báo người nhận hạn mới.
+    @Transactional
+    public void applyPaidSendExtension(LockerOrder order) {
+        Integer hours = order.getPendingExtensionHours();
+        if (hours == null || hours <= 0) {
+            return;
+        }
+        order.setPendingExtensionHours(null);
+        order.setPendingExtensionFee(null);
+        applySendHours(order, hours);
+        LockerOrder saved = orderRepository.save(order);
+        addHistory(saved.getId(), saved.getStatus(), saved.getStatus(), saved.getUserId(),
+                "Đã thanh toán gia hạn giữ hàng thêm " + hours + " giờ");
+        notifySendExtended(saved, hours);
+    }
+
+    /// Đơn kết thúc mà lần gia hạn chưa được trả: bỏ hẳn (người nhận đã lấy, hoặc đơn huỷ/hết hạn).
+    private void dropPendingSendExtension(LockerOrder order, Long actorId) {
+        BigDecimal fee = order.getPendingExtensionFee();
+        Integer hours = order.getPendingExtensionHours();
+        if (fee == null && hours == null) {
+            return;
+        }
+        order.setPendingExtensionHours(null);
+        order.setPendingExtensionFee(null);
+        if (fee != null && fee.signum() > 0) {
+            order.setTotalPrice(order.getTotalPrice().subtract(fee));
+            if (order.getOriginalPrice() != null) {
+                order.setOriginalPrice(order.getOriginalPrice().subtract(fee));
+            }
+        }
+        if ("UNPAID".equalsIgnoreCase(order.getPaymentStatus()) && paidAmountOf(order).signum() > 0
+                && paidAmountOf(order).compareTo(order.getTotalPrice()) >= 0) {
+            order.setPaymentStatus("PAID");
+            if (order.getPaidAt() == null) {
+                order.setPaidAt(LocalDateTime.now());
+            }
+        }
+        addHistory(order.getId(), order.getStatus(), order.getStatus(), actorId,
+                "Bỏ lần gia hạn giữ hàng " + (hours == null ? "" : hours + " giờ ") + "chưa thanh toán");
+    }
+
+    /// Cộng giờ giữ hàng; hàng đã trong tủ thì dời hạn lấy (đang quá hạn thì tính từ bây giờ).
+    private void applySendHours(LockerOrder order, int hours) {
+        order.setRentalDurationHours(sendStorageHours(order) + hours);
+        if ("STORING".equalsIgnoreCase(order.getStatus())) {
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime base = order.getPickupDeadline() == null || order.getPickupDeadline().isBefore(now)
+                    ? now
+                    : order.getPickupDeadline();
+            order.setPickupDeadline(base.plusHours(hours));
+        }
+    }
+
+    /// Báo người gửi; hàng đã trong tủ thì báo cả người nhận (app nếu có tài khoản, email) hạn lấy mới.
+    private void notifySendExtended(LockerOrder order, int hours) {
+        boolean stored = "STORING".equalsIgnoreCase(order.getStatus()) && order.getPickupDeadline() != null;
+        String until = stored ? " Hạn lấy hàng mới: " + formatDeadline(order.getPickupDeadline()) + "." : "";
+        notifyQuietly(order.getUserId(), "Đã gia hạn giữ hàng",
+                "Đơn " + order.getOrderCode() + " được giữ thêm " + hours + " giờ." + until,
+                "ORDER_SEND_EXTENDED", order.getId());
+        if (!stored) {
+            return;
+        }
+        Long receiver = order.getReceiverUserId();
+        if (receiver != null && !receiver.equals(order.getUserId())) {
+            notifyQuietly(receiver, "Hạn lấy hàng được gia hạn",
+                    "Đơn " + order.getOrderCode() + " được giữ thêm " + hours + " giờ." + until,
+                    "ORDER_SEND_EXTENDED", order.getId());
+        }
+        if (StringUtils.hasText(order.getReceiverEmail())) {
+            String greeting = "Xin chào"
+                    + (StringUtils.hasText(order.getReceiverName()) ? " " + order.getReceiverName().trim() : "");
+            emailReceiverAfterCommit(order, "Đơn " + order.getOrderCode() + " được giữ thêm " + hours + " giờ",
+                    () -> greeting + ",\n\nNgười gửi đã gia hạn thời gian giữ kiện hàng " + order.getOrderCode()
+                            + " trong tủ Lock.R thêm " + hours + " giờ." + until
+                            + "\n\nMã mở tủ không đổi.\n\nLock.R");
+        }
+    }
+
+    /// Số giờ giữ hàng khách chọn khi tạo đơn gửi: thiếu ⇒ số giờ đã gồm trong phí gửi.
+    private int requestedSendHours(Integer requested) {
+        int included = rules.sendPickupHours();
+        if (requested == null) {
+            return included;
+        }
+        int max = rules.sendStorageMaxHours();
+        if (requested < included || requested > max) {
+            throw new BusinessException("SEND_STORAGE_HOURS_INVALID",
+                    "Thời gian giữ hàng phải từ " + included + " đến " + max + " giờ.");
+        }
+        return requested;
+    }
+
+    /// Số giờ giữ hàng của đơn gửi (tính từ lúc bỏ hàng). Đơn tạo trước khi có chọn giờ ⇒ số giờ đã gồm
+    /// trong phí gửi theo cấu hình hiện tại.
+    private int sendStorageHours(LockerOrder order) {
+        Integer hours = order.getRentalDurationHours();
+        return hours != null && hours > 0 ? hours : rules.sendPickupHours();
+    }
+
     @Transactional
     public OrderResponse extendRental(Long id, Long userId, int hours) {
         LockerOrder order = find(id);
@@ -428,6 +584,8 @@ public class OrderService {
         }
         BigDecimal overtime = calculatePickupOvertimeFee(order);
         if (overtime.compareTo(BigDecimal.ZERO) > 0) {
+            boolean droppedPending = order.getPendingExtensionHours() != null || order.getPendingExtensionFee() != null;
+            dropPendingSendExtension(order, userId);
             BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
             if (currentExtra.compareTo(overtime) < 0) {
                 BigDecimal diff = overtime.subtract(currentExtra);
@@ -441,6 +599,8 @@ public class OrderService {
                 orderRepository.save(order);
                 addHistory(order.getId(), order.getStatus(), order.getStatus(), userId,
                         "Assessed pickup overtime fee: " + overtime + " (added " + diff + ")");
+            } else if (droppedPending) {
+                orderRepository.save(order);
             }
         }
         return toResponse(order);
@@ -900,7 +1060,7 @@ public class OrderService {
                 : "Bạn sắp nhận kiện hàng " + order.getOrderCode() + " qua tủ Lock.R";
         String body = ready
                 ? receiverEmailBody(order, senderName(order), place, formatDeadline(order.getPickupDeadline()))
-                : receiverOrderCreatedEmailBody(order, senderName(order), place, rules.sendPickupHours());
+                : receiverOrderCreatedEmailBody(order, senderName(order), place, sendStorageHours(order));
         boolean sent;
         try {
             var response = notificationClient.notifyGuest(
@@ -1335,7 +1495,11 @@ public class OrderService {
                             original.getCustomerNote(),
                             null,
                             null,
-                            null),
+                            null,
+                            original.getRentalDurationHours() == null
+                                    ? null
+                                    : Math.max(rules.sendPickupHours(),
+                                            Math.min(rules.sendStorageMaxHours(), original.getRentalDurationHours()))),
                     userId);
         }
         if ("RENTAL".equals(type)) {
@@ -2202,6 +2366,9 @@ public class OrderService {
             LockerOrder order, String newStatus, Long actorId, Long receiveBoxId, String note) {
         String oldStatus = order.getStatus();
         order.setStatus(newStatus.toUpperCase());
+        if (Set.of("COMPLETED", "CANCELED", "EXPIRED").contains(order.getStatus())) {
+            dropPendingSendExtension(order, actorId);
+        }
         // Mọi đường huỷ trong OrderService (khách huỷ, admin/PATCH đổi trạng thái, tự huỷ, báo lỗi ô) đi qua
         // đây: trả lượt mã giảm giá + hoàn điểm thưởng (idempotent).
         if ("CANCELED".equals(order.getStatus()) && !"CANCELED".equalsIgnoreCase(oldStatus)) {
@@ -2394,10 +2561,12 @@ public class OrderService {
         // phí quá hạn. Phí quá hạn đã cộng vào giá trước đó không tính vào gốc, không thì trần tự tăng sau
         // mỗi lần tính.
         BigDecimal currentExtra = order.getExtraFee() == null ? BigDecimal.ZERO : order.getExtraFee();
+        BigDecimal pendingExt = order.getPendingExtensionFee() == null ? BigDecimal.ZERO : order.getPendingExtensionFee();
         BigDecimal priceBase = (order.getOriginalPrice() != null && order.getOriginalPrice().signum() > 0
                 ? order.getOriginalPrice()
                 : order.getTotalPrice() == null ? BigDecimal.ZERO : order.getTotalPrice())
                 .subtract(currentExtra)
+                .subtract(pendingExt)
                 .max(BigDecimal.ZERO);
         BigDecimal percentageCap =
                 priceBase.multiply(BigDecimal.valueOf(rules.maxOvertimePercent())).divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
@@ -2456,10 +2625,7 @@ public class OrderService {
         if (!rules.requirePaymentBeforeDrop()) {
             return;
         }
-        BigDecimal total = order.getTotalPrice();
-        boolean hasFee = total != null && total.compareTo(BigDecimal.ZERO) > 0;
-        boolean paid = "PAID".equalsIgnoreCase(order.getPaymentStatus());
-        if (hasFee && !paid) {
+        if (!isOrderPaid(order)) {
             throw new BusinessException(
                     "ORDER_UNPAID",
                     "Vui lòng thanh toán đơn trước khi bỏ hàng vào tủ.");
@@ -2470,7 +2636,11 @@ public class OrderService {
         if ("PAID".equalsIgnoreCase(order.getPaymentStatus())) {
             return true;
         }
-        BigDecimal total = order.getTotalPrice();
+        // Gia hạn giữ hàng chưa trả chỉ là phần người gửi muốn mua thêm: không làm đơn thành "chưa trả" (người
+        // nhận vẫn lấy hàng, đơn không bị tự huỷ vì chưa thanh toán).
+        BigDecimal total = order.getTotalPrice() == null || order.getPendingExtensionFee() == null
+                ? order.getTotalPrice()
+                : order.getTotalPrice().subtract(order.getPendingExtensionFee());
         if (total == null || total.compareTo(BigDecimal.ZERO) <= 0) {
             return true;
         }
@@ -2534,7 +2704,7 @@ public class OrderService {
 
     private boolean shouldAutoCancelAfterFault(LockerOrder order) {
         return "INITIALIZED".equalsIgnoreCase(order.getStatus())
-                && "UNPAID".equalsIgnoreCase(order.getPaymentStatus());
+                && !isOrderPaid(order);
     }
 
     private void assertOwnerOrReceiver(LockerOrder order, Long userId) {
@@ -2636,7 +2806,9 @@ public class OrderService {
                 overtimeRatePerHour(order),
                 !isRentalOrder(order),
                 OrderAccessPolicy.hasOpenBoxIncident(order) ? order.getBoxIncidentOpenedAt() : null,
-                dronePickupCode(order));
+                dronePickupCode(order),
+                order.getPendingExtensionHours(),
+                order.getPendingExtensionFee());
     }
 
     /// Chỉ khi KTV chưa cầm kiện: sau đó mã không còn dùng vào việc gì.

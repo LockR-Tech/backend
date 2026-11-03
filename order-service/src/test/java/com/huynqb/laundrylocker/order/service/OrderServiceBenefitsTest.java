@@ -133,7 +133,7 @@ class OrderServiceBenefitsTest {
                         88L, "receiver@gmail.com", "0901234567", "Nguoi Nhan", "ACTIVE")));
         SendOrderRequest request = new SendOrderRequest(
                 5L, 301L, null, "0901234567", "Nguoi Nhan", " Receiver@gmail.com ", null,
-                null, null, null);
+                null, null, null, null);
 
         orderService.createSend(request, 44L);
 
@@ -381,11 +381,11 @@ class OrderServiceBenefitsTest {
     void sendOrderRequiresAValidReceiverEmail() {
         for (String email : new String[] {null, "  "}) {
             BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createSend(
-                    new SendOrderRequest(5L, 301L, null, "0901234567", "Nhận", email, null, null, null, null), 44L));
+                    new SendOrderRequest(5L, 301L, null, "0901234567", "Nhận", email, null, null, null, null, null), 44L));
             assertEquals("RECEIVER_EMAIL_REQUIRED", ex.getCode());
         }
         BusinessException invalid = assertThrows(BusinessException.class, () -> orderService.createSend(
-                new SendOrderRequest(5L, 301L, null, "0901234567", "Nhận", "nhan@", null, null, null, null), 44L));
+                new SendOrderRequest(5L, 301L, null, "0901234567", "Nhận", "nhan@", null, null, null, null, null), 44L));
         assertEquals("RECEIVER_EMAIL_INVALID", invalid.getCode());
         verify(orderRepository, never()).save(any(LockerOrder.class));
     }
@@ -569,7 +569,7 @@ class OrderServiceBenefitsTest {
 
     private static SendOrderRequest send(String promotionCode, Integer pointsToUse) {
         return new SendOrderRequest(5L, 301L, null, "0901234567", "Người nhận", "nhan@example.com", null, null,
-                promotionCode, pointsToUse);
+                promotionCode, pointsToUse, null);
     }
 
     private static Promotion promotion(Long id, String code, String fixedAmount, Long lockerId) {
