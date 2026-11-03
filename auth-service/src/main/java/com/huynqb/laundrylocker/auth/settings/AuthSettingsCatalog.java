@@ -19,9 +19,11 @@ public class AuthSettingsCatalog implements SettingsCatalog {
     public static final String ADMIN_2FA_MAX_ATTEMPTS = "app.auth.admin-2fa-max-attempts";
     public static final String KIOSK_QR_SESSION_TTL_SECONDS = "app.auth.kiosk-qr.session-ttl-seconds";
     public static final String KIOSK_QR_MAX_CONFIRM_ATTEMPTS = "app.auth.kiosk-qr.max-confirm-attempts";
+    public static final String SPLASH_DURATION_MS = "app.auth.splash-duration-ms";
 
     private static final String AUTH = "Xác thực";
     private static final String KIOSK = "Đăng nhập kiosk bằng QR";
+    private static final String APP = "Giao diện ứng dụng";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -41,6 +43,9 @@ public class AuthSettingsCatalog implements SettingsCatalog {
                         120, 30, 900, "giây"),
                 integer(KIOSK_QR_MAX_CONFIRM_ATTEMPTS, KIOSK, "Số lần nhập sai mã xác nhận QR",
                         "Khách nhập sai mã xác nhận trên app đủ số lần này thì phiên đăng nhập kiosk bị huỷ.",
-                        5, 1, 20, "lần"));
+                        5, 1, 20, "lần"),
+                integer(SPLASH_DURATION_MS, APP, "Thời gian màn hình splash",
+                        "Thời gian hiển thị màn hình khởi động (splash screen) trước khi chuyển vào ứng dụng.",
+                        1200, 300, 10000, "ms").asPublic());
     }
 }
