@@ -1295,5 +1295,8 @@
   "Cập nhật ảnh tiến độ sửa chữa Drone": "Drone repair progress photos updated",
   "Ảnh kiện lúc kỹ thuật viên lấy hàng": "Parcel photo taken when the technician picked it up",
   "Bằng chứng thu hồi kiện": "Parcel recovery evidence",
-  "Ảnh kiểm tra định kỳ": "Routine inspection photo"
+  "Ảnh kiểm tra định kỳ": "Routine inspection photo",
+  "Thời gian màn hình splash": "Splash screen duration",
+  "Giao diện ứng dụng": "App interface",
+  "Thời gian hiển thị màn hình khởi động (splash screen) trước khi chuyển vào ứng dụng.": "Duration to display the splash screen before navigating to the app."
 }

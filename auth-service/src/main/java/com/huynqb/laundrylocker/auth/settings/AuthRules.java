@@ -37,4 +37,8 @@ public class AuthRules {
     public int kioskQrMaxConfirmAttempts() {
         return settings.getInt(KIOSK_QR_MAX_CONFIRM_ATTEMPTS);
     }
+
+    public int splashDurationMs() {
+        return settings.getInt(SPLASH_DURATION_MS);
+    }
 }
