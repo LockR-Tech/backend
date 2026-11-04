@@ -7,7 +7,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -69,4 +72,12 @@ public interface DroneLockerCommLogRepository
 
     @Query("SELECT DISTINCT l.sessionId FROM DroneLockerCommLog l WHERE l.sessionId IS NOT NULL ORDER BY l.sessionId DESC")
     List<String> findRecentSessionIds(Pageable pageable);
+
+    /// Lệnh nắp đã có kết quả cuối (tủ báo mở/đóng xong hoặc lỗi): các dòng "đã gửi lệnh" / "tủ đã nhận lệnh"
+    /// cùng mã lệnh không còn "đang xử lý" nữa.
+    @Modifying
+    @Transactional
+    @Query("UPDATE DroneLockerCommLog l SET l.processingStatus = :status "
+            + "WHERE l.messageId = :commandId AND l.processingStatus IN ('PENDING', 'PROCESSING')")
+    int resolvePendingByMessageId(@Param("commandId") String commandId, @Param("status") String status);
 }

@@ -741,6 +741,8 @@ public class DroneLockerCommunicationService {
         inLog.setLockerId(session.getLockerId());
         inLog.setCompartmentId(session.getCompartmentId());
         finish(inLog, "SUCCESS", null, "Drone báo đã nhả hàng xong");
+        resolvePendingLogs(dropCommandLogId(session.getSessionId()), true);
+        dropReportOverdueWarned.remove(session.getSessionId());
         recordDroneIotLog(session.getDroneUnitId(), droneId, "CARGO_HOOK", "HOOK_RELEASE", "RELEASED",
                 session.getOrderId(), "Móc treo nhả kiện hàng vào ô tủ");
         requestCloseLid(session, "Gửi lệnh yêu cầu đóng nắp trượt ô tủ (drone đã nhả hàng xong)");
@@ -899,6 +901,7 @@ public class DroneLockerCommunicationService {
                 session.getTargetMarkerId(), session.getTargetDictionary(), "LOCKER", "BACKEND", topic,
                 isSuccess ? "LID_OPENED" : "LID_OPEN_FAILED", "INBOUND", rawPayload, "RECEIVED", "CONFIRMED",
                 isSuccess ? "SUCCESS" : "FAILED", errorCode, isSuccess ? openedMessage : errorMessage, 0, null);
+        resolvePendingLogs(session.getOpenCommandId(), isSuccess);
         log.info("[COMM] OPEN_LID result: mission={} order={} locker={} aruco={} commandId={} status={} hwState={} "
                         + "confirmation={} error={}", session.getMissionId(), session.getOrderId(), session.getLockerId(),
                 session.getTargetMarkerId(), session.getOpenCommandId(), status, hwState, lidConfirmation, errorCode);
@@ -930,11 +933,12 @@ public class DroneLockerCommunicationService {
             // Demo trong nhà: nắp đã mở thật. Lệnh LID_OPENED vừa gửi mang `dropSimulationSeconds` = lệnh nhả hàng:
             // Pi drone giả lập nhả hàng trong chừng ấy giây rồi tự gửi DROP_PHASE_COMPLETED (có chữ ký) — backend
             // chỉ đóng nắp khi nhận được báo cáo đó (hoặc quá hạn, xem expireDropReports).
-            saveLog(UUID.randomUUID().toString(), session.getCorrelationId(), session.getSessionId(),
+            // "Đang xử lý" tới khi drone báo nhả xong (resolvePendingLogs trong processDropPhaseCompleted).
+            saveLog(dropCommandLogId(session.getSessionId()), session.getCorrelationId(), session.getSessionId(),
                     session.getOrderId(), session.getMissionId(), session.getDroneId(), session.getLockerId(),
                     session.getCompartmentId(), session.getTargetMarkerId(), session.getTargetDictionary(),
                     "BACKEND", "DRONE", DRONE_COMMANDS_TOPIC, "DROP_PHASE_STARTED", "OUTBOUND", null, "SENT",
-                    "PENDING", "SUCCESS", null,
+                    "PENDING", "PENDING", null,
                     "Gửi lệnh nhả hàng cho drone (giả lập " + holdSeconds + " giây) — nắp ô đã mở thật", 0, null);
         }
     }
@@ -942,9 +946,17 @@ public class DroneLockerCommunicationService {
     /// Thời gian chờ thêm (ngoài số giây giả lập nhả hàng) để Pi drone báo DROP_PHASE_COMPLETED.
     static final long DROP_REPORT_GRACE_SECONDS = 60;
 
+    /// Phiên đã ghi cảnh báo "drone chưa báo nhả hàng" (chỉ ghi một lần mỗi phiên).
+    private final Set<String> dropReportOverdueWarned = ConcurrentHashMap.newKeySet();
+
+    /// Mã của dòng nhật ký "gửi lệnh nhả hàng" — cập nhật thành công khi drone báo nhả xong.
+    static String dropCommandLogId(String sessionId) {
+        return "DROP-" + sessionId;
+    }
+
     /// Demo trong nhà: drone nhận lệnh nhả hàng mà quá `giây giả lập + DROP_REPORT_GRACE_SECONDS` vẫn chưa báo xong
-    /// (Pi drone mất kết nối, chạy code cũ…) ⇒ vẫn đóng nắp thật để ô không bị hở. Đơn chỉ sang "sẵn sàng lấy hàng"
-    /// khi tủ báo đã đóng nắp, như luồng thường. Quét theo database nên vẫn chạy sau khi backend khởi động lại.
+    /// (Pi drone mất kết nối, chạy code cũ…) ⇒ chỉ ghi cảnh báo một lần. KHÔNG tự đóng nắp: bước sau (đóng nắp) chỉ
+    /// chạy khi bước nhả hàng thành công — phiên tiếp tục chờ drone báo; cần thì KTV đóng nắp ở trang Điều khiển tủ.
     void expireDropReports() {
         try {
             LocalDateTime now = LocalDateTime.now();
@@ -953,19 +965,19 @@ public class DroneLockerCommunicationService {
                     .filter(session -> "INDOOR_ARUCO_DEMO".equalsIgnoreCase(session.getMode()))
                     .filter(session -> session.getLidOpenedAt() != null && !session.getLidOpenedAt()
                             .plusSeconds(holdSeconds + DROP_REPORT_GRACE_SECONDS).isAfter(now))
+                    .filter(session -> dropReportOverdueWarned.add(session.getSessionId()))
                     .forEach(session -> {
                         String message = "Drone chưa báo nhả hàng xong sau " + (holdSeconds + DROP_REPORT_GRACE_SECONDS)
-                                + " giây — vẫn đóng nắp để ô không bị hở";
+                                + " giây — nắp vẫn mở, tiếp tục chờ drone báo (không tự đóng nắp)";
                         saveLog(UUID.randomUUID().toString(), session.getCorrelationId(), session.getSessionId(),
                                 session.getOrderId(), session.getMissionId(), session.getDroneId(), session.getLockerId(),
                                 session.getCompartmentId(), session.getTargetMarkerId(), session.getTargetDictionary(),
-                                "BACKEND", "LOCKER", DRONE_EVENTS_TOPIC, "DROP_REPORT_TIMEOUT", "INTERNAL", null,
+                                "BACKEND", "DRONE", DRONE_EVENTS_TOPIC, "DROP_REPORT_TIMEOUT", "INTERNAL", null,
                                 "PROCESSED", "TIMEOUT", "FAILED", "DROP_REPORT_TIMEOUT", message, 0, null);
                         log.warn("[COMM] Session {}: {}", session.getSessionId(), message);
-                        requestCloseLid(session, "Gửi lệnh đóng nắp trượt ô tủ (drone không báo nhả hàng xong)");
                     });
         } catch (Exception e) {
-            log.error("[COMM] Error expiring drop reports: {}", e.getMessage(), e);
+            log.error("[COMM] Error checking overdue drop reports: {}", e.getMessage(), e);
         }
     }
 
@@ -977,6 +989,7 @@ public class DroneLockerCommunicationService {
                 session.getTargetMarkerId(), session.getTargetDictionary(), "LOCKER", "BACKEND", topic,
                 isSuccess ? "LID_CLOSED" : "LID_CLOSE_FAILED", "INBOUND", rawPayload, "RECEIVED", "CONFIRMED",
                 isSuccess ? "SUCCESS" : "FAILED", errorCode, errorMessage, 0, null);
+        resolvePendingLogs(session.getCloseCommandId(), isSuccess);
         if (!isSuccess) {
             session.setState(DroneDeliverySession.LID_CLOSE_FAILED);
             session.setErrorCode(errorCode);
@@ -1123,6 +1136,7 @@ public class DroneLockerCommunicationService {
                 "cabinet/" + session.getLockerId() + "/command/" + (open ? "open" : "close"),
                 open ? "LID_OPEN_FAILED" : "LID_CLOSE_FAILED", "INTERNAL", null, "PROCESSED", "TIMEOUT", "FAILED",
                 errorCode, errorMessage, 0, null);
+        resolvePendingLogs(commandId, false);
         publishCommand(open ? "LID_OPEN_FAILED" : "LID_CLOSE_FAILED", session.getSessionId(), session.getCorrelationId(),
                 session.getOrderId(), session.getDroneId(), session.getLockerId(), session.getCompartmentId(), errorCode,
                 errorMessage);
@@ -1178,6 +1192,7 @@ public class DroneLockerCommunicationService {
                 session.getTargetMarkerId(), session.getTargetDictionary(), "BACKEND", "DRONE",
                 "cabinet/" + session.getLockerId() + "/command/open", "LID_OPEN_FAILED", "INTERNAL", null,
                 "PROCESSED", "TIMEOUT", "FAILED", errorCode, errorMessage, 0, null);
+        resolvePendingLogs(session.getOpenCommandId(), false);
         publishCommand("LID_OPEN_FAILED", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
                 session.getDroneId(), session.getLockerId(), session.getCompartmentId(), errorCode, errorMessage);
         log.warn("[COMM] Open-lid request {} of session {} expired ({}) at locker {}",
@@ -1187,6 +1202,19 @@ public class DroneLockerCommunicationService {
     // =========================================================================
     // HELPERS: MQTT PUBLISHING & LOGGING
     // =========================================================================
+
+    /// Lệnh nắp đã có kết quả cuối: dòng "đã gửi lệnh" / "gửi lại" / "tủ đã nhận lệnh" cùng mã lệnh chuyển từ
+    /// "đang xử lý" sang thành công / lỗi, để nhật ký admin không treo ở trạng thái chờ.
+    private void resolvePendingLogs(String commandId, boolean success) {
+        if (!StringUtils.hasText(commandId)) {
+            return;
+        }
+        try {
+            commLogRepository.resolvePendingByMessageId(commandId, success ? "SUCCESS" : "FAILED");
+        } catch (Exception ex) {
+            log.warn("[COMM] Could not resolve pending logs of command {}: {}", commandId, ex.getMessage());
+        }
+    }
 
     private TransactionTemplate transactions() {
         return new TransactionTemplate(transactionManager);
