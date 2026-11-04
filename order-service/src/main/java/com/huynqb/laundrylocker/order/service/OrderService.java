@@ -277,6 +277,86 @@ public class OrderService {
                 () -> receiverOrderCreatedEmailBody(order, senderName(order), pickupPlace(order), sendStorageHours(order)));
     }
 
+    /// Đơn thuê ô vừa thanh toán xong (chưa cất đồ) ⇒ gửi NGAY cho email tài khoản người thuê một thư đủ thông
+    /// tin: tủ, ô, mã mở ô, số giờ thuê, số tiền. Khách thuê tại kiosk bằng email cần thư này để không mất mã
+    /// khi rời màn hình. Tài khoản không có email (đăng nhập bằng số điện thoại) thì bỏ qua — mã xem trong app.
+    /// Gửi sau commit, không bao giờ ném lỗi.
+    public void notifyRenterOrderPaid(LockerOrder order) {
+        if (!"RENTAL".equalsIgnoreCase(order.getType()) || !"INITIALIZED".equalsIgnoreCase(order.getStatus())
+                || !StringUtils.hasText(order.getPinCode()) || order.getUserId() == null) {
+            return;
+        }
+        Long orderId = order.getId();
+        Runnable send = () -> {
+            try {
+                var response = userClient.getUser(order.getUserId());
+                UserSummary renter = response == null ? null : response.data();
+                if (renter == null || !StringUtils.hasText(renter.email())) {
+                    return;
+                }
+                PickupPlace place = pickupPlace(order);
+                int hours = resolveRentalDurationHours(order);
+                String paid = formatVnd(order.getPaidAmount() != null && order.getPaidAmount().signum() > 0
+                        ? order.getPaidAmount() : order.getTotalPrice());
+                String name = StringUtils.hasText(renter.fullName()) ? renter.fullName().trim() : "bạn";
+                String subject = "Thuê tủ thành công — mã mở ô " + order.getOrderCode();
+                notificationClient.notifyGuest(new GuestNotification.Request(
+                        null, renter.email().trim(), subject, "Lock.R: " + subject,
+                        renterPaidEmailBody(order, name, place, hours, paid),
+                        DroneDeliveryEmailTemplate.rentalPaid(name, order.getOrderCode(), order.getPinCode(),
+                                renterPaidDetails(order, place, hours, paid), RENTER_PAID_FOOTER),
+                        renter.language()));
+            } catch (Exception ex) {
+                log.warn("Could not email the renter of order {}: {}", orderId, ex.getMessage());
+            }
+        };
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            send.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                send.run();
+            }
+        });
+    }
+
+    static final String RENTER_PAID_FOOTER = "Giờ thuê bắt đầu tính khi bạn xác nhận đã cất đồ vào ô. Trong thời gian "
+            + "thuê, nhập mã mở ô trên màn hình tủ để mở lại ô bao nhiêu lần cũng được. Không chia sẻ mã cho người "
+            + "khác; bạn cũng xem lại mã trong mục Đơn tủ của ứng dụng Lock.R.";
+
+    static List<DroneDeliveryEmailTemplate.Detail> renterPaidDetails(
+            LockerOrder order, PickupPlace place, int hours, String paid) {
+        List<DroneDeliveryEmailTemplate.Detail> details = new ArrayList<>();
+        details.add(new DroneDeliveryEmailTemplate.Detail("Tủ", place.lockerName()
+                + (StringUtils.hasText(place.lockerAddress()) ? " (" + place.lockerAddress() + ")" : "")));
+        details.add(new DroneDeliveryEmailTemplate.Detail("Ô tủ",
+                place.boxNumber() == null ? "—" : "Ô số " + place.boxNumber()));
+        details.add(new DroneDeliveryEmailTemplate.Detail("Mã mở ô", order.getPinCode()));
+        details.add(new DroneDeliveryEmailTemplate.Detail("Thời gian thuê", hours + " giờ"));
+        details.add(new DroneDeliveryEmailTemplate.Detail("Đã thanh toán", paid));
+        if (StringUtils.hasText(order.getCustomerNote())) {
+            details.add(new DroneDeliveryEmailTemplate.Detail("Ghi chú", order.getCustomerNote().trim()));
+        }
+        return details;
+    }
+
+    static String renterPaidEmailBody(LockerOrder order, String name, PickupPlace place, int hours, String paid) {
+        StringBuilder body = new StringBuilder("Xin chào ").append(name).append(",\n\n")
+                .append("Bạn đã thuê ô tủ Lock.R thành công. Thông tin lượt thuê:\n\n")
+                .append("Mã đơn: ").append(order.getOrderCode()).append('\n');
+        for (DroneDeliveryEmailTemplate.Detail detail : renterPaidDetails(order, place, hours, paid)) {
+            body.append(detail.label()).append(": ").append(detail.value()).append('\n');
+        }
+        return body.append('\n').append(RENTER_PAID_FOOTER).append('\n').toString();
+    }
+
+    private static String formatVnd(BigDecimal amount) {
+        BigDecimal value = amount == null ? BigDecimal.ZERO : amount.setScale(0, RoundingMode.HALF_UP);
+        return String.format(Locale.forLanguageTag("vi-VN"), "%,d", value.longValue()).replace(',', '.') + "đ";
+    }
+
     private Long receiverAccount(String email, String phone) {
         if (StringUtils.hasText(email)) {
             try {
@@ -329,7 +409,12 @@ public class OrderService {
         order.setPickupDeadline(null);
         order.setRentalDurationHours(request.hours());
         order.setRentalCellType(cellType);
-        return toResponse(orderRepository.save(order));
+        LockerOrder saved = orderRepository.save(order);
+        // Đơn 0đ (mã giảm giá / điểm trừ hết) đã PAID ngay lúc tạo; đơn có phí đợi payment.completed.
+        if (isOrderPaid(saved)) {
+            notifyRenterOrderPaid(saved);
+        }
+        return toResponse(saved);
     }
 
     /// Gia hạn lúc đang ở quá giờ: chốt phí các giờ đã quá (tính như thuê thêm, phần chưa thu) vào giá đơn

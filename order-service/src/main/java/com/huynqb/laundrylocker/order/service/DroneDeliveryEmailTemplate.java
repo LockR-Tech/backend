@@ -46,6 +46,27 @@ final class DroneDeliveryEmailTemplate {
                 "#EA580C");
     }
 
+    /// Thuê ô vừa thanh toán xong: mã mở ô đặt ngay ở tiêu đề để khách nhìn là thấy.
+    static String rentalPaid(
+            String recipientName,
+            String orderCode,
+            String pinCode,
+            List<Detail> details,
+            String footer) {
+        String rows = details.stream().map(DroneDeliveryEmailTemplate::row).reduce("", String::concat);
+        return render(
+                recipientName,
+                orderCode,
+                "THUÊ TỦ THÀNH CÔNG",
+                "Mã mở ô của bạn: " + pinCode,
+                "Bạn đã thanh toán và thuê ô tủ Lock.R thành công. Hãy lưu lại mã mở ô bên dưới để cất đồ và "
+                        + "mở lại ô trong thời gian thuê.",
+                rows,
+                footer,
+                "#0B2545",
+                "#20A486");
+    }
+
     /// Sự cố trong lúc giao (rơi kiện, tạm dừng giữa chuyến, phương án xử lý): đơn chưa kết thúc nhưng người gửi /
     /// người nhận đã được báo "đang trên đường" nên phải biết chuyện gì đang xảy ra.
     static String incident(
