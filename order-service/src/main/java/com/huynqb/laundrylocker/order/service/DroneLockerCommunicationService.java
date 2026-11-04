@@ -240,6 +240,8 @@ public class DroneLockerCommunicationService {
         // Chạy trên luồng sự kiện để không đua với kết quả nắp đang tới.
         scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::expireStaleOpenRequests),
                 30, 30, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::expireDropReports),
+                10, 10, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::retryStalledLidCommands),
                 5, 5, TimeUnit.SECONDS);
     }
@@ -554,7 +556,7 @@ public class DroneLockerCommunicationService {
 
     /// Mục tiêu Pi drone cần biết để chỉ nhận đúng mã ArUco của ô đích.
     record DeliveryTarget(Long missionId, Long orderId, Long lockerId, Long boxId, Integer markerId,
-            String dictionary, String mode, String stage, String sessionState) {
+            String dictionary, String mode, String stage, String sessionState, String sessionId) {
     }
 
     /// Pi drone hỏi "đang giao tới ô nào" (lúc khởi động, kết nối lại và định kỳ). Chỉ trả mục tiêu khi drone có
@@ -586,8 +588,14 @@ public class DroneLockerCommunicationService {
         extra.put("mode", target.mode());
         extra.put("stage", target.stage());
         if (target.sessionState() != null) extra.put("sessionState", target.sessionState());
-        publishCommand("DELIVERY_TARGET", null, null, target.orderId(), droneId, target.lockerId(), target.boxId(),
-                null, null, extra);
+        // Pi drone khởi động lại lúc nắp đang mở chờ thả (demo): nhắc lại lệnh nhả hàng để drone làm tiếp.
+        if (DroneDeliverySession.LID_OPENED.equals(target.sessionState())
+                && "INDOOR_ARUCO_DEMO".equalsIgnoreCase(target.mode())) {
+            extra.put("dropSimulationSeconds",
+                    orderRules.droneDemoHoldOpenSeconds() > 0 ? orderRules.droneDemoHoldOpenSeconds() : 7);
+        }
+        publishCommand("DELIVERY_TARGET", target.sessionId(), null, target.orderId(), droneId, target.lockerId(),
+                target.boxId(), null, null, extra);
     }
 
     private DeliveryTarget resolveTarget(String droneId, String[] reason) {
@@ -631,11 +639,16 @@ public class DroneLockerCommunicationService {
             reason[0] = "Ô nhận #" + boxId + " chưa được gán mã ArUco";
             return null;
         }
-        String sessionState = sessionRepository.findFirstByOrderIdAndStateInOrderByCreatedAtDesc(order.getId(),
-                DroneDeliverySession.ACTIVE_STATES).map(DroneDeliverySession::getState).orElse(null);
+        DroneDeliverySession active = sessionRepository.findFirstByOrderIdAndStateInOrderByCreatedAtDesc(order.getId(),
+                DroneDeliverySession.ACTIVE_STATES).orElse(null);
+        // Phiên đang chạy giữ chế độ lúc mở phiên (camera gửi kèm mode), không theo cấu hình hiện tại.
+        if (active != null && StringUtils.hasText(active.getMode())) {
+            mode = active.getMode();
+        }
         return new DeliveryTarget(mission != null ? mission.getId() : null, order.getId(), order.getLockerId(), boxId,
                 cell.arucoMarkerId(), cell.arucoDictionary() != null ? cell.arucoDictionary() : "DICT_4X4_50", mode,
-                mission != null ? mission.getStatus() : order.getDeliveryStage(), sessionState);
+                mission != null ? mission.getStatus() : order.getDeliveryStage(),
+                active != null ? active.getState() : null, active != null ? active.getSessionId() : null);
     }
 
     /// Đơn đã kết thúc hoặc đã vào ô: không còn ứng viên cho demo.
@@ -699,6 +712,22 @@ public class DroneLockerCommunicationService {
                 .findFirstByDroneIdAndStateOrderByCreatedAtDesc(droneId, DroneDeliverySession.LID_OPENED)
                 .orElse(null);
         if (session == null) {
+            // Pi drone gửi lại báo cáo vì chưa nhận LID_CLOSING (mất gói): phiên đã sang đóng nắp ⇒ chỉ nhắc lại.
+            DroneDeliverySession closing = StringUtils.hasText(eventSessionId) ? sessionRepository
+                    .findFirstByDroneIdAndStateOrderByCreatedAtDesc(droneId, DroneDeliverySession.CLOSE_LID_REQUESTED)
+                    .filter(found -> eventSessionId.equals(found.getSessionId()))
+                    .orElse(null) : null;
+            if (closing != null) {
+                inLog.setSessionId(closing.getSessionId());
+                inLog.setOrderId(closing.getOrderId());
+                inLog.setLockerId(closing.getLockerId());
+                inLog.setCompartmentId(closing.getCompartmentId());
+                finish(inLog, "IGNORED", "DUPLICATE_DROP_REPORT", "Đã nhận báo nhả hàng của phiên này, tủ đang đóng nắp");
+                publishCommand("LID_CLOSING", closing.getSessionId(), closing.getCorrelationId(), closing.getOrderId(),
+                        droneId, closing.getLockerId(), closing.getCompartmentId(), null,
+                        "Đã nhận báo nhả hàng, tủ đang đóng nắp");
+                return;
+            }
             finish(inLog, "REJECTED", "NO_SESSION_WAITING_DROP", "Drone " + droneId + " không có phiên nào đang mở nắp chờ thả");
             return;
         }
@@ -708,10 +737,16 @@ public class DroneLockerCommunicationService {
         }
         inLog.setSessionId(session.getSessionId());
         inLog.setOrderId(session.getOrderId());
-        finish(inLog, "SUCCESS", null, "Drone xác nhận đã nhả hàng");
+        inLog.setJourneyId(session.getMissionId());
+        inLog.setLockerId(session.getLockerId());
+        inLog.setCompartmentId(session.getCompartmentId());
+        finish(inLog, "SUCCESS", null, "Drone báo đã nhả hàng xong");
         recordDroneIotLog(session.getDroneUnitId(), droneId, "CARGO_HOOK", "HOOK_RELEASE", "RELEASED",
                 session.getOrderId(), "Móc treo nhả kiện hàng vào ô tủ");
-        requestCloseLid(session, "Drone xác nhận hoàn tất giai đoạn nhả hàng");
+        requestCloseLid(session, "Gửi lệnh yêu cầu đóng nắp trượt ô tủ (drone đã nhả hàng xong)");
+        // Báo drone: backend đã nhận báo cáo nhả hàng, tủ đang đóng nắp — Pi drone thôi gửi lại báo cáo.
+        publishCommand("LID_CLOSING", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
+                droneId, session.getLockerId(), session.getCompartmentId(), null, "Đã nhận báo nhả hàng, tủ đang đóng nắp");
     }
 
     private void processSafetyAbort(DroneLockerCommLog inLog, String droneId) {
@@ -892,32 +927,45 @@ public class DroneLockerCommunicationService {
                 session.getOrderId(), openedMessage + ". Sẵn sàng thả kiện hàng");
 
         if (demo) {
-            // Demo trong nhà: nắp đã mở thật; giả lập drone nhả hàng trong `holdSeconds` giây rồi đóng nắp thật.
-            // Đọc lại phiên lúc hẹn giờ chạy (có thể đã đổi).
-            String sessionId = session.getSessionId();
+            // Demo trong nhà: nắp đã mở thật. Lệnh LID_OPENED vừa gửi mang `dropSimulationSeconds` = lệnh nhả hàng:
+            // Pi drone giả lập nhả hàng trong chừng ấy giây rồi tự gửi DROP_PHASE_COMPLETED (có chữ ký) — backend
+            // chỉ đóng nắp khi nhận được báo cáo đó (hoặc quá hạn, xem expireDropReports).
             saveLog(UUID.randomUUID().toString(), session.getCorrelationId(), session.getSessionId(),
                     session.getOrderId(), session.getMissionId(), session.getDroneId(), session.getLockerId(),
                     session.getCompartmentId(), session.getTargetMarkerId(), session.getTargetDictionary(),
-                    "BACKEND", "LOCKER", "cabinet/" + session.getLockerId() + "/command/open",
-                    "DROP_PHASE_STARTED", "INTERNAL", null, "PROCESSED", "CONFIRMED", "SUCCESS", null,
-                    "Bắt đầu giả lập drone nhả hàng (" + holdSeconds + " giây) — nắp đã mở thật", 0, null);
-            scheduler.schedule(() -> {
-                try {
-                    sessionRepository.findById(sessionId)
-                            .filter(current -> DroneDeliverySession.LID_OPENED.equals(current.getState()))
-                            .ifPresent(current -> {
-                                saveLog(UUID.randomUUID().toString(), current.getCorrelationId(), current.getSessionId(),
-                                        current.getOrderId(), current.getMissionId(), current.getDroneId(), current.getLockerId(),
-                                        current.getCompartmentId(), current.getTargetMarkerId(), current.getTargetDictionary(),
-                                        "BACKEND", "LOCKER", "cabinet/" + current.getLockerId() + "/command/close",
-                                        "DROP_PHASE_COMPLETED", "INTERNAL", null, "PROCESSED", "CONFIRMED", "SUCCESS", null,
-                                        "Hoàn tất giả lập drone nhả hàng", 0, null);
-                                requestCloseLid(current, "Gửi lệnh yêu cầu đóng nắp trượt ô tủ");
-                            });
-                } catch (Exception ex) {
-                    log.error("[COMM] Error in scheduled close for session {}: {}", sessionId, ex.getMessage(), ex);
-                }
-            }, holdSeconds, TimeUnit.SECONDS);
+                    "BACKEND", "DRONE", DRONE_COMMANDS_TOPIC, "DROP_PHASE_STARTED", "OUTBOUND", null, "SENT",
+                    "PENDING", "SUCCESS", null,
+                    "Gửi lệnh nhả hàng cho drone (giả lập " + holdSeconds + " giây) — nắp ô đã mở thật", 0, null);
+        }
+    }
+
+    /// Thời gian chờ thêm (ngoài số giây giả lập nhả hàng) để Pi drone báo DROP_PHASE_COMPLETED.
+    static final long DROP_REPORT_GRACE_SECONDS = 60;
+
+    /// Demo trong nhà: drone nhận lệnh nhả hàng mà quá `giây giả lập + DROP_REPORT_GRACE_SECONDS` vẫn chưa báo xong
+    /// (Pi drone mất kết nối, chạy code cũ…) ⇒ vẫn đóng nắp thật để ô không bị hở. Đơn chỉ sang "sẵn sàng lấy hàng"
+    /// khi tủ báo đã đóng nắp, như luồng thường. Quét theo database nên vẫn chạy sau khi backend khởi động lại.
+    void expireDropReports() {
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            int holdSeconds = orderRules.droneDemoHoldOpenSeconds() > 0 ? orderRules.droneDemoHoldOpenSeconds() : 7;
+            sessionRepository.findByStateInOrderByCreatedAtDesc(Set.of(DroneDeliverySession.LID_OPENED)).stream()
+                    .filter(session -> "INDOOR_ARUCO_DEMO".equalsIgnoreCase(session.getMode()))
+                    .filter(session -> session.getLidOpenedAt() != null && !session.getLidOpenedAt()
+                            .plusSeconds(holdSeconds + DROP_REPORT_GRACE_SECONDS).isAfter(now))
+                    .forEach(session -> {
+                        String message = "Drone chưa báo nhả hàng xong sau " + (holdSeconds + DROP_REPORT_GRACE_SECONDS)
+                                + " giây — vẫn đóng nắp để ô không bị hở";
+                        saveLog(UUID.randomUUID().toString(), session.getCorrelationId(), session.getSessionId(),
+                                session.getOrderId(), session.getMissionId(), session.getDroneId(), session.getLockerId(),
+                                session.getCompartmentId(), session.getTargetMarkerId(), session.getTargetDictionary(),
+                                "BACKEND", "LOCKER", DRONE_EVENTS_TOPIC, "DROP_REPORT_TIMEOUT", "INTERNAL", null,
+                                "PROCESSED", "TIMEOUT", "FAILED", "DROP_REPORT_TIMEOUT", message, 0, null);
+                        log.warn("[COMM] Session {}: {}", session.getSessionId(), message);
+                        requestCloseLid(session, "Gửi lệnh đóng nắp trượt ô tủ (drone không báo nhả hàng xong)");
+                    });
+        } catch (Exception e) {
+            log.error("[COMM] Error expiring drop reports: {}", e.getMessage(), e);
         }
     }
 

@@ -371,17 +371,18 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 // === MÔ PHỎNG & THỬ NGHIỆM DRONE (DEMO) ===
                 bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE_DEMO, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng (Indoor Demo)",
                         "Khi bật (Chế độ B): camera ArUco thật nhận diện đúng mã ô tủ đích thì tủ trượt mở nắp THẬT; "
-                                + "việc drone nhả hàng được giả lập theo số giây cấu hình rồi tủ đóng nắp thật, chỉ khi đóng nắp "
-                                + "xong mới chuyển Sẵn sàng lấy hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS, "
-                                + "drone tự báo đã nhả hàng.", false),
+                                + "tủ báo mở xong thì Pi drone nhận lệnh nhả hàng, giả lập theo số giây cấu hình rồi báo đã nhả "
+                                + "xong; hệ thống mới gửi lệnh đóng nắp thật, chỉ khi tủ báo đóng xong mới chuyển Sẵn sàng lấy "
+                                + "hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS, drone tự báo đã nhả hàng.", false),
                 bool(DRONE_DEMO_INDOOR_HANDHELD_ENABLED, DRONE_DEMO, "Cho phép demo drone cầm tay (bỏ qua bước KTV)",
                         "Chỉ dùng khi trình diễn trong nhà: khi bật cùng Chế độ B và chỉ có đúng một đơn DEMO đang chờ, "
                                 + "camera thấy đúng mã ô là hệ thống tự tạo nhiệm vụ — KHÔNG cần KTV lấy hàng, nạp và phóng. "
                                 + "Tắt (mặc định): drone phải được KTV phóng theo đúng quy trình mới được mở nắp tủ.", false),
                 integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giả lập drone nhả hàng (giây)",
-                        "Chế độ Indoor Demo: sau khi tủ báo nắp trượt đã mở THẬT, hệ thống giả lập drone nhả hàng "
-                                + "trong chừng này giây rồi gửi lệnh đóng nắp thật. Không ảnh hưởng việc mở nắp — nắp luôn "
-                                + "được tủ trượt mở thật khi camera nhận đúng mã ArUco.", 7, 1, 300, "giây"),
+                        "Chế độ Indoor Demo: sau khi tủ báo nắp trượt đã mở THẬT, Pi drone nhận lệnh nhả hàng, chờ "
+                                + "chừng này giây (giả lập nhả hàng) rồi báo đã nhả xong; hệ thống mới gửi lệnh đóng nắp thật. "
+                                + "Drone không báo trong số giây này + 60 giây thì hệ thống vẫn đóng nắp. Không ảnh hưởng việc "
+                                + "mở nắp — nắp luôn được tủ trượt mở thật khi camera nhận đúng mã ArUco.", 7, 1, 300, "giây"),
                 integer(DRONE_OPEN_LID_MAX_WAIT_SECONDS, DRONE_DEMO, "Thời gian chờ tủ phản hồi lệnh mở nắp (giây)",
                         "Tủ mất kết nối thì lệnh mở nắp được gửi lại khi tủ kết nối lại. Quá số giây này mà tủ vẫn chưa "
                                 + "phản hồi thì huỷ phiên giao (không mở nắp muộn khi drone đã rời đi); drone quét lại mã "
