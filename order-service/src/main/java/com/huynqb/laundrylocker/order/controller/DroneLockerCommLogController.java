@@ -80,6 +80,12 @@ public class DroneLockerCommLogController {
         return ApiResponse.ok(logs);
     }
 
+    /// Chế độ thử nắp theo ArUco: bật/tắt, tủ, thời gian giữ, danh sách mã → ô (bật/tắt qua /api/admin/settings/order).
+    @GetMapping("/lid-test")
+    public ApiResponse<DroneLockerCommunicationService.LidTestStatus> getLidTestStatus() {
+        return ApiResponse.ok(commService.lidTestStatus());
+    }
+
     @GetMapping("/active-sessions")
     public ApiResponse<List<DroneLockerCommunicationService.DeliverySessionState>> getActiveSessions() {
         return ApiResponse.ok(commService.getActiveSessions());

@@ -865,6 +865,88 @@ class DroneLockerCommunicationServiceTest {
         assertEquals(session.getSessionId(), target.get("sessionId").asText());
     }
 
+    // ------------------------------------------------------------------ chế độ thử nắp theo ArUco (không cần đơn)
+
+    private void enableLidTest() {
+        settings.update(Map.of("app.drone.lid-test.enabled", true, "app.drone.lid-test.locker-id", (int) LOCKER,
+                "app.drone.lid-test.markers", "7:" + BOX), null);
+    }
+
+    private String lidTestMarker(int marker) {
+        return event("MARKER_DETECTED", Map.of("arucoMarkerId", marker, "arucoDictionary", "DICT_4X4_50",
+                "mode", "LID_TEST", "sessionId", "session-test-1"), OffsetDateTime.now());
+    }
+
+    /// Camera thấy mã trong danh sách thử ⇒ hệ thống trả mục tiêu thử (không có đơn) cho đúng mã đang thấy.
+    @Test
+    void lidTestTargetFollowsTheMarkerTheCameraSees() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        enableLidTest();
+
+        deliverSigned(event("TARGET_REQUEST", Map.of("visibleMarkers", List.of(3, 7)), OffsetDateTime.now()));
+
+        var target = droneCommands(mqtt).stream()
+                .filter(cmd -> "DELIVERY_TARGET".equals(cmd.get("eventType").asText())).findFirst().orElseThrow();
+        assertEquals("LID_TEST", target.get("mode").asText());
+        assertEquals(7, target.get("arucoMarkerId").asInt());
+        assertEquals(BOX, target.get("compartmentId").asLong());
+        assertEquals(LOCKER, target.get("lockerId").asLong());
+        assertFalse(target.has("orderId"), "mục tiêu thử nắp không gắn đơn");
+    }
+
+    /// Đúng mã ⇒ mở nắp THẬT; chỉ khi tủ báo mở xong mới giữ rồi đóng; tủ báo đóng xong ⇒ phiên thử xong.
+    /// Không đơn nào bị đổi trạng thái.
+    @Test
+    void lidTestOpensHoldsAndClosesWithoutTouchingAnyOrder() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        enableLidTest();
+
+        deliverSigned(lidTestMarker(7));
+
+        DroneDeliverySession session = sessions.values().iterator().next();
+        assertEquals("LID_TEST", session.getMode());
+        assertEquals(0L, session.getOrderId());
+        assertEquals(DroneDeliverySession.OPEN_LID_REQUESTED, session.getState());
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+
+        service.closeLidTest(session.getSessionId());     // chưa mở xong: không được đóng
+        verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+
+        lockerResult(LOCKER, "open", session.getOpenCommandId(), "OPEN");
+        assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+
+        service.closeLidTest(session.getSessionId());     // hết thời gian giữ
+        assertEquals(DroneDeliverySession.CLOSE_LID_REQUESTED, session.getState());
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+
+        lockerResult(LOCKER, "close", session.getCloseCommandId(), "CLOSED");
+        assertEquals(DroneDeliverySession.TEST_COMPLETED, session.getState());
+        assertTrue(droneCommands(mqtt).stream().anyMatch(cmd -> "LID_TEST_DONE".equals(cmd.get("eventType").asText())));
+        assertEquals("AWAITING_DISPATCH", order.getStatus());
+        assertEquals("APPROACHING", order.getDeliveryStage());
+
+        ArgumentCaptor<DroneLockerCommLog> logs = ArgumentCaptor.forClass(DroneLockerCommLog.class);
+        verify(commLogRepository, org.mockito.Mockito.atLeastOnce()).save(logs.capture());
+        assertTrue(logs.getAllValues().stream().allMatch(log -> log.getOrderId() == null),
+                "nhật ký thử nắp không được gắn đơn (Đơn #0)");
+        assertTrue(logs.getAllValues().stream().anyMatch(log -> "LID_TEST_HOLD".equals(log.getEventType())));
+    }
+
+    /// Chế độ đang tắt, hoặc mã không thuộc danh sách ⇒ không mở nắp.
+    @Test
+    void lidTestDoesNothingWhenDisabledOrForAnUnlistedMarker() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+
+        deliverSigned(lidTestMarker(7));
+        assertTrue(sessions.isEmpty(), "chế độ tắt mà vẫn mở nắp");
+
+        enableLidTest();
+        deliverSigned(event("MARKER_DETECTED", Map.of("arucoMarkerId", 4, "arucoDictionary", "DICT_4X4_50",
+                "mode", "LID_TEST"), OffsetDateTime.now()));
+        assertTrue(sessions.isEmpty(), "mã ngoài danh sách mà vẫn mở nắp");
+        verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/open"), any(MqttMessage.class));
+    }
+
     /// Pi hỏi mục tiêu: chỉ trả mã ArUco của ô đích khi nhiệm vụ ở chặng được phép mở nắp.
     @Test
     void targetRequestReturnsTheDestinationMarkerOnlyInAllowedStages() throws Exception {

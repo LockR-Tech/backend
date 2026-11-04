@@ -166,8 +166,9 @@ public class DroneLockerCommunicationService {
             DeliverySessionState view = new DeliverySessionState();
             view.setSessionId(session.getSessionId());
             view.setCorrelationId(session.getCorrelationId());
-            view.setOrderId(session.getOrderId());
-            view.setJourneyId(session.getMissionId());
+            // Phiên thử nắp không có đơn/nhiệm vụ (lưu 0): trả null để trang admin không gộp thành "Đơn #0".
+            view.setOrderId(session.getOrderId() != null && session.getOrderId() > 0 ? session.getOrderId() : null);
+            view.setJourneyId(session.getMissionId() != null && session.getMissionId() > 0 ? session.getMissionId() : null);
             view.setDroneUnitId(session.getDroneUnitId());
             view.setDroneId(session.getDroneId());
             view.setLockerId(session.getLockerId());
@@ -241,6 +242,8 @@ public class DroneLockerCommunicationService {
         scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::expireStaleOpenRequests),
                 30, 30, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::expireDropReports),
+                10, 10, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::closeDueLidTests),
                 10, 10, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> eventExecutor.execute(this::retryStalledLidCommands),
                 5, 5, TimeUnit.SECONDS);
@@ -368,7 +371,10 @@ public class DroneLockerCommunicationService {
             inLog = new DroneLockerCommLog();
         }
 
-        if ("MARKER_DETECTED".equalsIgnoreCase(eventType)) {
+        if ("MARKER_DETECTED".equalsIgnoreCase(eventType)
+                && DroneDeliverySession.MODE_LID_TEST.equalsIgnoreCase(text(data, "mode"))) {
+            processLidTestMarker(inLog, droneId, markerId, dictionary, sessionId, correlationId);
+        } else if ("MARKER_DETECTED".equalsIgnoreCase(eventType)) {
             processMarkerDetected(inLog, droneId, orderId, lockerId, markerId, dictionary, sessionId,
                     correlationId, mode);
         } else if ("DROP_PHASE_COMPLETED".equalsIgnoreCase(eventType)) {
@@ -376,7 +382,11 @@ public class DroneLockerCommunicationService {
         } else if ("SAFETY_ABORT".equalsIgnoreCase(eventType)) {
             processSafetyAbort(inLog, droneId);
         } else if ("TARGET_REQUEST".equalsIgnoreCase(eventType)) {
-            processTargetRequest(inLog, droneId);
+            if (orderRules.droneLidTestEnabled()) {
+                processLidTestTarget(inLog, droneId, intList(data, "visibleMarkers"));
+            } else {
+                processTargetRequest(inLog, droneId);
+            }
         } else {
             finish(inLog, "REJECTED", "UNKNOWN_EVENT", "Loại sự kiện không hỗ trợ: " + eventType);
         }
@@ -547,6 +557,220 @@ public class DroneLockerCommunicationService {
             log.info("[COMM] OPEN_LID sent: mission={} order={} locker={} box={} aruco={} commandId={} expiresAt={}",
                     session.getMissionId(), session.getOrderId(), session.getLockerId(), session.getCompartmentId(),
                     session.getTargetMarkerId(), session.getOpenCommandId(), openCommandExpiresAt(session));
+        }
+    }
+
+    // =========================================================================
+    // 1a. CHẾ ĐỘ THỬ NẮP THEO ArUco (không cần đơn — bật/tắt ở trang Nhật ký Drone & Tủ)
+    //     Camera thấy mã trong danh sách thử ⇒ mở nắp trượt ô tương ứng (thật) ⇒ tủ báo mở xong ⇒ giữ N giây
+    //     ⇒ đóng nắp (thật) ⇒ tủ báo đóng xong. Mỗi bước chỉ chạy khi bước trước thành công; không đụng đơn nào.
+    // =========================================================================
+
+    /// Ô thử nắp ứng với một mã ArUco.
+    record LidTestTarget(int markerId, long boxId, long lockerId, Integer boxNumber, String dictionary) {
+        String label() {
+            return "ô " + (boxNumber != null ? boxNumber : "#" + boxId) + " tủ #" + lockerId;
+        }
+    }
+
+    /// Ô thử nắp cho mã ArUco, hoặc null (kèm lý do) nếu mã không thuộc danh sách / ô không thuộc tủ thử.
+    LidTestTarget lidTestTarget(Integer markerId, String[] reason) {
+        Map<Integer, Long> targets = orderRules.droneLidTestTargets();
+        long lockerId = orderRules.droneLidTestLockerId();
+        Long boxId = markerId == null ? null : targets.get(markerId);
+        if (boxId == null) {
+            reason[0] = "Chế độ thử nắp: mã ArUco #" + markerId + " không thuộc danh sách thử (mã → ô: " + targets + ")";
+            return null;
+        }
+        BoxCellDto cell = fetchCell(boxId);
+        if (cell != null && cell.lockerId() != null && cell.lockerId() != lockerId) {
+            reason[0] = "Chế độ thử nắp: ô #" + boxId + " thuộc tủ #" + cell.lockerId() + ", không phải tủ thử #" + lockerId;
+            return null;
+        }
+        String dictionary = cell != null && cell.arucoDictionary() != null ? cell.arucoDictionary() : "DICT_4X4_50";
+        return new LidTestTarget(markerId, boxId, lockerId, cell != null ? cell.boxNumber() : null, dictionary);
+    }
+
+    private DroneDeliverySession activeLidTestSession(String droneId) {
+        return sessionRepository.findByStateInOrderByCreatedAtDesc(DroneDeliverySession.ACTIVE_STATES).stream()
+                .filter(session -> DroneDeliverySession.MODE_LID_TEST.equals(session.getMode()))
+                .filter(session -> Objects.equals(droneId, session.getDroneId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static String lidTestLabel(DroneDeliverySession session) {
+        return "ô #" + session.getCompartmentId() + " tủ #" + session.getLockerId();
+    }
+
+    /// Pi drone hỏi mục tiêu khi camera thấy mã (gửi kèm `visibleMarkers`): trả ô thử ứng với mã đang thấy.
+    void processLidTestTarget(DroneLockerCommLog inLog, String droneId, List<Integer> visibleMarkers) {
+        DroneDeliverySession active = activeLidTestSession(droneId);
+        LidTestTarget target = null;
+        String[] reason = {null};
+        if (active != null) {
+            target = new LidTestTarget(active.getTargetMarkerId() != null ? active.getTargetMarkerId() : -1,
+                    active.getCompartmentId(), active.getLockerId(), null, active.getTargetDictionary());
+        } else {
+            for (Integer marker : visibleMarkers) {
+                target = lidTestTarget(marker, reason);
+                if (target != null) {
+                    break;
+                }
+            }
+        }
+        inLog.setLockerId(orderRules.droneLidTestLockerId());
+        if (target == null) {
+            String why = visibleMarkers.isEmpty() ? "Chế độ thử nắp: drone chưa gửi mã ArUco đang thấy" : reason[0];
+            finish(inLog, "SUCCESS", "NO_TARGET", why);
+            publishCommand("NO_TARGET", null, null, null, droneId, null, null, "NO_TARGET", why, Map.of());
+            return;
+        }
+        inLog.setCompartmentId(target.boxId());
+        inLog.setMarkerId(target.markerId());
+        finish(inLog, "SUCCESS", null, "Chế độ thử nắp: gửi mục tiêu " + target.label() + ", mã ArUco #" + target.markerId());
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("arucoMarkerId", target.markerId());
+        extra.put("arucoDictionary", target.dictionary());
+        extra.put("mode", DroneDeliverySession.MODE_LID_TEST);
+        extra.put("stage", DroneDeliverySession.MODE_LID_TEST);
+        if (active != null) {
+            extra.put("sessionState", active.getState());
+        }
+        publishCommand("DELIVERY_TARGET", active != null ? active.getSessionId() : null, null, null, droneId,
+                target.lockerId(), target.boxId(), null, null, extra);
+    }
+
+    /// Camera thấy ổn định mã của ô thử ⇒ mở phiên thử và gửi lệnh mở nắp trượt THẬT cho tủ.
+    void processLidTestMarker(DroneLockerCommLog inLog, String droneId, Integer markerId, String dictionary,
+            String eventSessionId, String eventCorrelationId) {
+        if (!orderRules.droneLidTestEnabled()) {
+            String message = "Chế độ thử nắp đang tắt — bỏ qua mã ArUco #" + markerId;
+            finish(inLog, "REJECTED", "LID_TEST_DISABLED", message);
+            publishCommand("NO_TARGET", eventSessionId, eventCorrelationId, null, droneId, null, null,
+                    "LID_TEST_DISABLED", message, Map.of());
+            return;
+        }
+        DroneDeliverySession active = activeLidTestSession(droneId);
+        if (active != null) {
+            inLog.setSessionId(active.getSessionId());
+            inLog.setLockerId(active.getLockerId());
+            inLog.setCompartmentId(active.getCompartmentId());
+            finish(inLog, "IGNORED", "DUPLICATE_MARKER", "Chế độ thử nắp: " + lidTestLabel(active)
+                    + " đang được thử — không mở nắp lần nữa");
+            publishCommand("MARKER_VALIDATED", active.getSessionId(), active.getCorrelationId(), null, droneId,
+                    active.getLockerId(), active.getCompartmentId(), null, null, Map.of("mode", DroneDeliverySession.MODE_LID_TEST));
+            return;
+        }
+        String[] reason = {null};
+        LidTestTarget target = lidTestTarget(markerId, reason);
+        if (target != null && dictionary != null && !target.dictionary().equalsIgnoreCase(dictionary)) {
+            reason[0] = "Chế độ thử nắp: mã ArUco #" + markerId + " (" + dictionary + ") khác từ điển của ô ("
+                    + target.dictionary() + ")";
+            target = null;
+        }
+        if (target == null) {
+            finish(inLog, "REJECTED", "WRONG_MARKER", reason[0]);
+            publishCommand("MARKER_REJECTED", eventSessionId, eventCorrelationId, null, droneId, null, null,
+                    "WRONG_MARKER", reason[0], Map.of());
+            return;
+        }
+        LidTestTarget chosen = target;
+        inLog.setLockerId(chosen.lockerId());
+        inLog.setCompartmentId(chosen.boxId());
+        // Ô đang có phiên điều khiển nắp khác (giao hàng thật / thử khác) ⇒ không chen lệnh nắp.
+        boolean boxBusy = sessionRepository.findByLockerIdAndStateIn(chosen.lockerId(), DroneDeliverySession.ACTIVE_STATES)
+                .stream().anyMatch(session -> Objects.equals(session.getCompartmentId(), chosen.boxId()));
+        if (boxBusy) {
+            String message = "Chế độ thử nắp: " + chosen.label() + " đang có phiên điều khiển nắp khác — không mở";
+            finish(inLog, "REJECTED", "BOX_BUSY", message);
+            publishCommand("MARKER_REJECTED", eventSessionId, eventCorrelationId, null, droneId, null, null,
+                    "BOX_BUSY", message, Map.of());
+            return;
+        }
+        DroneDeliverySession session = new DroneDeliverySession();
+        boolean idTaken = StringUtils.hasText(eventSessionId) && sessionRepository.findById(eventSessionId).isPresent();
+        session.setSessionId(StringUtils.hasText(eventSessionId) && !idTaken ? eventSessionId
+                : "LIDTEST-" + chosen.boxId() + "-" + System.currentTimeMillis());
+        session.setCorrelationId(StringUtils.hasText(eventCorrelationId) ? eventCorrelationId : UUID.randomUUID().toString());
+        session.setOrderId(0L);      // không có đơn — cột NOT NULL, 0 = phiên thử
+        session.setMissionId(0L);
+        session.setDroneId(droneId);
+        session.setLockerId(chosen.lockerId());
+        session.setCompartmentId(chosen.boxId());
+        session.setTargetMarkerId(chosen.markerId());
+        session.setTargetDictionary(chosen.dictionary());
+        session.setMode(DroneDeliverySession.MODE_LID_TEST);
+        session.setOpenCommandId(UUID.randomUUID().toString());
+        session.setCreatedAt(LocalDateTime.now());
+        session.setState(DroneDeliverySession.OPEN_LID_REQUESTED);
+        sessionRepository.save(session);
+
+        inLog.setSessionId(session.getSessionId());
+        finish(inLog, "SUCCESS", null, "Chế độ thử nắp: camera thấy đúng mã ArUco #" + chosen.markerId()
+                + " của " + chosen.label());
+        publishCommand("MARKER_VALIDATED", session.getSessionId(), session.getCorrelationId(), null, droneId,
+                chosen.lockerId(), chosen.boxId(), null, null, Map.of("mode", DroneDeliverySession.MODE_LID_TEST));
+        sendLockerLidCommand(chosen.lockerId(), chosen.boxId(), "OPEN", session.getOpenCommandId(),
+                openCommandExpiresAt(session));
+        lidCommandAttempts.put(session.getOpenCommandId(), new LidCommandAttempt(LocalDateTime.now(), 0, false));
+        saveLog(session.getOpenCommandId(), session.getCorrelationId(), session.getSessionId(), null, null, droneId,
+                chosen.lockerId(), chosen.boxId(), chosen.markerId(), chosen.dictionary(), "BACKEND", "LOCKER",
+                "cabinet/" + chosen.lockerId() + "/command/open", "OPEN_LID_REQUESTED", "OUTBOUND", null, "SENT",
+                "PENDING", "PENDING", null, "Chế độ thử nắp: gửi lệnh mở nắp trượt " + chosen.label()
+                        + " (mã ArUco #" + chosen.markerId() + ")", 0, null);
+        log.info("[COMM] LID TEST: drone={} marker={} locker={} box={} commandId={}", droneId, chosen.markerId(),
+                chosen.lockerId(), chosen.boxId(), session.getOpenCommandId());
+    }
+
+    /// Mã của dòng nhật ký "giữ nắp mở" — chuyển thành công khi đã gửi lệnh đóng.
+    static String lidTestHoldLogId(String sessionId) {
+        return "HOLD-" + sessionId;
+    }
+
+    /// Nắp thử đã mở: giữ `hold` giây rồi đóng (hẹn giờ; quét dự phòng closeDueLidTests nếu backend khởi động lại).
+    private void startLidTestHold(DroneDeliverySession session) {
+        int hold = orderRules.droneLidTestHoldSeconds();
+        saveLog(lidTestHoldLogId(session.getSessionId()), session.getCorrelationId(), session.getSessionId(), null, null,
+                session.getDroneId(), session.getLockerId(), session.getCompartmentId(), session.getTargetMarkerId(),
+                session.getTargetDictionary(), "BACKEND", "LOCKER", "cabinet/" + session.getLockerId() + "/command/close",
+                "LID_TEST_HOLD", "INTERNAL", null, "PROCESSED", "PENDING", "PENDING", null,
+                "Chế độ thử nắp: nắp " + lidTestLabel(session) + " đã mở — giữ " + hold + " giây rồi đóng", 0, null);
+        String sessionId = session.getSessionId();
+        scheduler.schedule(() -> eventExecutor.execute(() -> closeLidTest(sessionId)), hold, TimeUnit.SECONDS);
+    }
+
+    /// Hết thời gian giữ: chỉ đóng khi phiên thử vẫn đang ở "nắp đã mở" (đọc lại từ database).
+    void closeLidTest(String sessionId) {
+        try {
+            sessionRepository.findById(sessionId)
+                    .filter(session -> DroneDeliverySession.MODE_LID_TEST.equals(session.getMode()))
+                    .filter(session -> DroneDeliverySession.LID_OPENED.equals(session.getState()))
+                    .ifPresent(session -> {
+                        resolvePendingLogs(lidTestHoldLogId(sessionId), true);
+                        requestCloseLid(session, "Chế độ thử nắp: hết " + orderRules.droneLidTestHoldSeconds()
+                                + " giây — gửi lệnh đóng nắp trượt " + lidTestLabel(session));
+                        publishCommand("LID_CLOSING", session.getSessionId(), session.getCorrelationId(), null,
+                                session.getDroneId(), session.getLockerId(), session.getCompartmentId(), null,
+                                "Chế độ thử nắp: tủ đang đóng nắp");
+                    });
+        } catch (Exception ex) {
+            log.error("[COMM] Error closing lid test session {}: {}", sessionId, ex.getMessage(), ex);
+        }
+    }
+
+    /// Quét dự phòng: phiên thử mở nắp quá thời gian giữ (backend khởi động lại làm mất hẹn giờ) thì đóng.
+    void closeDueLidTests() {
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            int hold = orderRules.droneLidTestHoldSeconds();
+            sessionRepository.findByStateInOrderByCreatedAtDesc(Set.of(DroneDeliverySession.LID_OPENED)).stream()
+                    .filter(session -> DroneDeliverySession.MODE_LID_TEST.equals(session.getMode()))
+                    .filter(session -> session.getLidOpenedAt() != null
+                            && !session.getLidOpenedAt().plusSeconds(hold + 5L).isAfter(now))
+                    .forEach(session -> closeLidTest(session.getSessionId()));
+        } catch (Exception e) {
+            log.error("[COMM] Error closing due lid tests: {}", e.getMessage(), e);
         }
     }
 
@@ -926,6 +1150,10 @@ public class DroneLockerCommunicationService {
         }
         publishCommand("LID_OPENED", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
                 session.getDroneId(), session.getLockerId(), session.getCompartmentId(), null, openedMessage, extra);
+        if (DroneDeliverySession.MODE_LID_TEST.equals(session.getMode())) {
+            startLidTestHold(session);   // thử nắp: giữ mở vài giây rồi đóng, không có nhả hàng
+            return;
+        }
         recordDroneIotLog(session.getDroneUnitId(), session.getDroneId(), "CARGO_HOOK", "HOOK_ATTACH", "SUCCESS",
                 session.getOrderId(), openedMessage + ". Sẵn sàng thả kiện hàng");
 
@@ -997,6 +1225,19 @@ public class DroneLockerCommunicationService {
             sessionRepository.save(session);
             publishCommand("LID_CLOSE_FAILED", session.getSessionId(), session.getCorrelationId(), session.getOrderId(),
                     session.getDroneId(), session.getLockerId(), session.getCompartmentId(), errorCode, errorMessage);
+            return;
+        }
+
+        if (DroneDeliverySession.MODE_LID_TEST.equals(session.getMode())) {
+            // Thử nắp xong: không có đơn để chuyển chặng. Báo drone để nó bỏ mục tiêu và chờ lần thấy mã kế tiếp.
+            session.setState(DroneDeliverySession.TEST_COMPLETED);
+            session.setCompletedAt(LocalDateTime.now());
+            sessionRepository.save(session);
+            publishCommand("LID_TEST_DONE", session.getSessionId(), session.getCorrelationId(), null, session.getDroneId(),
+                    session.getLockerId(), session.getCompartmentId(), null,
+                    "Chế độ thử nắp: đã mở – giữ – đóng nắp " + lidTestLabel(session) + " xong");
+            log.info("[COMM] LID TEST done: session={} locker={} box={}", session.getSessionId(), session.getLockerId(),
+                    session.getCompartmentId());
             return;
         }
 
@@ -1359,7 +1600,7 @@ public class DroneLockerCommunicationService {
         payload.put("eventType", eventType);
         payload.put("timestamp", OffsetDateTime.now().toString());
         payload.put("source", "BACKEND");
-        if (orderId != null) payload.put("orderId", orderId);
+        if (orderId != null && orderId > 0) payload.put("orderId", orderId);
         if (droneId != null) payload.put("droneId", droneId);
         if (lockerId != null) payload.put("lockerId", lockerId);
         if (compartmentId != null) payload.put("compartmentId", compartmentId);
@@ -1388,8 +1629,9 @@ public class DroneLockerCommunicationService {
             logEntity.setMessageId(messageId);
             logEntity.setCorrelationId(correlationId);
             logEntity.setSessionId(sessionId);
-            logEntity.setOrderId(orderId);
-            logEntity.setJourneyId(journeyId);
+            // Phiên thử nắp lưu order/mission = 0: nhật ký ghi null để không thành "Đơn #0".
+            logEntity.setOrderId(orderId != null && orderId > 0 ? orderId : null);
+            logEntity.setJourneyId(journeyId != null && journeyId > 0 ? journeyId : null);
             logEntity.setDroneId(droneId);
             logEntity.setLockerId(lockerId);
             logEntity.setCompartmentId(compartmentId);
@@ -1463,6 +1705,52 @@ public class DroneLockerCommunicationService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /// Mảng số nguyên trong bản tin (vd. `visibleMarkers`), bỏ phần tử không phải số.
+    private static List<Integer> intList(JsonNode node, String field) {
+        List<Integer> values = new ArrayList<>();
+        JsonNode array = node.get(field);
+        if (array != null && array.isArray()) {
+            array.forEach(item -> {
+                if (item.canConvertToInt()) {
+                    values.add(item.asInt());
+                }
+            });
+        }
+        return values;
+    }
+
+    /// Một dòng "mã ArUco → ô" của chế độ thử nắp, kèm số ô / mã đang gán ở locker-service để admin đối chiếu.
+    public record LidTestTargetView(int markerId, long boxId, Integer boxNumber, Long cellLockerId,
+            Integer cellMarkerId, String problem) {
+    }
+
+    public record LidTestStatus(boolean enabled, long lockerId, int holdSeconds, List<LidTestTargetView> targets,
+            List<DeliverySessionState> activeSessions) {
+    }
+
+    /// Trạng thái chế độ thử nắp cho trang Nhật ký Drone & Tủ.
+    public LidTestStatus lidTestStatus() {
+        long lockerId = orderRules.droneLidTestLockerId();
+        List<LidTestTargetView> targets = new ArrayList<>();
+        orderRules.droneLidTestTargets().forEach((marker, boxId) -> {
+            BoxCellDto cell = fetchCell(boxId);
+            String problem = cell == null ? "Không tra được ô #" + boxId + " ở locker-service"
+                    : cell.lockerId() != null && cell.lockerId() != lockerId ? "Ô thuộc tủ #" + cell.lockerId()
+                    : !Objects.equals(cell.arucoMarkerId(), marker) ? "Ô đang gán mã ArUco #" + cell.arucoMarkerId()
+                    + " (camera vẫn dùng mã #" + marker + " khi thử)"
+                    : null;
+            targets.add(new LidTestTargetView(marker, boxId, cell != null ? cell.boxNumber() : null,
+                    cell != null ? cell.lockerId() : null, cell != null ? cell.arucoMarkerId() : null, problem));
+        });
+        List<DeliverySessionState> active = sessionRepository
+                .findByStateInOrderByCreatedAtDesc(DroneDeliverySession.ACTIVE_STATES).stream()
+                .filter(session -> DroneDeliverySession.MODE_LID_TEST.equals(session.getMode()))
+                .map(DeliverySessionState::of)
+                .toList();
+        return new LidTestStatus(orderRules.droneLidTestEnabled(), lockerId, orderRules.droneLidTestHoldSeconds(),
+                targets, active);
     }
 
     private static Integer intOrNull(JsonNode node, String field) {

@@ -351,6 +351,40 @@ public class OrderRules {
         return settings.getInt(DRONE_OPEN_LID_MAX_WAIT_SECONDS);
     }
 
+    /// Chế độ thử nắp theo ArUco (không cần đơn) — bật/tắt ở trang Nhật ký Drone & Tủ.
+    public boolean droneLidTestEnabled() {
+        return settings.getBoolean(DRONE_LID_TEST_ENABLED);
+    }
+
+    public long droneLidTestLockerId() {
+        return settings.getLong(DRONE_LID_TEST_LOCKER_ID);
+    }
+
+    public int droneLidTestHoldSeconds() {
+        return Math.max(1, settings.getInt(DRONE_LID_TEST_HOLD_SECONDS));
+    }
+
+    /// {mã ArUco → box id} từ chuỗi "0:39,1:40" (giữ thứ tự khai báo, bỏ mục viết sai).
+    public java.util.Map<Integer, Long> droneLidTestTargets() {
+        java.util.Map<Integer, Long> targets = new java.util.LinkedHashMap<>();
+        String raw = settings.getString(DRONE_LID_TEST_MARKERS);
+        if (raw == null) {
+            return targets;
+        }
+        for (String item : raw.split(",")) {
+            String[] pair = item.trim().split(":");
+            if (pair.length != 2) {
+                continue;
+            }
+            try {
+                targets.put(Integer.parseInt(pair[0].trim()), Long.parseLong(pair[1].trim()));
+            } catch (NumberFormatException ignored) {
+                // mục sai định dạng: bỏ qua
+            }
+        }
+        return targets;
+    }
+
     public boolean droneDemoEnabled() {
         return settings.getBoolean(DRONE_DEMO_ENABLED);
     }

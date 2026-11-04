@@ -75,6 +75,11 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_DEMO_INDOOR_HANDHELD_ENABLED = "app.drone.demo.indoor-handheld-enabled";
     public static final String DRONE_DEMO_HOLD_OPEN_SECONDS = "app.drone.demo.hold-open-seconds";
     public static final String DRONE_OPEN_LID_MAX_WAIT_SECONDS = "app.drone.delivery.open-lid-max-wait-seconds";
+    /// Chế độ thử nắp theo ArUco (trang Nhật ký Drone & Tủ): camera thấy mã ⇒ mở nắp ô tương ứng, chờ, đóng. Không cần đơn.
+    public static final String DRONE_LID_TEST_ENABLED = "app.drone.lid-test.enabled";
+    public static final String DRONE_LID_TEST_LOCKER_ID = "app.drone.lid-test.locker-id";
+    public static final String DRONE_LID_TEST_MARKERS = "app.drone.lid-test.markers";
+    public static final String DRONE_LID_TEST_HOLD_SECONDS = "app.drone.lid-test.hold-seconds";
     public static final String DRONE_MIN_PREFLIGHT_BATTERY = "app.order.drone-min-preflight-battery-percent";
     public static final String DRONE_DEFAULT_PARCEL_WEIGHT = "app.order.drone-default-parcel-weight-grams";
     public static final String DRONE_MAX_PAYLOAD_WEIGHT = "app.order.drone-max-payload-weight-grams";
@@ -388,6 +393,17 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Tủ mất kết nối thì lệnh mở nắp được gửi lại khi tủ kết nối lại. Quá số giây này mà tủ vẫn chưa "
                                 + "phản hồi thì huỷ phiên giao (không mở nắp muộn khi drone đã rời đi); drone quét lại mã "
                                 + "ArUco sẽ mở phiên mới.", 600, 30, 3600, "giây"),
+                bool(DRONE_LID_TEST_ENABLED, DRONE_DEMO, "Chế độ thử nắp trượt theo mã ArUco",
+                        "Bật: camera drone thấy một mã ArUco trong danh sách thử thì nắp trượt của ô tương ứng mở "
+                                + "THẬT, chờ vài giây rồi đóng THẬT — không cần đơn hàng, không đổi trạng thái đơn nào. "
+                                + "Trong lúc bật, camera không xử lý giao hàng của đơn. Bật/tắt ở trang Nhật ký Drone & Tủ.", false),
+                integer(DRONE_LID_TEST_LOCKER_ID, DRONE_DEMO, "Tủ dùng cho chế độ thử nắp",
+                        "Mã tủ (lockerId) có nắp trượt dùng khi thử. Mặc định tủ thật CAB-TU01 (#7).", 7, 1, null, null),
+                string(DRONE_LID_TEST_MARKERS, DRONE_DEMO, "Mã ArUco → ô khi thử nắp",
+                        "Danh sách mã ArUco:mã ô (box id), cách nhau dấu phẩy. Mặc định 0:39,1:40 = mã #0 → ô 2, "
+                                + "mã #1 → ô 3 của tủ CAB-TU01.", "0:39,1:40", List.of()),
+                integer(DRONE_LID_TEST_HOLD_SECONDS, DRONE_DEMO, "Thời gian giữ nắp mở khi thử (giây)",
+                        "Sau khi tủ báo nắp đã mở xong, chờ chừng này giây rồi gửi lệnh đóng.", 5, 1, 120, "giây"),
                 bool(DRONE_DEMO_ENABLED, DRONE_DEMO, "Cho phép chế độ drone DEMO",
                         "Bật bộ giả lập chặng bay cho đơn drone.", true),
                 integer(DRONE_DEMO_STAGE_DELAY_MS, DRONE_DEMO, "Thời gian mỗi chặng bay giả lập",

@@ -30,6 +30,11 @@ public class DroneDeliverySession {
     public static final String LID_OPEN_FAILED = "LID_OPEN_FAILED";
     public static final String LID_CLOSE_FAILED = "LID_CLOSE_FAILED";
     public static final String ABORTED = "ABORTED";
+    /// Phiên của chế độ thử nắp (không có đơn): đã mở – giữ – đóng nắp xong.
+    public static final String TEST_COMPLETED = "TEST_COMPLETED";
+
+    /// Chế độ phiên thử nắp theo ArUco: không gắn đơn/nhiệm vụ (order_id = mission_id = 0), không đổi trạng thái đơn.
+    public static final String MODE_LID_TEST = "LID_TEST";
 
     /// Phiên còn chạy: chỉ một phiên như vậy cho mỗi đơn.
     public static final Set<String> ACTIVE_STATES =
