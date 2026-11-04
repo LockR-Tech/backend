@@ -130,6 +130,8 @@ public class OrderPaymentEventListener {
         paidEffects.afterPaid(saved);
         if (!wasSendExtension) {
             orderService.notifyReceiverOrderPaid(saved);
+            // Đơn thuê ô: thư kèm mã mở ô cho chính người thuê (bỏ qua với mọi loại đơn khác).
+            orderService.notifyRenterOrderPaid(saved);
         }
     }
 
