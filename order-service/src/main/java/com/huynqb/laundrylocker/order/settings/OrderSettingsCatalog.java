@@ -381,7 +381,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giả lập drone nhả hàng (giây)",
                         "Chế độ Indoor Demo: sau khi tủ báo nắp trượt đã mở THẬT, Pi drone nhận lệnh nhả hàng, chờ "
                                 + "chừng này giây (giả lập nhả hàng) rồi báo đã nhả xong; hệ thống mới gửi lệnh đóng nắp thật. "
-                                + "Drone không báo trong số giây này + 60 giây thì hệ thống vẫn đóng nắp. Không ảnh hưởng việc "
+                                + "Nắp chỉ đóng khi drone báo nhả xong (quá số giây này + 60 giây thì nhật ký báo cảnh báo, "
+                                + "KTV đóng nắp ở trang Điều khiển tủ nếu cần). Không ảnh hưởng việc "
                                 + "mở nắp — nắp luôn được tủ trượt mở thật khi camera nhận đúng mã ArUco.", 7, 1, 300, "giây"),
                 integer(DRONE_OPEN_LID_MAX_WAIT_SECONDS, DRONE_DEMO, "Thời gian chờ tủ phản hồi lệnh mở nắp (giây)",
                         "Tủ mất kết nối thì lệnh mở nắp được gửi lại khi tủ kết nối lại. Quá số giây này mà tủ vẫn chưa "

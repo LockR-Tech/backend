@@ -787,6 +787,8 @@ class DroneLockerCommunicationServiceTest {
         lockerResult(LOCKER, "open", session.getOpenCommandId(), "OPEN");
 
         assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+        // Dòng "đã gửi lệnh mở" / "tủ đã nhận lệnh" cùng mã lệnh thôi "đang xử lý".
+        verify(commLogRepository).resolvePendingByMessageId(session.getOpenCommandId(), "SUCCESS");
         var lidOpened = droneCommands(mqtt).stream()
                 .filter(cmd -> "LID_OPENED".equals(cmd.get("eventType").asText())).findFirst().orElseThrow();
         assertEquals(7, lidOpened.get("dropSimulationSeconds").asInt(), "lệnh nhả hàng theo cấu hình admin");
@@ -814,26 +816,34 @@ class DroneLockerCommunicationServiceTest {
 
         lockerResult(LOCKER, "close", session.getCloseCommandId(), "CLOSED");
         assertEquals(DroneDeliverySession.READY_FOR_PICKUP, session.getState());
+        verify(commLogRepository).resolvePendingByMessageId(session.getCloseCommandId(), "SUCCESS");
     }
 
-    /// Pi drone không báo nhả hàng xong (mất kết nối, code cũ) ⇒ quá hạn vẫn đóng nắp thật để ô không bị hở.
-    /// Phiên không phải demo thì không bị đụng tới (drone thật tự báo).
+    /// Mỗi bước chỉ chạy khi bước trước thành công: drone chưa báo nhả hàng xong thì KHÔNG đóng nắp, dù quá hạn —
+    /// chỉ ghi cảnh báo một lần và tiếp tục chờ; drone báo muộn thì luồng đi tiếp bình thường.
     @Test
-    void demoDropReportOverdueStillClosesTheLid() throws Exception {
+    void overdueDropReportIsOnlyWarnedAndTheLidIsNotClosedWithoutIt() throws Exception {
         MqttClient mqtt = connectedMqtt();
         deliverSigned(demoMarker());
         DroneDeliverySession session = sessions.values().iterator().next();
         lockerResult(LOCKER, "open", session.getOpenCommandId(), "OPEN");
-
         session.setLidOpenedAt(LocalDateTime.now().minusSeconds(7 + DroneLockerCommunicationService.DROP_REPORT_GRACE_SECONDS + 1));
-        session.setMode("REAL_OUTDOOR");
-        service.expireDropReports();
-        assertEquals(DroneDeliverySession.LID_OPENED, session.getState(), "phiên ngoài trời bị tự đóng nắp");
 
-        session.setMode("INDOOR_ARUCO_DEMO");
         service.expireDropReports();
+        service.expireDropReports();
+
+        assertEquals(DroneDeliverySession.LID_OPENED, session.getState(), "tự đóng nắp khi drone chưa nhả hàng xong");
+        verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+        ArgumentCaptor<DroneLockerCommLog> logs = ArgumentCaptor.forClass(DroneLockerCommLog.class);
+        verify(commLogRepository, org.mockito.Mockito.atLeastOnce()).save(logs.capture());
+        assertEquals(1, logs.getAllValues().stream().filter(log -> "DROP_REPORT_TIMEOUT".equals(log.getEventType())).count(),
+                "cảnh báo quá hạn phải ghi đúng một lần");
+
+        deliverSigned(event("DROP_PHASE_COMPLETED", Map.of("sessionId", session.getSessionId()), OffsetDateTime.now()));
         assertEquals(DroneDeliverySession.CLOSE_LID_REQUESTED, session.getState());
         verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+        verify(commLogRepository).resolvePendingByMessageId(
+                DroneLockerCommunicationService.dropCommandLogId(session.getSessionId()), "SUCCESS");
     }
 
     /// Pi drone khởi động lại khi nắp đang mở chờ thả: mục tiêu trả về nhắc lại lệnh nhả hàng và mã phiên.
