@@ -30,6 +30,8 @@ public class DroneDeliverySession {
     public static final String LID_OPEN_FAILED = "LID_OPEN_FAILED";
     public static final String LID_CLOSE_FAILED = "LID_CLOSE_FAILED";
     public static final String ABORTED = "ABORTED";
+    /// Servo trên drone không nhả được kiện: nắp đã đóng an toàn, kiện vẫn trên drone — KTV drone xử lý đơn.
+    public static final String PARCEL_RELEASE_FAILED = "PARCEL_RELEASE_FAILED";
     /// Phiên của chế độ thử nắp (không có đơn): đã mở – giữ – đóng nắp xong.
     public static final String TEST_COMPLETED = "TEST_COMPLETED";
 
