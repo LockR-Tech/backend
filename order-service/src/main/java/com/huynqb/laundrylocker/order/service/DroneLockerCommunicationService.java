@@ -358,11 +358,17 @@ public class DroneLockerCommunicationService {
         }
 
         String rejection = rejectionOf(topic, data, rawPayload, signature, droneId, messageId);
-        DroneLockerCommLog inLog = saveLog(
-                messageId, correlationId, sessionId, orderId, null, droneId, lockerId, compartmentId,
-                markerId, dictionary, "DRONE", "BACKEND", DRONE_EVENTS_TOPIC, eventType,
-                "INBOUND", rawPayload, "DELIVERED", "RECEIVED", rejection == null ? "PROCESSING" : "REJECTED",
-                rejection, rejection == null ? null : rejectionMessage(rejection), 0, null);
+        // Pi hỏi mục tiêu theo nhịp: chỉ ghi nhật ký khi backend thật sự gửi mục tiêu (NO_TARGET thì bỏ qua),
+        // nên bản ghi được lưu sau khi xử lý xong thay vì ngay lúc nhận.
+        boolean logOnlyIfTargetFound = rejection == null && "TARGET_REQUEST".equalsIgnoreCase(eventType);
+        DroneLockerCommLog inLog = logOnlyIfTargetFound
+                ? buildLog(messageId, correlationId, sessionId, orderId, null, droneId, lockerId, compartmentId,
+                        markerId, dictionary, "DRONE", "BACKEND", DRONE_EVENTS_TOPIC, eventType,
+                        "INBOUND", rawPayload, "DELIVERED", "RECEIVED", "PROCESSING", null, null, 0, null)
+                : saveLog(messageId, correlationId, sessionId, orderId, null, droneId, lockerId, compartmentId,
+                        markerId, dictionary, "DRONE", "BACKEND", DRONE_EVENTS_TOPIC, eventType,
+                        "INBOUND", rawPayload, "DELIVERED", "RECEIVED", rejection == null ? "PROCESSING" : "REJECTED",
+                        rejection, rejection == null ? null : rejectionMessage(rejection), 0, null);
         if (rejection != null) {
             log.warn("[COMM] Drone event {} from {} rejected: {}", eventType, droneId, rejection);
             return;
@@ -622,7 +628,7 @@ public class DroneLockerCommunicationService {
         inLog.setLockerId(orderRules.droneLidTestLockerId());
         if (target == null) {
             String why = visibleMarkers.isEmpty() ? "Chế độ thử nắp: drone chưa gửi mã ArUco đang thấy" : reason[0];
-            finish(inLog, "SUCCESS", "NO_TARGET", why);
+            log.debug("[COMM] TARGET_REQUEST from {}: NO_TARGET ({})", droneId, why);   // không ghi nhật ký
             publishCommand("NO_TARGET", null, null, null, droneId, null, null, "NO_TARGET", why, Map.of());
             return;
         }
@@ -796,7 +802,7 @@ public class DroneLockerCommunicationService {
             reason[0] = "Không tra được nhiệm vụ: " + ex.getMessage();
         }
         if (target == null) {
-            finish(inLog, "SUCCESS", "NO_TARGET", reason[0]);
+            log.debug("[COMM] TARGET_REQUEST from {}: NO_TARGET ({})", droneId, reason[0]);   // không ghi nhật ký
             publishCommand("NO_TARGET", null, null, null, droneId, null, null, "NO_TARGET", reason[0], Map.of());
             return;
         }
@@ -1624,37 +1630,50 @@ public class DroneLockerCommunicationService {
             String direction, String payload, String publishStatus, String ackStatus, String processingStatus,
             String errorCode, String errorMessage, int retryCount, Long durationMs) {
         try {
-            DroneLockerCommLog logEntity = new DroneLockerCommLog();
-            logEntity.setTimestamp(LocalDateTime.now());
-            logEntity.setMessageId(messageId);
-            logEntity.setCorrelationId(correlationId);
-            logEntity.setSessionId(sessionId);
-            // Phiên thử nắp lưu order/mission = 0: nhật ký ghi null để không thành "Đơn #0".
-            logEntity.setOrderId(orderId != null && orderId > 0 ? orderId : null);
-            logEntity.setJourneyId(journeyId != null && journeyId > 0 ? journeyId : null);
-            logEntity.setDroneId(droneId);
-            logEntity.setLockerId(lockerId);
-            logEntity.setCompartmentId(compartmentId);
-            logEntity.setMarkerId(markerId);
-            logEntity.setMarkerDictionary(markerDictionary);
-            logEntity.setSourceDevice(sourceDevice);
-            logEntity.setDestinationDevice(destinationDevice);
-            logEntity.setMqttTopic(mqttTopic);
-            logEntity.setEventType(eventType == null ? "UNKNOWN" : eventType);
-            logEntity.setDirection(direction);
-            logEntity.setPayload(payload);
-            logEntity.setPublishStatus(publishStatus);
-            logEntity.setAckStatus(ackStatus);
-            logEntity.setProcessingStatus(processingStatus);
-            logEntity.setErrorCode(errorCode);
-            logEntity.setErrorMessage(errorMessage);
-            logEntity.setRetryCount(retryCount);
-            logEntity.setProcessingDurationMs(durationMs);
-            return commLogRepository.save(logEntity);
+            return commLogRepository.save(buildLog(messageId, correlationId, sessionId, orderId, journeyId, droneId,
+                    lockerId, compartmentId, markerId, markerDictionary, sourceDevice, destinationDevice, mqttTopic,
+                    eventType, direction, payload, publishStatus, ackStatus, processingStatus, errorCode, errorMessage,
+                    retryCount, durationMs));
         } catch (Exception ex) {
             log.error("[COMM] Failed to persist comm log: {}", ex.getMessage());
             return null;
         }
+    }
+
+    /// Bản ghi nhật ký chưa lưu — để luồng nào chỉ cần ghi khi có kết quả đáng xem (vd. TARGET_REQUEST có mục tiêu).
+    private DroneLockerCommLog buildLog(
+            String messageId, String correlationId, String sessionId, Long orderId, Long journeyId,
+            String droneId, Long lockerId, Long compartmentId, Integer markerId, String markerDictionary,
+            String sourceDevice, String destinationDevice, String mqttTopic, String eventType,
+            String direction, String payload, String publishStatus, String ackStatus, String processingStatus,
+            String errorCode, String errorMessage, int retryCount, Long durationMs) {
+        DroneLockerCommLog logEntity = new DroneLockerCommLog();
+        logEntity.setTimestamp(LocalDateTime.now());
+        logEntity.setMessageId(messageId);
+        logEntity.setCorrelationId(correlationId);
+        logEntity.setSessionId(sessionId);
+        // Phiên thử nắp lưu order/mission = 0: nhật ký ghi null để không thành "Đơn #0".
+        logEntity.setOrderId(orderId != null && orderId > 0 ? orderId : null);
+        logEntity.setJourneyId(journeyId != null && journeyId > 0 ? journeyId : null);
+        logEntity.setDroneId(droneId);
+        logEntity.setLockerId(lockerId);
+        logEntity.setCompartmentId(compartmentId);
+        logEntity.setMarkerId(markerId);
+        logEntity.setMarkerDictionary(markerDictionary);
+        logEntity.setSourceDevice(sourceDevice);
+        logEntity.setDestinationDevice(destinationDevice);
+        logEntity.setMqttTopic(mqttTopic);
+        logEntity.setEventType(eventType == null ? "UNKNOWN" : eventType);
+        logEntity.setDirection(direction);
+        logEntity.setPayload(payload);
+        logEntity.setPublishStatus(publishStatus);
+        logEntity.setAckStatus(ackStatus);
+        logEntity.setProcessingStatus(processingStatus);
+        logEntity.setErrorCode(errorCode);
+        logEntity.setErrorMessage(errorMessage);
+        logEntity.setRetryCount(retryCount);
+        logEntity.setProcessingDurationMs(durationMs);
+        return logEntity;
     }
 
     private void recordDroneIotLog(Long droneUnitId, String droneCode, String component, String eventType,

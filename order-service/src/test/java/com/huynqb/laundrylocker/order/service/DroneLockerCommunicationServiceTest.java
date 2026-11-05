@@ -967,6 +967,14 @@ class DroneLockerCommunicationServiceTest {
         assertEquals(301L, target.get("missionId").asLong());
         var none = new ObjectMapper().readTree(new String(sent.getAllValues().get(1).getPayload()));
         assertEquals("NO_TARGET", none.get("eventType").asText());
+
+        // Nhật ký chỉ ghi lần hỏi có mục tiêu — lần NO_TARGET (Pi hỏi theo nhịp) không làm đầy trang nhật ký.
+        ArgumentCaptor<DroneLockerCommLog> logs = ArgumentCaptor.forClass(DroneLockerCommLog.class);
+        verify(commLogRepository, org.mockito.Mockito.atLeastOnce()).save(logs.capture());
+        var targetLogs = logs.getAllValues().stream()
+                .filter(log -> "TARGET_REQUEST".equals(log.getEventType())).toList();
+        assertEquals(1, targetLogs.size());
+        assertEquals(null, targetLogs.getFirst().getErrorCode());
     }
 
     /// Tủ đã từng trả ACCEPTED (chạy code nắp drone mới) ⇒ backend được gửi lại nhanh khi mất ACK.
