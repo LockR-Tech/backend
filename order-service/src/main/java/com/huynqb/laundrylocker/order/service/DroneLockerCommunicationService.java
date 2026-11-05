@@ -501,7 +501,9 @@ public class DroneLockerCommunicationService {
 
                 DroneDeliverySession session = new DroneDeliverySession();
                 session.setSessionId(StringUtils.hasText(eventSessionId) ? eventSessionId
-                        : "SESSION-" + order.getId() + "-" + System.currentTimeMillis());
+                        // Kèm đuôi ngẫu nhiên: hai lần nhận diện trong cùng mili-giây không được trùng khoá phiên.
+                        : "SESSION-" + order.getId() + "-" + System.currentTimeMillis() + "-"
+                                + UUID.randomUUID().toString().substring(0, 8));
                 session.setCorrelationId(StringUtils.hasText(eventCorrelationId) ? eventCorrelationId
                         : UUID.randomUUID().toString());
                 session.setOrderId(order.getId());
