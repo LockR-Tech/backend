@@ -792,6 +792,7 @@ class DroneLockerCommunicationServiceTest {
         var lidOpened = droneCommands(mqtt).stream()
                 .filter(cmd -> "LID_OPENED".equals(cmd.get("eventType").asText())).findFirst().orElseThrow();
         assertEquals(7, lidOpened.get("dropSimulationSeconds").asInt(), "lệnh nhả hàng theo cấu hình admin");
+        assertTrue(lidOpened.get("parcelRelease").asBoolean(), "Pi có servo phải nhận được lệnh nhả hàng");
         assertEquals(session.getSessionId(), lidOpened.get("sessionId").asText());
         verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
         ArgumentCaptor<DroneLockerCommLog> logs = ArgumentCaptor.forClass(DroneLockerCommLog.class);
@@ -862,7 +863,143 @@ class DroneLockerCommunicationServiceTest {
         assertEquals("LID_OPENED", target.get("sessionState").asText());
         assertEquals("INDOOR_ARUCO_DEMO", target.get("mode").asText());
         assertEquals(7, target.get("dropSimulationSeconds").asInt());
+        assertTrue(target.get("parcelRelease").asBoolean());
         assertEquals(session.getSessionId(), target.get("sessionId").asText());
+    }
+
+    // ------------------------------------------------------------------ nhả hàng bằng servo
+
+    /// Giao thật: nắp mở ⇒ lệnh nhả hàng (`parcelRelease`) cho drone, không có số giây giả lập; servo báo nhả xong
+    /// ⇒ đóng nắp ⇒ đơn sẵn sàng lấy hàng.
+    @Test
+    void realDeliveryAsksTheDroneServoToReleaseThenClosesTheLid() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        assertEquals("REAL_OUTDOOR", session.getMode());
+
+        lockerResult(LOCKER, "open", session.getOpenCommandId(), "OPEN");
+
+        var lidOpened = droneCommands(mqtt).stream()
+                .filter(cmd -> "LID_OPENED".equals(cmd.get("eventType").asText())).findFirst().orElseThrow();
+        assertTrue(lidOpened.get("parcelRelease").asBoolean(), "giao thật không có lệnh nhả hàng");
+        assertFalse(lidOpened.has("dropSimulationSeconds"), "giao thật không được giả lập nhả hàng");
+        verify(mqtt, never()).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+        ArgumentCaptor<DroneLockerCommLog> logs = ArgumentCaptor.forClass(DroneLockerCommLog.class);
+        verify(commLogRepository, org.mockito.Mockito.atLeastOnce()).save(logs.capture());
+        assertTrue(logs.getAllValues().stream().anyMatch(log -> "DROP_PHASE_STARTED".equals(log.getEventType())
+                && DroneLockerCommunicationService.dropCommandLogId(session.getSessionId()).equals(log.getMessageId())));
+
+        deliverSigned(event("DROP_PHASE_COMPLETED", Map.of("sessionId", session.getSessionId(),
+                "releaseMethod", "SERVO", "releaseAttempts", 1, "servoOpenAngle", 180.0, "servoHoldSeconds", 5.0,
+                "releaseDurationSeconds", 6.6, "servoGpioPin", 18, "gpioBackend", "lgpio"), OffsetDateTime.now()));
+
+        assertEquals(DroneDeliverySession.CLOSE_LID_REQUESTED, session.getState());
+        // Nhật ký ghi số liệu thật của servo (giống MARKER_DETECTED ghi khoảng cách / độ lệch).
+        verify(commLogRepository, org.mockito.Mockito.atLeastOnce()).save(logs.capture());
+        assertTrue(logs.getAllValues().stream().anyMatch(log -> "DROP_PHASE_COMPLETED".equals(log.getEventType())
+                && "SUCCESS".equals(log.getProcessingStatus())
+                && log.getErrorMessage().contains("servo mở 180° · giữ 5 giây · 1 lần thử · chạy 6.6 giây · GPIO18 (lgpio)")),
+                "nhật ký nhả hàng thiếu số liệu servo");
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+        verify(commLogRepository).resolvePendingByMessageId(
+                DroneLockerCommunicationService.dropCommandLogId(session.getSessionId()), "SUCCESS");
+
+        lockerResult(LOCKER, "close", session.getCloseCommandId(), "CLOSED");
+        assertEquals(DroneDeliverySession.READY_FOR_PICKUP, session.getState());
+        assertEquals("STORING", order.getStatus());
+        assertNotNull(order.getPinCode());
+    }
+
+    /// Servo lỗi: đóng nắp cho an toàn nhưng KHÔNG coi là hàng đã vào ô; đơn không được tự giao lại.
+    @Test
+    void servoFailureClosesTheLidWithoutDeliveringTheOrder() throws Exception {
+        MqttClient mqtt = connectedMqtt();
+        lenient().when(orderRepository.findById(21L)).thenAnswer(call -> Optional.of(order));
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        lockerResult(LOCKER, "open", session.getOpenCommandId(), "OPEN");
+
+        String failure = event("PARCEL_RELEASE_FAILED", Map.of("sessionId", session.getSessionId(),
+                "errorCode", "SERVO_ERROR", "errorMessage", "RuntimeError: GPIO", "releaseAttempts", 2),
+                OffsetDateTime.now());
+        deliverSigned(failure);
+
+        assertEquals(DroneDeliverySession.CLOSE_LID_REQUESTED, session.getState());
+        assertEquals("PARCEL_RELEASE_FAILED", session.getErrorCode());
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+        verify(commLogRepository).resolvePendingByMessageId(
+                DroneLockerCommunicationService.dropCommandLogId(session.getSessionId()), "FAILED");
+        assertTrue(droneCommands(mqtt).stream().anyMatch(cmd -> "LID_CLOSING".equals(cmd.get("eventType").asText())));
+
+        // Pi gửi lại báo lỗi (chưa nhận LID_CLOSING): không đóng nắp lần nữa.
+        deliverSigned(event("PARCEL_RELEASE_FAILED", Map.of("sessionId", session.getSessionId(),
+                "errorCode", "SERVO_ERROR"), OffsetDateTime.now()));
+        verify(mqtt, times(1)).publish(eq("cabinet/" + LOCKER + "/command/close"), any(MqttMessage.class));
+
+        lockerResult(LOCKER, "close", session.getCloseCommandId(), "CLOSED");
+
+        assertEquals(DroneDeliverySession.PARCEL_RELEASE_FAILED, session.getState());
+        assertEquals("AWAITING_DISPATCH", order.getStatus(), "servo lỗi mà đơn được coi là đã vào ô");
+        assertEquals("ARRIVED", order.getDeliveryStage());
+        assertNull(order.getPinCode());
+        assertTrue(droneCommands(mqtt).stream()
+                .anyMatch(cmd -> "PARCEL_RELEASE_FAILED".equals(cmd.get("eventType").asText())));
+
+        // Không tự giao lại: drone thấy lại mã ⇒ từ chối, hỏi mục tiêu ⇒ NO_TARGET.
+        deliverSigned(marker(null, null));
+        assertEquals(1, sessions.size(), "servo lỗi mà vẫn mở nắp lần nữa");
+        deliverSigned(event("TARGET_REQUEST", Map.of(), OffsetDateTime.now()));
+        var noTarget = droneCommands(mqtt).stream()
+                .filter(cmd -> "NO_TARGET".equals(cmd.get("eventType").asText())).reduce((a, b) -> b).orElseThrow();
+        assertEquals(DroneLockerCommunicationService.PARCEL_RELEASE_FAILED_MESSAGE, noTarget.get("errorMessage").asText());
+    }
+
+    @Test
+    void releaseFailureWithoutAnOpenLidIsRejected() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+
+        deliverSigned(event("PARCEL_RELEASE_FAILED", Map.of("sessionId", session.getSessionId(),
+                "errorCode", "SERVO_ERROR"), OffsetDateTime.now()));
+
+        assertEquals(DroneDeliverySession.OPEN_LID_REQUESTED, session.getState());
+        assertNull(session.getCloseCommandId());
+    }
+
+    /// Drone chưa báo kết quả nhả hàng quá hạn: giao thật cũng được cảnh báo (trước chỉ đơn DEMO).
+    @Test
+    void overdueReleaseReportIsWarnedForRealDeliveriesToo() {
+        deliverSigned(marker(null, null));
+        DroneDeliverySession session = sessions.values().iterator().next();
+        lockerResult(LOCKER, "open", session.getOpenCommandId(), "OPEN");
+        session.setLidOpenedAt(LocalDateTime.now().minusSeconds(7 + DroneLockerCommunicationService.DROP_REPORT_GRACE_SECONDS + 1));
+
+        service.expireDropReports();
+
+        assertEquals(DroneDeliverySession.LID_OPENED, session.getState());
+        ArgumentCaptor<DroneLockerCommLog> logs = ArgumentCaptor.forClass(DroneLockerCommLog.class);
+        verify(commLogRepository, org.mockito.Mockito.atLeastOnce()).save(logs.capture());
+        assertEquals(1, logs.getAllValues().stream().filter(log -> "DROP_REPORT_TIMEOUT".equals(log.getEventType())).count());
+    }
+
+    @Test
+    void releaseSummaryListsOnlyTheFieldsTheDroneSent() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        assertEquals("servo mở 180° · giữ 5 giây · 2 lần thử · chạy 0.15 giây · GPIO18",
+                DroneLockerCommunicationService.releaseSummary(json.readTree(
+                        "{\"servoOpenAngle\":180.0,\"servoHoldSeconds\":5,\"releaseAttempts\":2,"
+                                + "\"releaseDurationSeconds\":0.150,\"servoGpioPin\":18,\"gpioBackend\":null}")));
+        assertEquals("", DroneLockerCommunicationService.releaseSummary(json.readTree("{\"releaseMethod\":\"SIMULATION\"}")));
+    }
+
+    @Test
+    void releaseCommandDependsOnTheSessionMode() {
+        assertEquals(Map.of("parcelRelease", true), service.parcelReleaseCommand("REAL_OUTDOOR"));
+        assertEquals(Map.of("parcelRelease", true, "dropSimulationSeconds", 7),
+                service.parcelReleaseCommand("INDOOR_ARUCO_DEMO"));
+        assertTrue(service.parcelReleaseCommand(DroneDeliverySession.MODE_LID_TEST).isEmpty(),
+                "thử nắp không có kiện để nhả");
     }
 
     // ------------------------------------------------------------------ chế độ thử nắp theo ArUco (không cần đơn)
