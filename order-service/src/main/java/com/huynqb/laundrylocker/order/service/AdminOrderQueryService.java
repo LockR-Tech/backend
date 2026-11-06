@@ -13,6 +13,7 @@ import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.LockerRef;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.PaymentInfo;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Person;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Receiver;
+import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Storage;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.StoreRef;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.TimelineEvent;
 import com.huynqb.laundrylocker.order.dto.admin.BoxInfo;
@@ -40,6 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -49,13 +51,16 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /// Tìm kiếm/chi tiết đơn cho trang admin. Mỗi trang kết quả: 1 truy vấn đơn + 2 truy
-/// vấn nạp theo lô (chi tiết, drone) + tối đa 5 lời gọi Feign theo lô.
+/// vấn nạp theo lô (chi tiết, drone, lịch sử của đơn EXPIRED) + tối đa 5 lời gọi Feign theo lô.
 @Service
 @RequiredArgsConstructor
 public class AdminOrderQueryService {
 
     public static final int MAX_PAGE_SIZE = 100;
-    static final Set<String> SORTABLE = Set.of("createdAt", "updatedAt", "totalPrice", "paidAt", "completedAt", "id");
+    static final Set<String> SORTABLE = Set.of(
+            "createdAt", "updatedAt", "totalPrice", "paidAt", "completedAt", "pickupDeadline", "id");
+    /// Đơn quá hạn lấy đã dời đồ vào kho (OrderService.moveToStorage).
+    static final String STORED_STATUS = "EXPIRED";
 
     private final LockerOrderRepository orderRepository;
     private final OrderDetailRepository detailRepository;
@@ -186,6 +191,7 @@ public class AdminOrderQueryService {
         Map<Long, List<OrderStatusHistory>> histories = withTimeline
                 ? orderIds.stream().collect(Collectors.toMap(id -> id, historyRepository::findByOrderIdOrderByCreatedAtAsc))
                 : Map.of();
+        Map<Long, OrderStatusHistory> storedEvents = storedEvents(orders, histories, withTimeline);
 
         Set<Long> userIds = new HashSet<>();
         Set<Long> lockerIds = new HashSet<>();
@@ -201,6 +207,7 @@ public class AdminOrderQueryService {
         }
         missions.values().forEach(m -> lockerIds.add(m.getSourceLockerId()));
         histories.values().forEach(list -> list.forEach(h -> userIds.add(h.getChangedByUserId())));
+        storedEvents.values().forEach(h -> userIds.add(h.getChangedByUserId()));
 
         Lookup<UserSummary> users = resolver.users(userIds);
         Lookup<LockerInfo> lockers = resolver.lockers(lockerIds);
@@ -217,8 +224,45 @@ public class AdminOrderQueryService {
         return orders.stream()
                 .map(order -> toResponse(order, now, details.getOrDefault(order.getId(), List.of()),
                         missions.get(order.getId()), withTimeline ? histories.get(order.getId()) : null,
-                        users, lockers, boxes, stores, payments))
+                        storedEvents.get(order.getId()), users, lockers, boxes, stores, payments))
                 .toList();
+    }
+
+    /// Dòng lịch sử chuyển sang EXPIRED gần nhất của từng đơn đang EXPIRED. Trang chi tiết đã nạp lịch sử
+    /// sẵn; danh sách nạp một truy vấn theo lô chỉ cho các đơn EXPIRED trong trang.
+    private Map<Long, OrderStatusHistory> storedEvents(
+            List<LockerOrder> orders, Map<Long, List<OrderStatusHistory>> loaded, boolean withTimeline) {
+        List<Long> storedIds = orders.stream()
+                .filter(o -> STORED_STATUS.equalsIgnoreCase(o.getStatus()))
+                .map(LockerOrder::getId)
+                .toList();
+        if (storedIds.isEmpty()) {
+            return Map.of();
+        }
+        List<OrderStatusHistory> rows = withTimeline
+                ? storedIds.stream().flatMap(id -> loaded.getOrDefault(id, List.of()).stream()).toList()
+                : historyRepository.findByOrderIdInOrderByCreatedAtAscIdAsc(storedIds);
+        Map<Long, OrderStatusHistory> latest = new HashMap<>();
+        for (OrderStatusHistory row : rows) {
+            if (STORED_STATUS.equalsIgnoreCase(row.getNewStatus())) {
+                // Lịch sử cũ → mới: dòng sau đè dòng trước.
+                latest.put(row.getOrderId(), row);
+            }
+        }
+        return latest;
+    }
+
+    private static Storage storage(LockerOrder o, OrderStatusHistory event, Lookup<UserSummary> users) {
+        if (!STORED_STATUS.equalsIgnoreCase(o.getStatus())) {
+            return null;
+        }
+        if (event == null) {
+            // Đơn cũ không còn dòng lịch sử: lấy mốc cập nhật cuối làm gần đúng.
+            return new Storage(o.getUpdatedAt(), null, null, null);
+        }
+        UserSummary actor = users.get(event.getChangedByUserId());
+        return new Storage(event.getCreatedAt(), event.getChangedByUserId(),
+                actor == null ? null : actor.fullName(), event.getNote());
     }
 
     private AdminOrderResponse toResponse(
@@ -227,6 +271,7 @@ public class AdminOrderQueryService {
             List<OrderDetailResponse> details,
             DroneMission mission,
             List<OrderStatusHistory> history,
+            OrderStatusHistory storedEvent,
             Lookup<UserSummary> users,
             Lookup<LockerInfo> lockers,
             Lookup<BoxInfo> boxes,
@@ -304,7 +349,8 @@ public class AdminOrderQueryService {
                 drone(o, mission, lockers),
                 history == null ? null : timeline(history, users),
                 o.getPointsUsed(),
-                o.getPointsDiscount());
+                o.getPointsDiscount(),
+                storage(o, storedEvent, users));
     }
 
     static Fees fees(LockerOrder o) {

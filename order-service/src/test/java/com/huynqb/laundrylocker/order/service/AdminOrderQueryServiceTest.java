@@ -205,6 +205,57 @@ class AdminOrderQueryServiceTest {
         assertEquals("Admin Kho", result.timeline().get(0).changedByName());
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void searchAddsStorageInfoForExpiredOrdersWithOneHistoryQuery() {
+        LockerOrder byJob = order(1L, "SEND", 44L);
+        byJob.setStatus("EXPIRED");
+        LockerOrder byAdmin = order(2L, "RENTAL", 46L);
+        byAdmin.setStatus("EXPIRED");
+        LockerOrder legacy = order(3L, "SEND", 44L);
+        legacy.setStatus("EXPIRED");
+        legacy.setUpdatedAt(LocalDateTime.of(2026, 9, 10, 8, 0));
+        LockerOrder active = order(4L, "SEND", 44L);
+
+        OrderStatusHistory oldExpiry = history(1L, "STORING", "EXPIRED", null, LocalDateTime.of(2026, 9, 11, 1, 5));
+        OrderStatusHistory reopened = history(1L, "EXPIRED", "STORING", 99L, LocalDateTime.of(2026, 9, 11, 2, 0));
+        OrderStatusHistory jobExpiry = history(1L, "STORING", "EXPIRED", null, LocalDateTime.of(2026, 9, 13, 1, 5));
+        OrderStatusHistory adminExpiry = history(2L, "STORING", "EXPIRED", 99L, LocalDateTime.of(2026, 9, 12, 9, 30));
+        adminExpiry.setNote("Admin chuyển đồ vào kho lưu trữ, ô đã giải phóng");
+
+        when(orderRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(byJob, byAdmin, legacy, active), PageRequest.of(0, 20), 4));
+        when(historyRepository.findByOrderIdInOrderByCreatedAtAscIdAsc(List.of(1L, 2L, 3L)))
+                .thenReturn(List.of(oldExpiry, reopened, adminExpiry, jobExpiry));
+        when(resolver.users(anyCollection())).thenReturn(lookup(Map.of(99L, user(99L, "Admin Kho"))));
+        when(resolver.lockers(anyCollection())).thenReturn(lookup(Map.of()));
+        when(resolver.boxes(anyCollection())).thenReturn(lookup(Map.of()));
+        when(resolver.stores(anyCollection())).thenReturn(lookup(Map.of()));
+        when(resolver.paymentSummaries(anyCollection())).thenReturn(lookup(Map.of()));
+
+        List<AdminOrderResponse> content = service.search(criteria(0, 20, "pickupDeadline,asc")).content();
+
+        AdminOrderResponse.Storage job = content.get(0).storage();
+        assertEquals(LocalDateTime.of(2026, 9, 13, 1, 5), job.storedAt());
+        assertNull(job.movedByUserId());
+        AdminOrderResponse.Storage admin = content.get(1).storage();
+        assertEquals(99L, admin.movedByUserId());
+        assertEquals("Admin Kho", admin.movedByName());
+        assertEquals(LocalDateTime.of(2026, 9, 10, 8, 0), content.get(2).storage().storedAt());
+        assertNull(content.get(3).storage());
+        verify(historyRepository, times(1)).findByOrderIdInOrderByCreatedAtAscIdAsc(anyCollection());
+    }
+
+    private OrderStatusHistory history(Long orderId, String from, String to, Long actorId, LocalDateTime at) {
+        OrderStatusHistory row = new OrderStatusHistory();
+        row.setOrderId(orderId);
+        row.setOldStatus(from);
+        row.setNewStatus(to);
+        row.setChangedByUserId(actorId);
+        row.setCreatedAt(at);
+        return row;
+    }
+
     private AdminOrderQueryService.SearchCriteria criteria(int page, int size, String sort) {
         return new AdminOrderQueryService.SearchCriteria(
                 page, size, null, null, null, null, null, null, null, null, null, null, sort);

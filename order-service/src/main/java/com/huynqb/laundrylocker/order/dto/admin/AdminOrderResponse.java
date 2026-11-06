@@ -88,7 +88,13 @@ public record AdminOrderResponse(
         List<TimelineEvent> timeline,
         /// Điểm thưởng đã dùng cho đơn và số tiền được giảm nhờ điểm (giống OrderResponse).
         Integer pointsUsed,
-        BigDecimal pointsDiscount) {
+        BigDecimal pointsDiscount,
+        /// Đơn EXPIRED (đồ đã dời vào kho vì quá hạn lấy): lúc vào kho và ai chuyển. null ở trạng thái khác.
+        Storage storage) {
+
+    /// storedAt: mốc chuyển sang EXPIRED gần nhất. movedByUserId/movedByName null ⇒ job quá hạn tự chuyển.
+    public record Storage(LocalDateTime storedAt, Long movedByUserId, String movedByName, String note) {
+    }
 
     public record Person(Long id, String fullName, String phoneNumber, String email, String status) {
     }
