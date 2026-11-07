@@ -16,6 +16,7 @@ import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderDetailRepository;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
+import com.huynqb.laundrylocker.order.repository.StorageHandoverRepository;
 import com.huynqb.laundrylocker.order.service.AdminReferenceResolver.Lookup;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,13 +60,14 @@ class AdminOrderQueryServiceTest {
     @Mock private DroneMissionRepository missionRepository;
     @Mock private AdminReferenceResolver resolver;
     @Mock private QrTokenService qrTokenService;
+    @Mock private StorageHandoverRepository handoverRepository;
 
     private AdminOrderQueryService service;
 
     @BeforeEach
     void setUp() {
         service = new AdminOrderQueryService(
-                orderRepository, detailRepository, historyRepository, missionRepository, resolver, qrTokenService);
+                orderRepository, detailRepository, historyRepository, missionRepository, resolver, qrTokenService, handoverRepository);
         service.setTime(new BusinessTime(ZoneOffset.UTC, BusinessTime.DEFAULT_BUSINESS_ZONE,
                 Clock.fixed(Instant.parse("2026-09-15T05:00:00Z"), ZoneOffset.UTC)));
     }

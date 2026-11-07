@@ -9,6 +9,7 @@ import com.huynqb.laundrylocker.order.dto.OrderDetailResponse;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.DroneInfo;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Fees;
+import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Handover;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.LockerRef;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.PaymentInfo;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Person;
@@ -25,11 +26,13 @@ import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderDetail;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
+import com.huynqb.laundrylocker.order.model.StorageHandover;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderDetailRepository;
 import com.huynqb.laundrylocker.order.repository.OrderSpecifications;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
+import com.huynqb.laundrylocker.order.repository.StorageHandoverRepository;
 import com.huynqb.laundrylocker.order.service.AdminReferenceResolver.Lookup;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -68,6 +71,7 @@ public class AdminOrderQueryService {
     private final DroneMissionRepository missionRepository;
     private final AdminReferenceResolver resolver;
     private final QrTokenService qrTokenService;
+    private final StorageHandoverRepository handoverRepository;
 
     private BusinessTime time = BusinessTime.system();
 
@@ -192,6 +196,13 @@ public class AdminOrderQueryService {
                 ? orderIds.stream().collect(Collectors.toMap(id -> id, historyRepository::findByOrderIdOrderByCreatedAtAsc))
                 : Map.of();
         Map<Long, OrderStatusHistory> storedEvents = storedEvents(orders, histories, withTimeline);
+        // Biên bản trao đồ lưu kho: chỉ trang chi tiết (một đơn) mới nạp.
+        Map<Long, StorageHandover> handovers = new HashMap<>();
+        if (withTimeline) {
+            orders.stream()
+                    .filter(o -> "COMPLETED".equalsIgnoreCase(o.getStatus()))
+                    .forEach(o -> handoverRepository.findByOrderId(o.getId()).ifPresent(h -> handovers.put(o.getId(), h)));
+        }
 
         Set<Long> userIds = new HashSet<>();
         Set<Long> lockerIds = new HashSet<>();
@@ -208,6 +219,7 @@ public class AdminOrderQueryService {
         missions.values().forEach(m -> lockerIds.add(m.getSourceLockerId()));
         histories.values().forEach(list -> list.forEach(h -> userIds.add(h.getChangedByUserId())));
         storedEvents.values().forEach(h -> userIds.add(h.getChangedByUserId()));
+        handovers.values().forEach(h -> userIds.add(h.getHandedOverByUserId()));
 
         Lookup<UserSummary> users = resolver.users(userIds);
         Lookup<LockerInfo> lockers = resolver.lockers(lockerIds);
@@ -224,7 +236,7 @@ public class AdminOrderQueryService {
         return orders.stream()
                 .map(order -> toResponse(order, now, details.getOrDefault(order.getId(), List.of()),
                         missions.get(order.getId()), withTimeline ? histories.get(order.getId()) : null,
-                        storedEvents.get(order.getId()), users, lockers, boxes, stores, payments))
+                        storedEvents.get(order.getId()), handovers.get(order.getId()), users, lockers, boxes, stores, payments))
                 .toList();
     }
 
@@ -272,6 +284,7 @@ public class AdminOrderQueryService {
             DroneMission mission,
             List<OrderStatusHistory> history,
             OrderStatusHistory storedEvent,
+            StorageHandover handover,
             Lookup<UserSummary> users,
             Lookup<LockerInfo> lockers,
             Lookup<BoxInfo> boxes,
@@ -350,7 +363,18 @@ public class AdminOrderQueryService {
                 history == null ? null : timeline(history, users),
                 o.getPointsUsed(),
                 o.getPointsDiscount(),
-                storage(o, storedEvent, users));
+                storage(o, storedEvent, users),
+                handover(handover, users));
+    }
+
+    private static Handover handover(StorageHandover h, Lookup<UserSummary> users) {
+        if (h == null) {
+            return null;
+        }
+        UserSummary staff = users.get(h.getHandedOverByUserId());
+        return new Handover(h.getHandedOverAt(), h.getHandedOverByUserId(), staff == null ? null : staff.fullName(),
+                h.getRecipientType(), h.getRecipientName(), h.getRecipientPhone(), h.getPhotoUrl(),
+                h.getCollectedAmount(), h.getCollectionMethod(), h.getNote());
     }
 
     static Fees fees(LockerOrder o) {
