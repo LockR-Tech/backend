@@ -471,6 +471,7 @@ class JwtGatewayFilterTest {
         for (MockServerHttpRequest.BaseBuilder<?> request : List.<MockServerHttpRequest.BaseBuilder<?>>of(
                 MockServerHttpRequest.post("/api/iot/ble/public-key"),
                 MockServerHttpRequest.post("/api/iot/ble-test/lockers/7/boxes/3/token"),
+                MockServerHttpRequest.post("/api/iot/ble/orders/21/token"),
                 MockServerHttpRequest.get("/api/iot/ble-test/lockers"))) {
             MockServerWebExchange exchange = MockServerWebExchange.from(request.build());
             AtomicBoolean chainCalled = new AtomicBoolean(false);
@@ -484,6 +485,12 @@ class JwtGatewayFilterTest {
         AtomicBoolean tokenForwarded = new AtomicBoolean(false);
         filter.filter(customerToken, chainThatMarks(tokenForwarded)).block();
         assertTrue(tokenForwarded.get(), "customer may ask for a BLE token; iot-service checks the grant");
+
+        MockServerWebExchange orderToken = exchangeWithBearer(
+                MockServerHttpRequest.post("/api/iot/ble/orders/21/token"), token("access", "CUSTOMER"));
+        AtomicBoolean orderTokenForwarded = new AtomicBoolean(false);
+        filter.filter(orderToken, chainThatMarks(orderTokenForwarded)).block();
+        assertTrue(orderTokenForwarded.get(), "customer asks for a BLE token of an order; order-service checks access");
 
         MockServerWebExchange customerGrant = exchangeWithBearer(
                 MockServerHttpRequest.post("/api/admin/iot/ble-test/lockers/7/users"), token("access", "CUSTOMER"));
