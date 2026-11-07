@@ -3,11 +3,13 @@ package com.huynqb.laundrylocker.order.controller;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.common.dto.PageResponse;
 import com.huynqb.laundrylocker.order.dto.OrderResponse;
+import com.huynqb.laundrylocker.order.dto.StorageHandoverRequest;
 import com.huynqb.laundrylocker.order.dto.UpdateOrderStatusRequest;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse;
 import com.huynqb.laundrylocker.order.dto.admin.OrderBriefResponse;
 import com.huynqb.laundrylocker.order.service.AdminOrderQueryService;
 import com.huynqb.laundrylocker.order.service.OrderService;
+import com.huynqb.laundrylocker.order.service.StorageHandoverService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,6 +31,7 @@ public class AdminOrderController {
 
     private final AdminOrderQueryService queryService;
     private final OrderService orderService;
+    private final StorageHandoverService storageHandoverService;
 
     /// status/type/paymentStatus nhận nhiều giá trị: `status=STORING,EXPIRED` hoặc lặp tham số.
     @GetMapping("/api/admin/orders/search")
@@ -64,6 +67,17 @@ public class AdminOrderController {
             @RequestHeader("X-User-Id") Long adminId) {
         return ApiResponse.ok(
                 "ORDER_STATUS_UPDATED", "Order status updated", orderService.updateStatus(id, request.status(), adminId));
+    }
+
+    /// Trao đồ lưu kho (EXPIRED) tại quầy và chốt đơn: đối chiếu SĐT người nhận, ảnh xác minh,
+    /// còn nợ thì phải khai đã thu đủ. Thay cho `PUT /status` COMPLETED trên trang /admin/storage.
+    @PostMapping("/api/admin/orders/{id}/storage-handover")
+    public ApiResponse<OrderResponse> storageHandover(
+            @PathVariable Long id,
+            @Valid @RequestBody StorageHandoverRequest request,
+            @RequestHeader("X-User-Id") Long adminId) {
+        return ApiResponse.ok(
+                "ORDER_STORAGE_HANDED_OVER", "Storage items handed over", storageHandoverService.handOver(id, request, adminId));
     }
 
     /// Admin gỡ sự cố ô trên đơn bằng tay — dùng cho đơn được đánh dấu từ lịch sử khi nâng cấp mà phiếu

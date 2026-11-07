@@ -254,6 +254,31 @@ class OrderServiceBenefitsTest {
     }
 
     @Test
+    void customerCannotCloseOrderWhoseItemsAreInStorage() {
+        LockerOrder order = existingOrder("EXPIRED");
+
+        assertEquals("ORDER_IN_STORAGE_PICKUP_AT_COUNTER", assertThrows(BusinessException.class,
+                () -> orderService.complete(21L, 44L)).getCode());
+
+        order.setType("RENTAL");
+        assertEquals("ORDER_IN_STORAGE_PICKUP_AT_COUNTER", assertThrows(BusinessException.class,
+                () -> orderService.pickupStorage(21L, 44L)).getCode());
+        assertEquals("EXPIRED", order.getStatus());
+    }
+
+    @Test
+    void adminStatusChangeCannotCloseOrderInStorageButHandoverCheckoutCan() {
+        LockerOrder order = existingOrder("EXPIRED");
+
+        assertEquals("ORDER_IN_STORAGE_HANDOVER_REQUIRED", assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(21L, "COMPLETED", 9L)).getCode());
+        assertEquals("EXPIRED", order.getStatus());
+
+        orderService.checkout(21L, 9L, "Trao trả đồ lưu kho tại quầy");
+        assertEquals("COMPLETED", order.getStatus());
+    }
+
+    @Test
     void adminCannotCancelDroneOrderAfterParcelPickedUp() {
         LockerOrder order = existingOrder("AWAITING_DISPATCH");
         order.setType("DRONE_DELIVERY");

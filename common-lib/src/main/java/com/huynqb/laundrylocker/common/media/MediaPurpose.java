@@ -12,7 +12,9 @@ public enum MediaPurpose {
     REPORT_EVIDENCE("reports", false),
     DRONE_PICKUP("drone-pickups", false),
     STORE_IMAGE("stores", true),
-    PROMOTION_IMAGE("promotions", true);
+    PROMOTION_IMAGE("promotions", true),
+    /// Ảnh xác minh lúc admin trao đồ lưu kho tại quầy (người nhận cầm kiện).
+    STORAGE_HANDOVER("storage-handovers", true);
 
     private final String folder;
     private final boolean adminOnly;

@@ -76,8 +76,7 @@ public class OrderService {
             "AWAITING_DISPATCH", Set.of("CANCELED"),
             "STORING", Set.of("COMPLETED", "EXPIRED"),
             "RETURNED", Set.of("COMPLETED", "EXPIRED"),
-            "READY", Set.of("COMPLETED"),
-            "EXPIRED", Set.of("COMPLETED"));
+            "READY", Set.of("COMPLETED"));
 
     private final LockerOrderRepository orderRepository;
     private final OrderDetailRepository detailRepository;
@@ -161,6 +160,12 @@ public class OrderService {
         LockerOrder order = orderRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Order", id));
         String current = order.getStatus() == null ? "" : order.getStatus().toUpperCase();
         String target = status == null ? "" : status.trim().toUpperCase();
+        if ("EXPIRED".equals(current)) {
+            // Đồ đang ở kho: chỉ đóng qua trao trả tại quầy (đối chiếu người nhận + ảnh), xem StorageHandoverService.
+            throw new BusinessException(
+                    "ORDER_IN_STORAGE_HANDOVER_REQUIRED",
+                    "Đồ của đơn đang ở kho — trao trả tại trang Đồ lưu kho (đối chiếu người nhận và chụp ảnh xác minh)");
+        }
         Set<String> allowed = STAFF_TRANSITIONS.getOrDefault(current, Set.of());
         if (!allowed.contains(target)) {
             throw new BusinessException(
@@ -1014,7 +1019,8 @@ public class OrderService {
     public OrderResponse complete(Long id, Long userId) {
         LockerOrder order = find(id);
         assertOwnerOrReceiver(order, userId);
-        validateStatus(order, Set.of("STORING", "RETURNED", "EXPIRED"));
+        assertNotInStorage(order);
+        validateStatus(order, Set.of("STORING", "RETURNED"));
         // Đồ còn kẹt trong ô hỏng: tự bấm "đã lấy đồ" sẽ đóng đơn và nhả ô (cấp cho khách khác)
         // trong khi đồ vẫn bên trong. KTV kết thúc bằng bàn giao trực tiếp / chuyển ô. Ô mới chờ KTV kiểm tra
         // thì khách vẫn lấy đồ được (phí dừng ở mốc báo).
@@ -1320,10 +1326,11 @@ public class OrderService {
         if (!storageLike) {
             throw new BusinessException("ORDER_STATUS_INVALID", "Only storage/rental orders can use pickup-storage");
         }
+        assertNotInStorage(order);
         validateStatus(order,
                 "RENTAL".equalsIgnoreCase(order.getType()) || "RENTAL".equalsIgnoreCase(order.getServiceCategory())
-                        ? Set.of("STORING", "RETURNED", "EXPIRED")
-                        : Set.of("STORING", "INITIALIZED", "RETURNED", "EXPIRED"));
+                        ? Set.of("STORING", "RETURNED")
+                        : Set.of("STORING", "INITIALIZED", "RETURNED"));
         // Như complete: kết thúc thuê lúc đồ còn kẹt sẽ nhả ô có đồ bên trong.
         assertNoBlockingBoxIncident(order);
         BigDecimal overtime = calculatePickupOvertimeFee(order);
@@ -2692,6 +2699,16 @@ public class OrderService {
                     "Ô của đơn đang chờ KTV xử lý sự cố — đồ vẫn được giữ trong ô và phí quá giờ đang tạm dừng. "
                             + "Lock.R sẽ báo khi lấy được đồ.",
                     HttpStatus.CONFLICT);
+        }
+    }
+
+    /// Đơn EXPIRED: đồ đã dời khỏi tủ vào kho tại quầy. Khách không tự đóng đơn được (đồ chưa tới tay) —
+    /// vẫn trả phí trong app được, rồi tới quầy nhận; nhân viên đóng đơn bằng trao trả có xác minh.
+    private static void assertNotInStorage(LockerOrder order) {
+        if ("EXPIRED".equalsIgnoreCase(order.getStatus())) {
+            throw new BusinessException(
+                    "ORDER_IN_STORAGE_PICKUP_AT_COUNTER",
+                    "Đồ đã được chuyển vào kho. Vui lòng tới quầy để nhận, mang theo điện thoại đã đăng ký.");
         }
     }
 

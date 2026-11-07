@@ -9,10 +9,12 @@ import com.huynqb.laundrylocker.order.dto.OrderDetailResponse;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.DroneInfo;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Fees;
+import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Handover;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.LockerRef;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.PaymentInfo;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Person;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Receiver;
+import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.Storage;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.StoreRef;
 import com.huynqb.laundrylocker.order.dto.admin.AdminOrderResponse.TimelineEvent;
 import com.huynqb.laundrylocker.order.dto.admin.BoxInfo;
@@ -24,11 +26,13 @@ import com.huynqb.laundrylocker.order.model.DroneMission;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.model.OrderDetail;
 import com.huynqb.laundrylocker.order.model.OrderStatusHistory;
+import com.huynqb.laundrylocker.order.model.StorageHandover;
 import com.huynqb.laundrylocker.order.repository.DroneMissionRepository;
 import com.huynqb.laundrylocker.order.repository.LockerOrderRepository;
 import com.huynqb.laundrylocker.order.repository.OrderDetailRepository;
 import com.huynqb.laundrylocker.order.repository.OrderSpecifications;
 import com.huynqb.laundrylocker.order.repository.OrderStatusHistoryRepository;
+import com.huynqb.laundrylocker.order.repository.StorageHandoverRepository;
 import com.huynqb.laundrylocker.order.service.AdminReferenceResolver.Lookup;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -40,6 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -49,13 +54,16 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /// Tìm kiếm/chi tiết đơn cho trang admin. Mỗi trang kết quả: 1 truy vấn đơn + 2 truy
-/// vấn nạp theo lô (chi tiết, drone) + tối đa 5 lời gọi Feign theo lô.
+/// vấn nạp theo lô (chi tiết, drone, lịch sử của đơn EXPIRED) + tối đa 5 lời gọi Feign theo lô.
 @Service
 @RequiredArgsConstructor
 public class AdminOrderQueryService {
 
     public static final int MAX_PAGE_SIZE = 100;
-    static final Set<String> SORTABLE = Set.of("createdAt", "updatedAt", "totalPrice", "paidAt", "completedAt", "id");
+    static final Set<String> SORTABLE = Set.of(
+            "createdAt", "updatedAt", "totalPrice", "paidAt", "completedAt", "pickupDeadline", "id");
+    /// Đơn quá hạn lấy đã dời đồ vào kho (OrderService.moveToStorage).
+    static final String STORED_STATUS = "EXPIRED";
 
     private final LockerOrderRepository orderRepository;
     private final OrderDetailRepository detailRepository;
@@ -63,6 +71,7 @@ public class AdminOrderQueryService {
     private final DroneMissionRepository missionRepository;
     private final AdminReferenceResolver resolver;
     private final QrTokenService qrTokenService;
+    private final StorageHandoverRepository handoverRepository;
 
     private BusinessTime time = BusinessTime.system();
 
@@ -186,6 +195,14 @@ public class AdminOrderQueryService {
         Map<Long, List<OrderStatusHistory>> histories = withTimeline
                 ? orderIds.stream().collect(Collectors.toMap(id -> id, historyRepository::findByOrderIdOrderByCreatedAtAsc))
                 : Map.of();
+        Map<Long, OrderStatusHistory> storedEvents = storedEvents(orders, histories, withTimeline);
+        // Biên bản trao đồ lưu kho: chỉ trang chi tiết (một đơn) mới nạp.
+        Map<Long, StorageHandover> handovers = new HashMap<>();
+        if (withTimeline) {
+            orders.stream()
+                    .filter(o -> "COMPLETED".equalsIgnoreCase(o.getStatus()))
+                    .forEach(o -> handoverRepository.findByOrderId(o.getId()).ifPresent(h -> handovers.put(o.getId(), h)));
+        }
 
         Set<Long> userIds = new HashSet<>();
         Set<Long> lockerIds = new HashSet<>();
@@ -201,6 +218,8 @@ public class AdminOrderQueryService {
         }
         missions.values().forEach(m -> lockerIds.add(m.getSourceLockerId()));
         histories.values().forEach(list -> list.forEach(h -> userIds.add(h.getChangedByUserId())));
+        storedEvents.values().forEach(h -> userIds.add(h.getChangedByUserId()));
+        handovers.values().forEach(h -> userIds.add(h.getHandedOverByUserId()));
 
         Lookup<UserSummary> users = resolver.users(userIds);
         Lookup<LockerInfo> lockers = resolver.lockers(lockerIds);
@@ -217,8 +236,45 @@ public class AdminOrderQueryService {
         return orders.stream()
                 .map(order -> toResponse(order, now, details.getOrDefault(order.getId(), List.of()),
                         missions.get(order.getId()), withTimeline ? histories.get(order.getId()) : null,
-                        users, lockers, boxes, stores, payments))
+                        storedEvents.get(order.getId()), handovers.get(order.getId()), users, lockers, boxes, stores, payments))
                 .toList();
+    }
+
+    /// Dòng lịch sử chuyển sang EXPIRED gần nhất của từng đơn đang EXPIRED. Trang chi tiết đã nạp lịch sử
+    /// sẵn; danh sách nạp một truy vấn theo lô chỉ cho các đơn EXPIRED trong trang.
+    private Map<Long, OrderStatusHistory> storedEvents(
+            List<LockerOrder> orders, Map<Long, List<OrderStatusHistory>> loaded, boolean withTimeline) {
+        List<Long> storedIds = orders.stream()
+                .filter(o -> STORED_STATUS.equalsIgnoreCase(o.getStatus()))
+                .map(LockerOrder::getId)
+                .toList();
+        if (storedIds.isEmpty()) {
+            return Map.of();
+        }
+        List<OrderStatusHistory> rows = withTimeline
+                ? storedIds.stream().flatMap(id -> loaded.getOrDefault(id, List.of()).stream()).toList()
+                : historyRepository.findByOrderIdInOrderByCreatedAtAscIdAsc(storedIds);
+        Map<Long, OrderStatusHistory> latest = new HashMap<>();
+        for (OrderStatusHistory row : rows) {
+            if (STORED_STATUS.equalsIgnoreCase(row.getNewStatus())) {
+                // Lịch sử cũ → mới: dòng sau đè dòng trước.
+                latest.put(row.getOrderId(), row);
+            }
+        }
+        return latest;
+    }
+
+    private static Storage storage(LockerOrder o, OrderStatusHistory event, Lookup<UserSummary> users) {
+        if (!STORED_STATUS.equalsIgnoreCase(o.getStatus())) {
+            return null;
+        }
+        if (event == null) {
+            // Đơn cũ không còn dòng lịch sử: lấy mốc cập nhật cuối làm gần đúng.
+            return new Storage(o.getUpdatedAt(), null, null, null);
+        }
+        UserSummary actor = users.get(event.getChangedByUserId());
+        return new Storage(event.getCreatedAt(), event.getChangedByUserId(),
+                actor == null ? null : actor.fullName(), event.getNote());
     }
 
     private AdminOrderResponse toResponse(
@@ -227,6 +283,8 @@ public class AdminOrderQueryService {
             List<OrderDetailResponse> details,
             DroneMission mission,
             List<OrderStatusHistory> history,
+            OrderStatusHistory storedEvent,
+            StorageHandover handover,
             Lookup<UserSummary> users,
             Lookup<LockerInfo> lockers,
             Lookup<BoxInfo> boxes,
@@ -304,7 +362,19 @@ public class AdminOrderQueryService {
                 drone(o, mission, lockers),
                 history == null ? null : timeline(history, users),
                 o.getPointsUsed(),
-                o.getPointsDiscount());
+                o.getPointsDiscount(),
+                storage(o, storedEvent, users),
+                handover(handover, users));
+    }
+
+    private static Handover handover(StorageHandover h, Lookup<UserSummary> users) {
+        if (h == null) {
+            return null;
+        }
+        UserSummary staff = users.get(h.getHandedOverByUserId());
+        return new Handover(h.getHandedOverAt(), h.getHandedOverByUserId(), staff == null ? null : staff.fullName(),
+                h.getRecipientType(), h.getRecipientName(), h.getRecipientPhone(), h.getPhotoUrl(),
+                h.getCollectedAmount(), h.getCollectionMethod(), h.getNote());
     }
 
     static Fees fees(LockerOrder o) {
