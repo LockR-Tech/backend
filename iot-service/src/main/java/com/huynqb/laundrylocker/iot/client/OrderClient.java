@@ -1,6 +1,8 @@
 package com.huynqb.laundrylocker.iot.client;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.dto.OrderSummary;
+import com.huynqb.laundrylocker.iot.dto.OrderBleAccessView;
 import com.huynqb.laundrylocker.iot.dto.OrderLookupResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.*;
@@ -10,6 +12,13 @@ public interface OrderClient {
 
     @GetMapping("/internal/orders/by-access")
     ApiResponse<OrderLookupResponse> getByAccess(@RequestParam("code") String code);
+
+    /// Mở ô theo đơn qua Bluetooth (F3-G11): tài khoản `userId` có được mở ô của đơn lúc này không, để làm gì.
+    @GetMapping("/internal/orders/{orderId}/ble-access")
+    ApiResponse<OrderBleAccessView> bleAccess(@PathVariable Long orderId, @RequestParam("userId") Long userId);
+
+    @GetMapping("/internal/orders/{orderId}")
+    ApiResponse<OrderSummary> summary(@PathVariable Long orderId);
 
     // Các lệnh dưới gọi thẳng order-service (không qua gateway) thay mặt chủ đơn, sau
     // khi iot-service đã xác thực mã và thấy ô của đơn vừa được mở thật.

@@ -445,6 +445,24 @@ public class IotService {
         completeIfPickup(orderId, orderStatus, orderType, orderUserId);
     }
 
+    /// Mở ô theo đơn qua Bluetooth (F3-G11): Pi báo đã mở ô bằng mã của đơn ⇒ cùng các bước sau mở như
+    /// `/api/iot/unlock` — báo locker-service ô đã mở (phát realtime) rồi chuyển trạng thái đơn qua [#afterOpen].
+    /// `orderStatus` là trạng thái đơn tương ứng việc đã mở (bỏ hàng ⇒ INITIALIZED). Best-effort: cửa đã mở thật,
+    /// lỗi ở đây chỉ ghi log.
+    public void afterBleOrderOpened(Long boxId, Long orderId, String orderStatus, String orderType, Long orderUserId) {
+        try {
+            lockerClient.openBox(boxId);
+        } catch (Exception ex) {
+            log.warn("Could not notify locker-service that box {} opened over Bluetooth: {}", boxId, ex.getMessage());
+        }
+        afterOpen(orderId, orderStatus, orderType, orderUserId);
+    }
+
+    /// Tủ báo mở ô thất bại vì lỗi của chính ô (JAMMED…) ⇒ ô FAULT + phiếu sự cố, như đường mở từ xa.
+    public void reportBoxFault(Long boxId, String errorCode, String errorMessage) {
+        reportHardwareFault(boxId, errorCode, errorMessage);
+    }
+
     /// Bước tiếp theo trên kiosk/app sau khi ô mở: xác nhận bỏ hàng, dùng ô thuê, hay chỉ lấy hàng.
     static String nextStep(String orderType, String orderStatus) {
         if ("INITIALIZED".equalsIgnoreCase(orderStatus)) {

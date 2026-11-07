@@ -219,7 +219,27 @@ class LockerMqttServiceTest {
                 "{\"eventId\":\"e-1\",\"action\":\"LID_CLOSE\",\"axis\":1,\"revolutions\":12.5,\"status\":\"OK\"}");
         service.route("cabinet/7/event/control", event);
         verify(logs).recordFromCabinet(7L, event);
+        verify(context, never()).getBean(BleOrderService.class);
         assertTrue(java.util.Arrays.asList(LockerMqttService.SUBSCRIPTIONS).contains("cabinet/+/event/control"));
+    }
+
+    /// Mở ô bằng mã Bluetooth theo đơn (F3-G11): ghi nhật ký điều khiển tủ rồi chuyển cho BleOrderService —
+    /// kể cả khi ghi nhật ký lỗi.
+    @Test
+    void bluetoothOpenEventsAlsoReachTheOrderFlow() throws Exception {
+        CabinetControlLogService logs = mock(CabinetControlLogService.class);
+        BleOrderService bleOrders = mock(BleOrderService.class);
+        when(context.getBean(CabinetControlLogService.class)).thenReturn(logs);
+        when(context.getBean(BleOrderService.class)).thenReturn(bleOrders);
+        when(logs.recordFromCabinet(any(), any())).thenThrow(new IllegalStateException("db down"));
+        JsonNode event = objectMapper.readTree("""
+                {"eventId":"e-2","lockerId":"7","action":"BOX_OPEN_BLE","status":"OK","slotIndex":2,
+                 "nonce":"0011223344556677","userId":10,"boxNumber":3}""");
+
+        service.route("cabinet/7/event/control", event);
+
+        verify(logs).recordFromCabinet(7L, event);
+        verify(bleOrders).onCabinetEvent(7L, event);
     }
 
     private static <T> java.util.List<T> iterableToList(java.util.Iterator<T> iterator) {
