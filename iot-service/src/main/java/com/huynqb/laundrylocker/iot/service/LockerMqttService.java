@@ -264,8 +264,7 @@ public class LockerMqttService {
                 onBoxStatus(parseLongOrNull(segments[1]), data);
             } else if (segments.length == 4 && "cabinet".equals(segments[0])
                     && "event".equals(segments[2]) && "control".equals(segments[3])) {
-                applicationContext.getBean(CabinetControlLogService.class)
-                        .recordFromCabinet(parseLongOrNull(segments[1]), data);
+                onControlEvent(parseLongOrNull(segments[1]), data);
             } else if (segments.length == 4 && "iot".equals(segments[0])) {
                 GatewayProvisioningService provisioning = applicationContext.getBean(GatewayProvisioningService.class);
                 String kind = segments[2] + "/" + segments[3];
@@ -278,6 +277,20 @@ public class LockerMqttService {
             }
         } catch (Exception e) {
             log.error("Error handling MQTT message on topic {}: {}", topic, e.getMessage());
+        }
+    }
+
+    /// `cabinet/{lockerId}/event/control` — luôn ghi nhật ký điều khiển tủ; mở ô bằng mã Bluetooth theo đơn
+    /// (`BOX_OPEN_BLE` kèm `nonce`) thì chuyển tiếp trạng thái đơn (F3-G11). Lỗi ghi nhật ký không chặn bước
+    /// sau; sự kiện lặp bị bỏ qua ở cả hai chỗ.
+    private void onControlEvent(Long lockerId, JsonNode data) {
+        try {
+            applicationContext.getBean(CabinetControlLogService.class).recordFromCabinet(lockerId, data);
+        } catch (Exception e) {
+            log.error("Could not record cabinet control event from locker {}: {}", lockerId, e.getMessage());
+        }
+        if (BleOrderService.ACTION_BOX_OPEN_BLE.equalsIgnoreCase(text(data, "action"))) {
+            applicationContext.getBean(BleOrderService.class).onCabinetEvent(lockerId, data);
         }
     }
 

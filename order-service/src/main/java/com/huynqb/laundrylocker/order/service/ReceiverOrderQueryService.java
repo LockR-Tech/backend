@@ -267,6 +267,17 @@ public class ReceiverOrderQueryService {
         return userId != null && viewerOf(order, userId, callerPhone(userId)) != null;
     }
 
+    /// Người gọi đang giữ mã lấy hàng của đơn — đúng người thấy PIN/QR ở màn người nhận / người lấy hộ.
+    /// Đơn đã ủy quyền thì chỉ người lấy hộ; người nhận gốc không còn. Cùng quy tắc với [#detail].
+    @Transactional(readOnly = true)
+    public boolean holdsPickupCode(LockerOrder order, Long userId) {
+        if (order == null || userId == null) {
+            return false;
+        }
+        Viewer viewer = viewerOf(order, userId, callerPhone(userId));
+        return viewer != null && viewer.view().pinVisible();
+    }
+
     private String callerPhone(Long userId) {
         try {
             ApiResponse<UserSummary> response = userClient.getUser(userId);
