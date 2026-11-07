@@ -319,6 +319,24 @@ class ReceiverOrderQueryServiceTest {
         assertNull(detail.delegateNote());
     }
 
+    /// Mở ô theo đơn qua Bluetooth: chỉ người đang thấy mã lấy hàng mới được xin mã mở ô.
+    @Test
+    void pickupCodeHolderIsTheDelegateOnceTheOrderIsDelegated() {
+        LockerOrder order = sendOrder("STORING");
+        order.setReceiverId(55L);
+        callerPhone("0901234567");
+        assertTrue(service.holdsPickupCode(order, 55L));
+
+        order.setDelegatePhone("0907654321");
+        assertFalse(service.holdsPickupCode(order, 55L));
+
+        callerPhone("0907654321");
+        assertTrue(service.holdsPickupCode(order, 66L));
+        callerPhone("0911111111");
+        assertFalse(service.holdsPickupCode(order, 77L));
+        assertFalse(service.holdsPickupCode(order, 10L));
+    }
+
     @Test
     void someoneElsesOrderIsNotFoundRatherThanForbidden() {
         callerPhone("0911111111");

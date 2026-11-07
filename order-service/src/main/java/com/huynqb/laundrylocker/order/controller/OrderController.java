@@ -6,6 +6,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.media.MediaUpload;
 import com.huynqb.laundrylocker.order.dto.BoxIncidentNotice;
 import com.huynqb.laundrylocker.order.dto.*;
+import com.huynqb.laundrylocker.order.service.BleOrderAccessService;
 import com.huynqb.laundrylocker.order.service.DroneOrderMaintenanceService;
 import com.huynqb.laundrylocker.order.service.DroneDeliveryQueryService;
 import com.huynqb.laundrylocker.order.service.DroneWeatherQueryService;
@@ -35,6 +36,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class OrderController {
 
+    private final BleOrderAccessService bleOrderAccessService;
     private final DroneOrderMaintenanceService droneOrderMaintenanceService;
     private final DroneDeliveryQueryService droneDeliveryQueryService;
     private final com.huynqb.laundrylocker.order.service.DroneFlightTrackRecorder flightTrackRecorder;
@@ -153,6 +155,12 @@ public class OrderController {
     @GetMapping("/internal/orders/by-access")
     public ApiResponse<OrderResponse> getByAccessInternal(@RequestParam String code) {
         return ApiResponse.ok(orderService.getByAccess(code));
+    }
+
+    /// iot-service hỏi trước khi cấp mã mở ô qua Bluetooth cho đơn (F3-G11) — luôn 200, quyết định trong body.
+    @GetMapping("/internal/orders/{id}/ble-access")
+    public ApiResponse<OrderBleAccessResponse> bleAccess(@PathVariable Long id, @RequestParam Long userId) {
+        return ApiResponse.ok(bleOrderAccessService.check(id, userId));
     }
 
     // iot-service báo ô của đơn đã được mở để bỏ hàng (chặn ở gateway như mọi /internal).

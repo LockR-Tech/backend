@@ -2761,6 +2761,17 @@ public class OrderService {
         }
     }
 
+    /// Mở ô bằng mã Bluetooth theo đơn (F3-G11): cùng điều kiện thanh toán như tra mã PIN/QR
+    /// (`getByAccess`) — ném `ORDER_UNPAID` / `DRONE_PAYMENT_REQUIRED_BEFORE_PICKUP`.
+    public void assertPaidBeforeAccess(LockerOrder order) {
+        assertPaidBeforePickup(order);
+    }
+
+    /// Lý do mã của đơn tạm chưa mở được ô, tính đúng như `accessBlockReason` của `/internal/orders/by-access`.
+    public String accessBlockReason(LockerOrder order) {
+        return OrderAccessPolicy.blockReason(order, rules, LocalDateTime.now(), calculatePickupOvertimeFee(order));
+    }
+
     private void assertPaidBeforePickup(LockerOrder order) {
         if ("DRONE_DELIVERY".equalsIgnoreCase(order.getType())) {
             if (!"READY_FOR_PICKUP".equalsIgnoreCase(order.getDeliveryStage())) {
