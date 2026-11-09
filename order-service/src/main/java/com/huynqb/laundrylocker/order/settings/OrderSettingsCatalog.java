@@ -103,6 +103,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public static final String DRONE_PICKUP_REOFFER_COOLDOWN_MINUTES = "app.order.drone-pickup-reoffer-cooldown-minutes";
     public static final String DRONE_PICKUP_CONFIRM_MAX_DISTANCE = "app.order.drone-pickup-confirm-max-distance-meters";
     // Key thời tiết, nắp tủ, telemetry giữ tên property cũ (trước chỉ đặt được bằng biến môi trường).
+    public static final String WEATHER_CHECK_ENABLED = "app.drone.weather.check-enabled";
     public static final String WEATHER_MAX_WIND_SPEED = "app.drone.weather.max-wind-speed-kmh";
     public static final String WEATHER_MAX_WIND_GUST = "app.drone.weather.max-wind-gust-kmh";
     public static final String WEATHER_MIN_VISIBILITY = "app.drone.weather.min-visibility-meters";
@@ -326,6 +327,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
 
                 // === THỜI TIẾT & ĐIỀU KIỆN BAY ===
                 // Chỉnh theo khung drone thật và giấy phép bay. Áp cho đặt đơn, đội bay phóng drone và bảng thời tiết.
+                bool(WEATHER_CHECK_ENABLED, WEATHER, "Kiểm tra thời tiết trước khi bay",
+                        "Bật (mặc định): đặt đơn, phóng drone, chặn đơn đang chờ và tự dừng trạm đều theo các ngưỡng bên "
+                                + "dưới. Tắt: chỉ để thử nghiệm khi trời mưa bão — vẫn hiện dự báo nhưng không chặn bay, "
+                                + "trạm do hệ thống dừng vì thời tiết được mở lại. Nhớ bật lại sau khi thử.", true),
                 integer(WEATHER_MAX_WIND_SPEED, WEATHER, "Tốc độ gió tối đa",
                         "Dự báo gió (10 m) trên tuyến vượt mức này thì không bay.", 30, 1, 150, "km/h"),
                 integer(WEATHER_MAX_WIND_GUST, WEATHER, "Gió giật tối đa",

@@ -161,7 +161,13 @@ public class OrderRules {
             double maxPrecipitationMm,
             boolean blockPrecipitationCodes,
             int windowMinutes,
-            boolean blockWhenUnavailable) {
+            boolean blockWhenUnavailable,
+            boolean checkEnabled) {
+    }
+
+    /// Tắt = admin đang thử nghiệm khi trời xấu: vẫn lấy dự báo để hiển thị nhưng không chặn bay ở đâu cả.
+    public boolean weatherCheckEnabled() {
+        return settings.getBoolean(WEATHER_CHECK_ENABLED);
     }
 
     public boolean weatherAutoStationPause() {
@@ -176,7 +182,8 @@ public class OrderRules {
                 settings.getDecimal(WEATHER_MAX_PRECIPITATION).doubleValue(),
                 settings.getBoolean(WEATHER_BLOCK_PRECIPITATION_CODES),
                 settings.getInt(WEATHER_WINDOW_MINUTES),
-                settings.getBoolean(WEATHER_BLOCK_WHEN_UNAVAILABLE));
+                settings.getBoolean(WEATHER_BLOCK_WHEN_UNAVAILABLE),
+                weatherCheckEnabled());
     }
 
     public int droneReturnMinBatteryPercent() {

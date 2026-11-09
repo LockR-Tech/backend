@@ -19,6 +19,9 @@ import java.time.LocalDateTime;
  * thì để admin tự mở. Không có dữ liệu thời tiết (UNAVAILABLE) không đổi gì: bước kiểm tra lúc đặt đơn / phóng vẫn
  * chặn theo cấu hình, còn dừng trạm vì nguồn dự báo trục trặc thì dễ bật tắt liên tục.
  *
+ * <p>Admin tắt kiểm tra thời tiết (thử nghiệm): mọi dự báo trả về `safe` nên job không dừng trạm nào và mở lại các
+ * trạm hệ thống đã dừng vì thời tiết; lệnh dừng của admin vẫn giữ.
+ *
  * <p>Chặn bay theo tuyến lúc đặt đơn / phóng drone vẫn là chốt chặn chính; job này để admin, KTV và khách thấy
  * trạm nào đang không bay được, và để lịch sử dừng trạm ghi lại các đợt thời tiết xấu.
  */
@@ -36,7 +39,9 @@ public class DroneStationWeatherGuard {
 
     @Scheduled(cron = "${app.drone.weather.station-guard-cron:0 */5 * * * *}")
     public void guardScheduled() {
-        if (!rules.weatherAutoStationPause()) {
+        // Tắt kiểm tra thời tiết ⇒ vẫn chạy để mở lại các trạm hệ thống đã dừng vì thời tiết (dự báo lúc này luôn
+        // `safe`), dù admin đã tắt tự dừng trạm.
+        if (!rules.weatherAutoStationPause() && rules.weatherCheckEnabled()) {
             return;
         }
         try {
@@ -65,7 +70,8 @@ public class DroneStationWeatherGuard {
 
     private boolean apply(DroneWeatherViews.LockerWeather station) {
         DroneWeatherAssessment weather = station.weather();
-        if (weather == null || weather.unavailable()) {
+        // Tắt kiểm tra thời tiết thì không cần biết trời: vẫn mở lại trạm hệ thống đã dừng.
+        if (weather == null || (weather.unavailable() && !weather.checkDisabled())) {
             return false;
         }
         DroneFlightControlViews.StationSuspension suspension = station.suspension();
