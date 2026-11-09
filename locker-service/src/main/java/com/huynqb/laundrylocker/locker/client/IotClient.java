@@ -49,6 +49,30 @@ public interface IotClient {
     @GetMapping("/gateways/{lockerId}")
     ApiResponse<GatewayDeviceResponse> getGatewayByLockerId(@PathVariable("lockerId") Long lockerId);
 
+    /// Lắp đặt tủ (F3-G12): bộ điều khiển, cấu hình phần cứng đã áp và các lệnh thử (mở ô, nắp) từ `since`.
+    @GetMapping("/cabinet/{lockerId}/commissioning")
+    ApiResponse<CommissioningStatus> commissioning(
+            @PathVariable("lockerId") Long lockerId, @RequestParam(value = "since", required = false) String since);
+
+    record CommissioningStatus(
+            Long lockerId,
+            GatewayDeviceResponse controller,
+            String hardwareApplyStatus,
+            LocalDateTime hardwareAppliedAt,
+            String hardwareApplyMessage,
+            List<CommandResult> commands) {
+    }
+
+    record CommandResult(
+            String action,
+            Long boxId,
+            Integer boxNumber,
+            Integer axis,
+            String status,
+            String message,
+            LocalDateTime occurredAt) {
+    }
+
     record GatewayDeviceResponse(
             Long id,
             String macAddress,
