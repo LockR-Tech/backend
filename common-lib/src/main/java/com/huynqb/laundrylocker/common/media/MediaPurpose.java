@@ -14,7 +14,9 @@ public enum MediaPurpose {
     STORE_IMAGE("stores", true),
     PROMOTION_IMAGE("promotions", true),
     /// Ảnh xác minh lúc admin trao đồ lưu kho tại quầy (người nhận cầm kiện).
-    STORAGE_HANDOVER("storage-handovers", true);
+    STORAGE_HANDOVER("storage-handovers", true),
+    /// Ảnh hồ sơ lắp đặt & nghiệm thu tủ (KTV lắp đặt chụp tại hiện trường, admin xem khi duyệt) — F3-G12.
+    INSTALLATION_PHOTO("installations", false);
 
     private final String folder;
     private final boolean adminOnly;

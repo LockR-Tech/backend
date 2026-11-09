@@ -24,6 +24,9 @@ public final class DomainEventNames {
     public static final String LOCKER_REPORT_ASSIGNED = "locker.report.assigned";
     /// Lịch kiểm tra định kỳ sắp/đã tới hạn — nhắc KTV phụ trách lịch.
     public static final String LOCKER_SCHEDULE_DUE = "locker.schedule.due";
+    /// Lắp đặt tủ (F3-G12): `type` riêng, đi bằng routing key {@link #LOCKER_REPORT_ASSIGNED} như sự kiện drone.*.
+    public static final String LOCKER_INSTALLATION_ASSIGNED = "locker.installation.assigned";
+    public static final String LOCKER_INSTALLATION_REVIEWED = "locker.installation.reviewed";
     public static final String IOT_DEVICE_STATUS_CHANGED = "iot.device.status.changed";
     public static final String LOCKER_LAYOUT_UPDATED = "locker.layout.updated";
     /// Số ô trống của một tủ vừa đổi (ô chuyển AVAILABLE/RESERVED/OCCUPIED/FAULT hoặc đổi loại ô).
