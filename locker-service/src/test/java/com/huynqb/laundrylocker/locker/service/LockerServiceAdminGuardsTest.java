@@ -202,6 +202,50 @@ class LockerServiceAdminGuardsTest {
         assertEquals(1L, unit.getLockerId());
     }
 
+    // ─── lắp đặt tủ (F3-G12) ───
+
+    @Test
+    void lockerInInstallationIsHiddenFromCustomersAndNotBookable() {
+        LockerUnit active = locker(1L, false);
+        active.setStatus("ACTIVE");
+        LockerUnit planned = locker(2L, false);
+        planned.setStatus("PLANNED");
+        when(lockerRepository.findAll()).thenReturn(java.util.List.of(active, planned));
+        when(lockerRepository.findById(2L)).thenReturn(Optional.of(planned));
+
+        assertEquals(java.util.List.of(1L), service.listLockers(null).stream()
+                .map(com.huynqb.laundrylocker.locker.dto.LockerResponse::id).toList());
+        assertEquals(java.util.List.of(), service.listAvailableBoxes(2L));
+        verify(boxRepository, never()).findByLockerIdAndStatusAndActiveTrue(2L, "AVAILABLE");
+    }
+
+    @Test
+    void adminCannotSetInstallationStatusByHand() {
+        LockerUnit active = locker(1L, false);
+        active.setStatus("ACTIVE");
+        when(lockerRepository.findById(1L)).thenReturn(Optional.of(active));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.updateLocker(1L,
+                new com.huynqb.laundrylocker.locker.dto.LockerRequest(null, "CAB-1", "Tủ 1", "COMMISSIONING", null, null, null)));
+
+        assertEquals("LOCKER_STATUS_INVALID", ex.getCode());
+        assertEquals("ACTIVE", active.getStatus());
+    }
+
+    @Test
+    void lockerUnderInstallationCannotBeSwitchedByHand() {
+        LockerUnit installing = locker(1L, false);
+        installing.setStatus("INSTALLING");
+        when(lockerRepository.findById(1L)).thenReturn(Optional.of(installing));
+
+        assertEquals("LOCKER_INSTALLATION_OPEN", assertThrows(BusinessException.class,
+                () -> service.setMaintenance(1L, false)).getCode());
+        assertEquals("LOCKER_INSTALLATION_OPEN", assertThrows(BusinessException.class, () -> service.updateLocker(1L,
+                new com.huynqb.laundrylocker.locker.dto.LockerRequest(null, "CAB-1", "Tủ 1", "ACTIVE", null, null, null)))
+                .getCode());
+        assertEquals("INSTALLING", installing.getStatus());
+    }
+
     private static UpdateBoxRequest request(Integer boxNumber, Integer row, Integer col, String status) {
         return new UpdateBoxRequest(boxNumber, null, null, row, col, null, status);
     }

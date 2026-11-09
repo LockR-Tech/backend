@@ -372,6 +372,8 @@ public class NotificationService {
                             ? "Đánh giá dịch vụ drone"
                             : "Bạn được giao phiếu sự cố drone";
             case "drone.schedule.due" -> "Lịch kiểm tra drone tới hạn";
+            case DomainEventNames.LOCKER_INSTALLATION_ASSIGNED -> "Bạn được giao lắp đặt tủ";
+            case DomainEventNames.LOCKER_INSTALLATION_REVIEWED -> titleOr(payload, "Kết quả nghiệm thu lắp đặt tủ");
             case DomainEventNames.WALLET_UPDATED -> titleOr(payload, "Ví của bạn có thay đổi");
             case DomainEventNames.LOYALTY_POINTS_CHANGED -> titleOr(payload, "Điểm thưởng thay đổi");
             default -> "Thông báo";

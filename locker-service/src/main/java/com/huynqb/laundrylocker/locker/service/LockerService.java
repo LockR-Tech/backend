@@ -65,7 +65,10 @@ public class LockerService {
     private static final String LOCKER_TECHNICIAN = "LOCKER_TECHNICIAN";
     private static final String DRONE_TECHNICIAN = "DRONE_TECHNICIAN";
     /// Tủ ở các trạng thái này không nhận đơn/đặt ô mới.
-    private static final Set<String> NON_BOOKABLE_LOCKER_STATUSES = Set.of("MAINTENANCE", "INACTIVE");
+    /// Chỉ tủ ACTIVE mới nhận đơn / đặt ô (danh sách trắng): trạng thái lạ hay trạng thái lắp đặt đều bị chặn.
+    private static final String BOOKABLE_LOCKER_STATUS = "ACTIVE";
+    /// Tủ đang trong quy trình lắp đặt (F3-G12) — trạng thái do hồ sơ lắp đặt điều khiển, admin không đổi tay.
+    public static final Set<String> INSTALLATION_LOCKER_STATUSES = Set.of("PLANNED", "INSTALLING", "COMMISSIONING");
     private static final String MAINTENANCE_SOURCE_ADMIN = "ADMIN";
     private static final String MAINTENANCE_SOURCE_TICKET = "TICKET";
     /// Trạng thái ô được nhớ lại khi báo hỏng — đơn vẫn đang giữ ô.
@@ -79,7 +82,9 @@ public class LockerService {
     private static final Map<String, String> DRONE_EVENT_ROUTING_KEYS = Map.of(
             DRONE_REPORT_ASSIGNED, DomainEventNames.LOCKER_REPORT_ASSIGNED,
             DRONE_REPORT_ROUTED, DomainEventNames.LOCKER_REPORT_ROUTED,
-            DRONE_SCHEDULE_DUE, DomainEventNames.LOCKER_SCHEDULE_DUE);
+            DRONE_SCHEDULE_DUE, DomainEventNames.LOCKER_SCHEDULE_DUE,
+            DomainEventNames.LOCKER_INSTALLATION_ASSIGNED, DomainEventNames.LOCKER_REPORT_ASSIGNED,
+            DomainEventNames.LOCKER_INSTALLATION_REVIEWED, DomainEventNames.LOCKER_REPORT_ASSIGNED);
     private static final String DRONE_REPORT_REFERENCE = "DRONE_REPORT";
     /// Trạng thái vận hành: rời FAULT về đây khi drone còn phiếu mở là bị chặn.
     private static final Set<String> DRONE_OPERATIONAL_STATUSES = Set.of(DroneStatus.IDLE, DroneStatus.CHARGING);
@@ -262,6 +267,11 @@ public class LockerService {
     /// để tủ do phiếu chặn vẫn tự mở lại khi phiếu đóng.
     private void applyAdminStatus(LockerUnit locker, String status) {
         if (!status.equalsIgnoreCase(locker.getStatus())) {
+            assertNotInInstallation(locker);
+            if (isInstallationStatus(status)) {
+                throw new BusinessException(
+                        "LOCKER_STATUS_INVALID", "Trạng thái lắp đặt chỉ đặt qua hồ sơ lắp đặt tủ", HttpStatus.BAD_REQUEST);
+            }
             locker.setMaintenanceSource("MAINTENANCE".equalsIgnoreCase(status) ? MAINTENANCE_SOURCE_ADMIN : null);
         }
         locker.setStatus(status);
@@ -384,6 +394,7 @@ public class LockerService {
     public LockerResponse setMaintenance(Long id, boolean maintenance) {
         LockerUnit locker =
                 lockerRepository.findById(id).orElseThrow(() -> new NotFoundException("Locker", id));
+        assertNotInInstallation(locker);
         // Admin bật bảo trì là ý định rõ ràng ⇒ nguồn ADMIN kể cả khi tủ đang bị phiếu chặn.
         locker.setStatus(maintenance ? "MAINTENANCE" : "ACTIVE");
         locker.setMaintenanceSource(maintenance ? MAINTENANCE_SOURCE_ADMIN : null);
@@ -1055,14 +1066,46 @@ public class LockerService {
                 .ifPresent(locker -> {
                     throw new BusinessException(
                             "LOCKER_NOT_ACTIVE",
-                            "Tủ " + locker.getName() + " đang bảo trì, tạm ngưng nhận đơn",
+                            isInstallationStatus(locker.getStatus())
+                                    ? "Tủ " + locker.getName() + " đang lắp đặt, chưa nhận đơn"
+                                    : "Tủ " + locker.getName() + " đang bảo trì, tạm ngưng nhận đơn",
                             HttpStatus.CONFLICT);
                 });
     }
 
     private boolean isBookable(LockerUnit locker) {
-        return locker.getStatus() == null
-                || !NON_BOOKABLE_LOCKER_STATUSES.contains(locker.getStatus().toUpperCase(Locale.ROOT));
+        return locker.getStatus() == null || BOOKABLE_LOCKER_STATUS.equalsIgnoreCase(locker.getStatus());
+    }
+
+    static boolean isInstallationStatus(String status) {
+        return status != null && INSTALLATION_LOCKER_STATUSES.contains(status.toUpperCase(Locale.ROOT));
+    }
+
+    /// Tủ đang lắp đặt thì trạng thái chỉ đổi qua hồ sơ lắp đặt (duyệt / huỷ), không đổi tay.
+    private static void assertNotInInstallation(LockerUnit locker) {
+        if (isInstallationStatus(locker.getStatus())) {
+            throw new BusinessException(
+                    "LOCKER_INSTALLATION_OPEN",
+                    "Tủ đang trong quy trình lắp đặt — duyệt hoặc huỷ hồ sơ lắp đặt thay vì đổi trạng thái tay",
+                    HttpStatus.CONFLICT);
+        }
+    }
+
+    /// Hồ sơ lắp đặt đổi trạng thái tủ (PLANNED → INSTALLING → COMMISSIONING → ACTIVE, hoặc khôi phục khi huỷ).
+    @Transactional
+    public void applyInstallationStatus(Long lockerId, String status) {
+        LockerUnit locker =
+                lockerRepository.findById(lockerId).orElseThrow(() -> new NotFoundException("Locker", lockerId));
+        locker.setStatus(status);
+        locker.setMaintenanceSource(null);
+        lockerRepository.save(locker);
+        publishLockerCatalogChanged(lockerId);
+        publishLockerAvailabilityChanged(lockerId);
+    }
+
+    /// Thông báo in-app + push cho KTV về việc lắp đặt tủ.
+    public void notifyInstallation(String eventType, Long technicianId, Long installationId, String message) {
+        publishStaffNotification(eventType, technicianId, installationId, "LOCKER_INSTALLATION", message);
     }
 
     @Transactional(readOnly = true)
@@ -1102,12 +1145,18 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerResponse> listLockers() {
-        return toResponses(lockerRepository.findAll(), null);
+        return toResponses(customerVisible(lockerRepository.findAll()), null);
     }
 
+    /// Danh sách cho khách / kiosk: tủ đang lắp đặt chưa nghiệm thu thì chưa hiện.
     @Transactional(readOnly = true)
     public List<LockerResponse> listLockers(Long storeId) {
-        return toResponses(storeId == null ? lockerRepository.findAll() : lockerRepository.findByStoreId(storeId), null);
+        return toResponses(customerVisible(
+                storeId == null ? lockerRepository.findAll() : lockerRepository.findByStoreId(storeId)), null);
+    }
+
+    private static List<LockerUnit> customerVisible(List<LockerUnit> lockers) {
+        return lockers.stream().filter(locker -> !isInstallationStatus(locker.getStatus())).toList();
     }
 
     /// Góc nhìn admin/KTV: kèm KTV phụ trách. `technicianId` ⇒ chỉ các tủ người đó phụ trách.

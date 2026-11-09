@@ -11,4 +11,8 @@ public interface CabinetControlLogRepository extends JpaRepository<CabinetContro
     List<CabinetControlLog> findByLockerIdOrderByOccurredAtDescIdDesc(Long lockerId, Pageable page);
 
     boolean existsByEventId(String eventId);
+
+    /// Lệnh thử khi nghiệm thu lắp đặt (F3-G12), cũ → mới.
+    List<CabinetControlLog> findByLockerIdAndActionInAndOccurredAtGreaterThanEqualOrderByOccurredAtAscIdAsc(
+            Long lockerId, java.util.Collection<String> actions, java.time.LocalDateTime since);
 }
