@@ -16,6 +16,17 @@ import java.util.List;
 public class GatewayController {
 
     private final GatewayProvisioningService provisioning;
+    private final com.huynqb.laundrylocker.iot.service.CabinetCommissioningService commissioning;
+
+    /// Nội bộ (locker-service): dữ liệu nghiệm thu tủ đang lắp đặt — F3-G12.
+    @GetMapping("/internal/iot/cabinet/{lockerId}/commissioning")
+    public ApiResponse<com.huynqb.laundrylocker.iot.dto.CommissioningStatusResponse> commissioning(
+            @PathVariable Long lockerId,
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME)
+            java.time.LocalDateTime since) {
+        return ApiResponse.ok(commissioning.status(lockerId, since));
+    }
 
     @GetMapping("/api/admin/iot/gateways")
     public ApiResponse<List<GatewayDeviceResponse>> list() {

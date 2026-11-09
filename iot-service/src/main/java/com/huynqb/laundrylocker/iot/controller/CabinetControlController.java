@@ -21,6 +21,27 @@ public class CabinetControlController {
 
     private final CabinetControlService control;
     private final CabinetHardwareConfigService hardware;
+    private final com.huynqb.laundrylocker.iot.service.CabinetCommissioningService commissioning;
+
+    /// Lắp đặt tủ (F3-G12): Pi đang online chưa gán tủ — KTV chọn khi không quét được QR kiosk.
+    @GetMapping("/api/locker-technician/cabinet/{lockerId}/controller/candidates")
+    public ApiResponse<java.util.List<com.huynqb.laundrylocker.iot.dto.GatewayDeviceResponse>> controllerCandidates(
+            @PathVariable Long lockerId,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(commissioning.candidates(lockerId, userId, roles));
+    }
+
+    /// Lắp đặt tủ (F3-G12): KTV phụ trách gán Pi theo QR kiosk / MAC ⇒ gửi sơ đồ ô, Pi mở thử từng ô.
+    @PostMapping("/api/locker-technician/cabinet/{lockerId}/controller")
+    public ApiResponse<com.huynqb.laundrylocker.iot.dto.GatewayDeviceResponse> bindController(
+            @PathVariable Long lockerId,
+            @jakarta.validation.Valid @RequestBody com.huynqb.laundrylocker.iot.dto.BindControllerRequest body,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok("CONTROLLER_SETUP_SENT", "Đã gán bộ điều khiển, tủ đang mở thử từng ô",
+                commissioning.bind(lockerId, body.macAddress(), userId, roles));
+    }
 
     /// Cấu hình phần cứng đã lưu (bản đồ chân + sơ đồ đấu dây); chưa lưu thì trả mẫu TU01.
     @GetMapping("/api/locker-technician/cabinet/{lockerId}/hardware")
