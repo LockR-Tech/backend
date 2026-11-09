@@ -64,6 +64,35 @@ class DroneStationWeatherGuardTest {
         verify(flightControl, never()).resume(anyLong(), any());
     }
 
+    /// Admin tắt kiểm tra thời tiết: dự báo xấu (đã được service đánh dấu `checkDisabled`, `safe`) không dừng trạm,
+    /// trạm hệ thống đã dừng vì thời tiết được mở lại — kể cả khi chưa có dự báo; lệnh dừng của admin vẫn giữ.
+    @Test
+    void weatherCheckOffNeverSuspendsAndReopensSystemWeatherStops() {
+        DroneStationWeatherGuard offGuard = new DroneStationWeatherGuard(
+                TestOrderRules.of(java.util.Map.of(
+                        "app.drone.weather.check-enabled", false,
+                        "app.drone.weather.auto-station-pause", false)),
+                weatherQuery, flightControl, mock(DroneDispatchSweeper.class));
+
+        stations(weather(false, "UNSAFE").withCheckDisabled(), null);
+        offGuard.guardScheduled();
+        verify(flightControl, never()).suspend(anyLong(), any(), any());
+
+        stations(weather(false, "UNSAFE").withCheckDisabled(), stop(null));
+        offGuard.guardScheduled();
+        verify(flightControl).resume(5L, null);
+
+        reset(flightControl);
+        stations(weather(false, "UNAVAILABLE").withCheckDisabled(), stop(null));
+        assertEquals(1, offGuard.guard());
+        verify(flightControl).resume(5L, null);
+
+        reset(flightControl);
+        stations(weather(false, "UNSAFE").withCheckDisabled(), stop(9L));
+        assertEquals(0, offGuard.guard());
+        verify(flightControl, never()).resume(anyLong(), any());
+    }
+
     @Test
     void missingForecastChangesNothing() {
         stations(weather(false, "UNAVAILABLE"), null);

@@ -267,6 +267,10 @@ public class DroneOrderMaintenanceService {
     }
 
     private void assertWeatherSafe(DroneFlightControl.Context context) {
+        // Admin tắt kiểm tra thời tiết (thử nghiệm khi trời xấu): không chặn phóng, kể cả khi không tra được tuyến.
+        if (!rules.weatherCheckEnabled()) {
+            return;
+        }
         DroneWeatherAssessment weather;
         try {
             Long sourceId = context.sourceLockerId();

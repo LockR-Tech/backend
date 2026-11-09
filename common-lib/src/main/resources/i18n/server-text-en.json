@@ -445,6 +445,7 @@
   "Đã gửi thông tin đơn tới email người nhận": "Order details sent to the recipient's email",
   "Không thể xác nhận dự báo thời tiết tuyến bay. Vui lòng thử lại sau.": "Could not confirm the weather forecast for the flight route. Please try again later.",
   "Chưa lấy được dự báo thời tiết. Đội bay tự quan sát thời tiết trước khi phóng.": "The weather forecast is not available yet. The flight team will check the weather before launching.",
+  "Admin đang tắt kiểm tra thời tiết để thử nghiệm: dự báo chỉ để tham khảo, không chặn đặt đơn và phóng drone.": "An admin has turned off the weather check for testing: the forecast is for reference only and does not block bookings or launches.",
   "receiverEmail không hợp lệ": "receiverEmail is invalid",
   "Khác": "Other",
   "Không rõ lý do": "Unknown reason",

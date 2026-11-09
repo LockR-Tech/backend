@@ -252,6 +252,51 @@ class DroneWeatherServiceTest {
         server.verify();
     }
 
+    /// Admin tắt kiểm tra thời tiết (thử nghiệm khi trời mưa bão): vẫn trả dự báo thật để hiển thị nhưng cho bay.
+    @Test
+    void weatherCheckOffKeepsTheRealForecastButNeverBlocks() throws Exception {
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://weather.test/v1/forecast");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        var settings = com.huynqb.laundrylocker.order.settings.TestOrderRules.settings(
+                Map.of("app.drone.weather.check-enabled", false));
+        var rules = new com.huynqb.laundrylocker.order.settings.OrderRules(settings);
+        DroneWeatherService service = new DroneWeatherService(
+                builder.build(), null, rules::weatherLimits, null, java.time.Clock.systemUTC());
+        OffsetDateTime first = OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(2).truncatedTo(ChronoUnit.MINUTES);
+        List<String> times = List.of(first.toString(), first.plusMinutes(15).toString(), first.plusMinutes(30).toString());
+        Map<String, Object> storm = point(times, List.of(2.5, 3.0, 1.0), List.of(95, 95, 82),
+                List.of(35, 42, 30), List.of(60, 70, 55), List.of(4000, 3000, 5000));
+        server.expect(requestTo(containsString("minutely_15=")))
+                .andRespond(withSuccess(JSON.writeValueAsString(storm), MediaType.APPLICATION_JSON));
+
+        var stormy = service.assessRoute(locker(3L, 10.70, 106.70), locker(5L, 10.71, 106.71));
+
+        assertTrue(stormy.safe());
+        assertTrue(stormy.checkDisabled());
+        assertEquals("UNSAFE", stormy.status());
+        assertEquals(3.0, stormy.maxPrecipitationMm());
+        assertEquals(70, stormy.maxWindGustKmh());
+        assertEquals(95, stormy.worstWeatherCode());
+        server.verify();
+
+        // Không có dự báo cũng không chặn, dù "Chặn bay khi không có dữ liệu" đang bật.
+        var unknown = service.unavailable(OffsetDateTime.now(ZoneOffset.UTC));
+        assertTrue(unknown.safe());
+        assertTrue(unknown.checkDisabled());
+        assertEquals("UNAVAILABLE", unknown.status());
+
+        // Admin bật lại: cùng dự báo (lấy từ bộ nhớ đệm hoặc gọi lại) chặn như thường.
+        settings.update(Map.of("app.drone.weather.check-enabled", true), null);
+        server.reset();
+        server.expect(requestTo(containsString("minutely_15=")))
+                .andRespond(withSuccess(JSON.writeValueAsString(storm), MediaType.APPLICATION_JSON));
+        var checked = service.assessRoute(locker(3L, 10.70, 106.70), locker(5L, 10.71, 106.71));
+        assertFalse(checked.safe());
+        assertFalse(checked.checkDisabled());
+        assertEquals("UNSAFE", checked.status());
+        assertFalse(service.unavailable(OffsetDateTime.now(ZoneOffset.UTC)).safe());
+    }
+
     /// Admin cho bay khi không có dữ liệu: vẫn báo UNAVAILABLE để đội bay biết, nhưng không chặn.
     @Test
     void missingForecastOnlyBlocksWhenAdminRequiresIt() {

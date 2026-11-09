@@ -39,6 +39,9 @@ import java.util.function.Supplier;
  * Không nguồn nào trả lời ⇒ UNAVAILABLE; mặc định vẫn chặn đặt đơn và phóng drone (không bay khi không biết trời),
  * trừ khi admin tắt "Chặn bay khi không có dữ liệu thời tiết".
  *
+ * <p>Admin tắt "Kiểm tra thời tiết trước khi bay" (thử nghiệm khi trời mưa bão) ⇒ vẫn lấy dự báo thật nhưng mọi
+ * kết quả trả về `safe = true`, `checkDisabled = true`: không nơi nào chặn bay theo thời tiết.
+ *
  * <p>Ngưỡng (gió, gió giật, tầm nhìn, lượng mưa, mã mưa/dông, cửa sổ dự báo) đọc từ {@link OrderRules} mỗi lần
  * đánh giá: admin sửa trên trang Thời tiết & bay là có hiệu lực, không cần khởi động lại.
  */
@@ -109,14 +112,22 @@ public class DroneWeatherService {
 
     /// Ngưỡng mặc định của catalog với gió, gió giật, tầm nhìn cho trước.
     static Supplier<OrderRules.WeatherLimits> fixedLimits(double maxWind, double maxGust, double minVisibility) {
-        OrderRules.WeatherLimits fixed = new OrderRules.WeatherLimits(maxWind, maxGust, minVisibility, 0, true, 30, true);
+        OrderRules.WeatherLimits fixed = new OrderRules.WeatherLimits(maxWind, maxGust, minVisibility, 0, true, 30, true, true);
         return () -> fixed;
     }
 
     /// Không nguồn nào trả lời: chặn hay không theo cấu hình admin.
     public DroneWeatherAssessment unavailable(OffsetDateTime checkedAt) {
         OrderRules.WeatherLimits current = limits.get();
-        return DroneWeatherAssessment.unavailable(checkedAt, current.windowMinutes(), current.blockWhenUnavailable());
+        return applyCheckMode(
+                DroneWeatherAssessment.unavailable(checkedAt, current.windowMinutes(), current.blockWhenUnavailable()),
+                current);
+    }
+
+    /// Admin tắt kiểm tra thời tiết (thử nghiệm) ⇒ giữ dự báo để hiển thị nhưng cho bay.
+    private static DroneWeatherAssessment applyCheckMode(
+            DroneWeatherAssessment assessment, OrderRules.WeatherLimits current) {
+        return current.checkEnabled() ? assessment : assessment.withCheckDisabled();
     }
 
     private static RestClient createClient(RestClient.Builder builder, String url, String userAgent) {
@@ -168,7 +179,7 @@ public class DroneWeatherService {
         String key = String.join(">", points.stream().map(RoutePoint::key).distinct().toList()) + "|" + current;
         Cached cached = cache.get(key);
         if (cached != null && cached.expiresAt().isAfter(now)) {
-            return cached.assessment();
+            return applyCheckMode(cached.assessment(), current);
         }
 
         DroneWeatherAssessment result = fromOpenMeteo(points, now, current);
@@ -178,7 +189,7 @@ public class DroneWeatherService {
         if (!result.unavailable()) {
             cache.put(key, new Cached(result, now.plus(CACHE_TTL)));
         }
-        return result;
+        return applyCheckMode(result, current);
     }
 
     /// Thời tiết tại một tủ (bãi đáp): tuyến một điểm.

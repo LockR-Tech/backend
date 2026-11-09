@@ -330,6 +330,41 @@ class DroneOrderMaintenanceServiceTest {
                 argThat(context -> Long.valueOf(21L).equals(context.orderId())), any());
     }
 
+    /// Admin tắt kiểm tra thời tiết để thử khi trời mưa: KTV phóng được, không hỏi dự báo, không ghi lịch sử chặn bay.
+    @Test
+    void launchSkipsTheWeatherCheckWhileAdminHasTurnedItOff() {
+        DroneOrderMaintenanceService service = new DroneOrderMaintenanceService(
+                orderRepository,
+                missionRepository,
+                lockerDroneClient,
+                lockerClient,
+                historyRepository,
+                notificationClient,
+                TestOrderRules.of(java.util.Map.of("app.drone.weather.check-enabled", false)), pickupRepository, mailer,
+                benefits, lockerLookupClient, weatherService, flightControl);
+        LockerOrder order = droneOrder(21L, "ACCEPTED");
+        DroneMission mission = inFlightMission("READY_TO_LAUNCH");
+        markLoadingConfirmed(mission);
+        when(orderRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(order));
+        when(missionRepository.findByOrderId(21L)).thenReturn(Optional.of(mission));
+        when(missionRepository.save(any(DroneMission.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(lockerDroneClient.getDroneUnit(9L))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "RESERVED", 87, true)));
+        when(lockerDroneClient.getLockerLayout(5L))
+                .thenReturn(ApiResponse.ok(new LockerLayoutDto(5L, "CAB-05", "Locker 5", "ACTIVE", true, "OK")));
+        when(lockerDroneClient.transitionDroneStatus(
+                        9L, new DroneStatusTransitionRequest("RESERVED", "IN_FLIGHT", null)))
+                .thenReturn(ApiResponse.ok(new DroneUnitDto(9L, 3L, "DRONE-09", "IN_FLIGHT", 87, true)));
+        lenient().when(weatherService.assessRoute(any(), any())).thenReturn(new DroneWeatherAssessment(
+                false, "UNSAFE", "Mưa dông trên tuyến", java.time.OffsetDateTime.now(), 30, 3, 12, 18, 1, 95));
+
+        DroneMissionResponse response = service.launch(21L, 99L, "launch-weather-off");
+
+        assertEquals("LAUNCHING", response.deliveryStage());
+        verify(weatherService, never()).assessRoute(any(), any());
+        verify(flightControl, never()).recordWeather(any(), any(), any());
+    }
+
     @Test
     void launchRejectsReadyMissionWithoutLoadingAudit() {
         DroneOrderMaintenanceService service =

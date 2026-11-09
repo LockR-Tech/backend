@@ -8,6 +8,8 @@ import java.time.OffsetDateTime;
  * @param provider     nguồn dự báo đã trả lời: OPEN_METEO, MET_NORWAY; null khi không nguồn nào trả lời
  * @param temperatureC nhiệt độ hiện tại ở điểm đầu tuyến (null khi nguồn không trả)
  * @param condition    mô tả ngắn tiếng Việt của thời tiết hiện tại ("Nhiều mây", "Mưa rào"…)
+ * @param checkDisabled admin đang tắt kiểm tra thời tiết (thử nghiệm): `status`, số liệu là dự báo thật nhưng
+ *                      `safe` luôn true — không chặn đặt đơn, phóng drone, không dừng trạm
  */
 public record DroneWeatherAssessment(
         boolean safe,
@@ -22,7 +24,29 @@ public record DroneWeatherAssessment(
         int worstWeatherCode,
         String provider,
         Double temperatureC,
-        String condition) {
+        String condition,
+        boolean checkDisabled) {
+
+    public static final String CHECK_DISABLED_MESSAGE =
+            "Admin đang tắt kiểm tra thời tiết để thử nghiệm: dự báo chỉ để tham khảo, không chặn đặt đơn và phóng drone.";
+
+    public DroneWeatherAssessment(
+            boolean safe,
+            String status,
+            String message,
+            OffsetDateTime checkedAt,
+            int windowMinutes,
+            int sampledRoutePoints,
+            double maxWindSpeedKmh,
+            double maxWindGustKmh,
+            double maxPrecipitationMm,
+            int worstWeatherCode,
+            String provider,
+            Double temperatureC,
+            String condition) {
+        this(safe, status, message, checkedAt, windowMinutes, sampledRoutePoints, maxWindSpeedKmh, maxWindGustKmh,
+                maxPrecipitationMm, worstWeatherCode, provider, temperatureC, condition, false);
+    }
 
     public DroneWeatherAssessment(
             boolean safe,
@@ -36,7 +60,7 @@ public record DroneWeatherAssessment(
             double maxPrecipitationMm,
             int worstWeatherCode) {
         this(safe, status, message, checkedAt, windowMinutes, sampledRoutePoints, maxWindSpeedKmh, maxWindGustKmh,
-                maxPrecipitationMm, worstWeatherCode, null, null, null);
+                maxPrecipitationMm, worstWeatherCode, null, null, null, false);
     }
 
     public static DroneWeatherAssessment unavailable(OffsetDateTime checkedAt) {
@@ -59,6 +83,13 @@ public record DroneWeatherAssessment(
     public DroneWeatherAssessment withSource(String provider, Double temperatureC, String condition) {
         return new DroneWeatherAssessment(safe, status, message, checkedAt, windowMinutes, sampledRoutePoints,
                 maxWindSpeedKmh, maxWindGustKmh, maxPrecipitationMm, worstWeatherCode, provider, temperatureC,
-                condition);
+                condition, checkDisabled);
+    }
+
+    /// Admin tắt kiểm tra thời tiết: giữ dự báo thật để hiển thị (status, gió, mưa…) nhưng cho bay.
+    public DroneWeatherAssessment withCheckDisabled() {
+        return new DroneWeatherAssessment(true, status, CHECK_DISABLED_MESSAGE, checkedAt, windowMinutes,
+                sampledRoutePoints, maxWindSpeedKmh, maxWindGustKmh, maxPrecipitationMm, worstWeatherCode, provider,
+                temperatureC, condition, true);
     }
 }
