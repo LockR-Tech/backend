@@ -51,8 +51,11 @@ public class DroneFlightControlController {
     }
 
     @DeleteMapping("/stations/{lockerId}/suspension")
-    public ApiResponse<Void> resume(@PathVariable Long lockerId, @RequestHeader("X-User-Id") Long userId) {
-        flightControl.resume(lockerId, userId);
+    public ApiResponse<Void> resume(
+            @PathVariable Long lockerId,
+            @RequestParam(required = false) String note,
+            @RequestHeader("X-User-Id") Long userId) {
+        flightControl.resume(lockerId, note, userId);
         reviewBlocksNow();
         return ApiResponse.ok("DRONE_STATION_RESUMED", "Đã mở lại bay ở trạm");
     }

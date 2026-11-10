@@ -158,12 +158,22 @@ public class DroneFlightControl {
     /// Mở lại trạm; trạm không dừng thì không làm gì.
     @Transactional
     public void resume(Long lockerId, Long actorUserId) {
+        resume(lockerId, null, actorUserId);
+    }
+
+    /// Mở lại trạm; `note` (không bắt buộc) là ghi chú của admin, lưu cùng dòng RESUME trong lịch sử dừng / mở.
+    @Transactional
+    public void resume(Long lockerId, String note, Long actorUserId) {
         DroneStationSuspension suspension = suspensions.findById(lockerId).orElse(null);
         if (suspension == null) {
             return;
         }
         suspensions.delete(suspension);
-        log(lockerId, DroneStationSuspensionLog.RESUME, suspension.getReason(), null, null, actorUserId,
+        String cleanNote = note == null || note.isBlank() ? null : note.strip();
+        if (cleanNote != null && cleanNote.length() > 500) {
+            cleanNote = cleanNote.substring(0, 500);
+        }
+        log(lockerId, DroneStationSuspensionLog.RESUME, suspension.getReason(), cleanNote, null, actorUserId,
                 LocalDateTime.now());
     }
 
