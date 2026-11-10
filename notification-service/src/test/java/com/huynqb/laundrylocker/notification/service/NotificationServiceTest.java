@@ -38,6 +38,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.huynqb.laundrylocker.common.exception.BusinessException;
+import org.mockito.ArgumentCaptor;
+import static org.mockito.Mockito.atLeastOnce;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -149,16 +152,21 @@ class NotificationServiceTest {
     void adminActionsIgnoreOwnerAndReturn404WhenMissing() {
         when(notificationRepository.findById(5L)).thenReturn(Optional.of(notification(5L, 7L)));
         when(notificationRepository.findById(9L)).thenReturn(Optional.empty());
-        when(notificationRepository.existsById(5L)).thenReturn(true);
-        when(notificationRepository.existsById(9L)).thenReturn(false);
 
         assertThat(service.markRead(5L).status()).isEqualTo("READ");
         assertThatThrownBy(() -> service.markRead(9L)).isInstanceOf(NotFoundException.class);
 
-        service.delete(5L);
-        verify(notificationRepository).deleteById(5L);
-        assertThatThrownBy(() -> service.delete(9L)).isInstanceOf(NotFoundException.class);
-        verify(notificationRepository, never()).deleteById(9L);
+        service.delete(5L, "Gửi nhầm người", 1L);
+        ArgumentCaptor<NotificationMessage> deleted = ArgumentCaptor.forClass(NotificationMessage.class);
+        verify(notificationRepository, atLeastOnce()).save(deleted.capture());
+        NotificationMessage softDeleted = deleted.getAllValues().get(deleted.getAllValues().size() - 1);
+        assertThat(softDeleted.getDeletedAt()).isNotNull();
+        assertThat(softDeleted.getDeletedBy()).isEqualTo(1L);
+        assertThat(softDeleted.getDeletedReason()).isEqualTo("Gửi nhầm người");
+        verify(notificationRepository, never()).deleteById(5L);
+        assertThatThrownBy(() -> service.delete(9L, "Gửi nhầm người", 1L)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.delete(5L, "", 1L))
+                .isInstanceOf(BusinessException.class);
     }
 
     @Test

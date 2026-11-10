@@ -240,8 +240,11 @@ public class NotificationController {
     }
 
     @DeleteMapping("/api/admin/notifications/{id}")
-    public ApiResponse<Void> adminDelete(@PathVariable Long id) {
-        notificationService.delete(id);
+    public ApiResponse<Void> adminDelete(
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        notificationService.delete(id, reason, userId);
         return ApiResponse.ok("NOTIFICATION_DELETED", "Notification deleted");
     }
 }

@@ -3,10 +3,12 @@ package com.huynqb.laundrylocker.notification.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.time.LocalDateTime;
 
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "notifications")
 @Getter
 @Setter
@@ -42,6 +44,16 @@ public class NotificationMessage {
 
     @Column(name = "read_at")
     private LocalDateTime readAt;
+
+    /// Admin xoá là xoá mềm: còn trong DB kèm lý do, thời điểm và người xoá; người dùng tự xoá thì xoá hẳn.
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_reason", length = 500)
+    private String deletedReason;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

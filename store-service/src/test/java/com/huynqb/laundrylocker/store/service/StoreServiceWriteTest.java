@@ -39,6 +39,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -131,46 +132,58 @@ class StoreServiceWriteTest {
         when(lockerClient.lockersByStore(3L)).thenReturn(ApiResponse.ok(List.of(
                 new LockerRef(11L, 3L, "CAB-A1", "Tủ A1"), new LockerRef(12L, 3L, null, "Tủ A2"))));
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(3L));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(3L, "Đóng cửa", 1L));
 
         assertEquals("STORE_HAS_LOCKERS", ex.getCode());
         assertEquals(HttpStatus.CONFLICT, ex.getStatus());
         assertTrue(ex.getMessage().contains("2 tủ (CAB-A1, #12)"), ex.getMessage());
-        verify(repository, never()).delete(any(StoreLocation.class));
+        verify(repository, never()).save(any(StoreLocation.class));
     }
 
     @Test
     void deleteIgnoresLockersOfOtherStores() {
         when(lockerClient.lockersByStore(3L)).thenReturn(ApiResponse.ok(List.of(new LockerRef(11L, 4L, "CAB-B1", "Tủ B1"))));
 
-        service.delete(3L);
+        service.delete(3L, "Đóng cửa", 1L);
 
-        verify(repository).delete(existing);
+        verify(repository).save(existing);
     }
 
     @Test
     void deleteSucceedsWhenTheStoreHasNoLockers() {
         when(lockerClient.lockersByStore(3L)).thenReturn(ApiResponse.ok(List.of()));
 
-        service.delete(3L);
+        service.delete(3L, "  Đóng cửa hẳn  ", 1L);
 
-        verify(repository).delete(existing);
+        verify(repository).save(existing);
+        verify(repository, never()).delete(any(StoreLocation.class));
+        assertNotNull(existing.getDeletedAt());
+        assertEquals(1L, existing.getDeletedBy());
+        assertEquals("Đóng cửa hẳn", existing.getDeletedReason());
+    }
+
+    @Test
+    void deleteRequiresAReason() {
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(3L, " ", 1L));
+
+        assertEquals("DELETE_REASON_REQUIRED", ex.getCode());
+        verify(repository, never()).save(any(StoreLocation.class));
     }
 
     @Test
     void deleteIsRefusedWhenLockersCannotBeChecked() {
         when(lockerClient.lockersByStore(3L)).thenThrow(new IllegalStateException("locker-service down"));
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(3L));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(3L, "Đóng cửa", 1L));
 
         assertEquals("LOCKER_SERVICE_UNAVAILABLE", ex.getCode());
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatus());
-        verify(repository, never()).delete(any(StoreLocation.class));
+        verify(repository, never()).save(any(StoreLocation.class));
     }
 
     @Test
     void deleteOfMissingStoreIsNotFoundWithoutCallingLockerService() {
-        assertThrows(NotFoundException.class, () -> service.delete(9L));
+        assertThrows(NotFoundException.class, () -> service.delete(9L, "Đóng cửa", 1L));
 
         verify(lockerClient, never()).lockersByStore(anyLong());
     }

@@ -3,11 +3,13 @@ package com.huynqb.laundrylocker.order.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "promotions")
 @Getter
 @Setter
@@ -17,7 +19,8 @@ public class Promotion {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 100)
+    /// Duy nhất trong các mã chưa xoá (index một phần ở V42) — mã của khuyến mãi đã xoá được dùng lại.
+    @Column(nullable = false, length = 100)
     private String code;
 
     @Column(nullable = false)
@@ -79,6 +82,16 @@ public class Promotion {
 
     @Column(name = "created_by_user_id")
     private Long createdByUserId;
+
+    /// Xoá mềm từ trang admin: còn nguyên trong DB kèm lý do, thời điểm và người xoá.
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_reason", length = 500)
+    private String deletedReason;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

@@ -826,8 +826,11 @@ public class OrderController {
     }
 
     @DeleteMapping("/api/admin/promotions/{promotionId}")
-    public ApiResponse<Void> deletePromotion(@PathVariable Long promotionId) {
-        orderService.deletePromotion(promotionId);
+    public ApiResponse<Void> deletePromotion(
+            @PathVariable Long promotionId,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        orderService.deletePromotion(promotionId, reason, userId);
         return ApiResponse.ok("PROMOTION_DELETED", "Promotion deleted");
     }
 

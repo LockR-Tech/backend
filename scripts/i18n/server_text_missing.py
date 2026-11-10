@@ -150,8 +150,8 @@ EXCLUDE = re.compile(
     r'|DroneDeliverySimulator|common-lib/src/main/java/com/huynqb/laundrylocker/common/i18n/'
     r'|assistant-service/(?!src/main/java/com/huynqb/laundrylocker/assistant/(chat/AssistantService'
     r'|controller/AssistantExceptionHandler)))')
-# Không phải câu hiển thị: định dạng số/ngày, mã viết hoa ghép nội dung chuyển khoản, trang HTML.
-IGNORE = re.compile(r'^(%,dđ|HH:mm .*|[A-ZÀ-Ỹ ]{2,12}|<!DOCTYPE html>.*)$', re.S)
+# Không phải câu hiển thị: định dạng số/ngày, mã viết hoa ghép nội dung chuyển khoản, trang HTML, biểu thức regex.
+IGNORE = re.compile(r'^(%,dđ|HH:mm .*|[A-ZÀ-Ỹ ]{2,12}|<!DOCTYPE html>.*|\^.*\$)$', re.S)
 
 
 def main():

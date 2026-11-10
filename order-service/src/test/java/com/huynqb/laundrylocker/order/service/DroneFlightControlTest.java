@@ -56,6 +56,32 @@ class DroneFlightControlTest {
     }
 
     @Test
+    void resumingAStationLogsTheAdminNote() {
+        when(suspensions.findById(7L)).thenReturn(Optional.of(stop(7L, null)));
+
+        control.resume(7L, "  Đã kiểm tra bãi đáp  ", 42L);
+
+        verify(suspensions).delete(any(DroneStationSuspension.class));
+        ArgumentCaptor<DroneStationSuspensionLog> logged = ArgumentCaptor.forClass(DroneStationSuspensionLog.class);
+        verify(logs).save(logged.capture());
+        assertEquals(DroneStationSuspensionLog.RESUME, logged.getValue().getAction());
+        assertEquals("Đã kiểm tra bãi đáp", logged.getValue().getNote());
+        assertEquals("WEATHER", logged.getValue().getReason());
+        assertEquals(42L, logged.getValue().getActorUserId());
+    }
+
+    @Test
+    void resumingWithoutANoteKeepsTheNoteEmpty() {
+        when(suspensions.findById(7L)).thenReturn(Optional.of(stop(7L, null)));
+
+        control.resume(7L, 42L);
+
+        ArgumentCaptor<DroneStationSuspensionLog> logged = ArgumentCaptor.forClass(DroneStationSuspensionLog.class);
+        verify(logs).save(logged.capture());
+        assertNull(logged.getValue().getNote());
+    }
+
+    @Test
     void rejectsUnknownReasonAndPastResumeTime() {
         assertEquals("DRONE_STATION_SUSPEND_REASON_INVALID", assertThrows(BusinessException.class,
                 () -> control.suspend(7L, new DroneFlightControlViews.SuspendStationRequest("RAIN", null, null), 1L))
