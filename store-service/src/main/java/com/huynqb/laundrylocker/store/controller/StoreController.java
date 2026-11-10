@@ -112,8 +112,11 @@ public class StoreController {
     }
 
     @DeleteMapping("/api/admin/stores/{id}")
-    public ApiResponse<Void> adminDelete(@PathVariable Long id) {
-        service.delete(id);
+    public ApiResponse<Void> adminDelete(
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        service.delete(id, reason, userId);
         return ApiResponse.ok("STORE_DELETED", "Store deleted");
     }
 }

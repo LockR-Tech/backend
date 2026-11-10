@@ -24,6 +24,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import com.huynqb.laundrylocker.common.util.DeleteReason;
+import java.time.LocalDateTime;
 
 @Slf4j
 @Service
@@ -209,13 +211,16 @@ public class NotificationService {
         notificationRepository.deleteByUserId(userId);
     }
 
-    /// Xoá bất kỳ notification nào (trang admin).
+    /// Admin xoá: xoá mềm kèm lý do (@SQLRestriction ẩn khỏi mọi truy vấn, kể cả hộp thư của người nhận).
     @Transactional
-    public void delete(Long id) {
-        if (!notificationRepository.existsById(id)) {
-            throw new NotFoundException("Notification", id);
-        }
-        notificationRepository.deleteById(id);
+    public void delete(Long id, String reason, Long actorUserId) {
+        String deleteReason = DeleteReason.require(reason);
+        NotificationMessage notification = notificationRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Notification", id));
+        notification.setDeletedAt(LocalDateTime.now());
+        notification.setDeletedBy(actorUserId);
+        notification.setDeletedReason(deleteReason);
+        notificationRepository.save(notification);
     }
 
     /// Người dùng chỉ xoá được notification của chính mình; của người khác trả 404.

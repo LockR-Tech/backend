@@ -3,10 +3,12 @@ package com.huynqb.laundrylocker.store.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.time.LocalDateTime;
 
 @Entity
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "stores")
 @Getter
 @Setter
@@ -35,6 +37,16 @@ public class StoreLocation {
 
     @Column(nullable = false, length = 30)
     private String status = "ACTIVE";
+
+    /// Xoá mềm từ trang admin: còn nguyên trong DB kèm lý do, thời điểm và người xoá.
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_reason", length = 500)
+    private String deletedReason;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

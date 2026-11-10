@@ -26,6 +26,8 @@ import org.springframework.util.StringUtils;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import com.huynqb.laundrylocker.common.util.DeleteReason;
+import java.time.LocalDateTime;
 
 @Slf4j
 @Service
@@ -111,9 +113,11 @@ public class StoreService {
     }
 
     /// Không xoá cửa hàng còn tủ (tủ sẽ trỏ tới cửa hàng không tồn tại). Chưa tra được
-    /// locker-service thì từ chối thay vì xoá khi chưa chắc chắn.
+    /// locker-service thì từ chối thay vì xoá khi chưa chắc chắn. Xoá mềm: cửa hàng biến khỏi mọi truy vấn
+    /// (@SQLRestriction) nhưng còn trong DB kèm lý do.
     @Transactional
-    public void delete(Long id) {
+    public void delete(Long id, String reason, Long actorUserId) {
+        String deleteReason = DeleteReason.require(reason);
         StoreLocation store = repository.findById(id).orElseThrow(() -> new NotFoundException("Store", id));
         List<LockerClient.LockerRef> lockers = lockersOf(id);
         if (!lockers.isEmpty()) {
@@ -127,7 +131,10 @@ public class StoreService {
                             + "). Chuyển tủ sang cửa hàng khác hoặc xoá tủ trước khi xoá cửa hàng.",
                     HttpStatus.CONFLICT);
         }
-        repository.delete(store);
+        store.setDeletedAt(LocalDateTime.now());
+        store.setDeletedBy(actorUserId);
+        store.setDeletedReason(deleteReason);
+        repository.save(store);
         CatalogChangeEvents.publish(rabbitTemplate, "store-service", CatalogChangeEvents.STORE, id);
     }
 

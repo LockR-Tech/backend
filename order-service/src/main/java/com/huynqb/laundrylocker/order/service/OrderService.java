@@ -46,6 +46,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import com.huynqb.laundrylocker.common.util.DeleteReason;
 
 @Slf4j
 @Service
@@ -2005,9 +2006,11 @@ public class OrderService {
 
     /// Xóa cứng một mã đã có lượt dùng/đã được lưu vào ví sẽ mất dữ liệu lịch
     /// sử (audit khuyến mãi, số tiền đã giảm cho từng đơn). Chặn và yêu cầu
-    /// chuyển INACTIVE thay vì xóa.
+    /// chuyển INACTIVE thay vì xóa. Mã chưa dùng thì xoá mềm: biến khỏi mọi truy vấn (@SQLRestriction)
+    /// nhưng còn trong DB kèm lý do.
     @Transactional
-    public void deletePromotion(Long id) {
+    public void deletePromotion(Long id, String reason, Long actorUserId) {
+        String deleteReason = DeleteReason.require(reason);
         Promotion promotion = promotion(id);
         if (promotionUsageRepository.existsByPromotionId(id)
                 || promotionClaimRepository.existsByPromotionId(id)) {
@@ -2015,7 +2018,10 @@ public class OrderService {
                     "PROMOTION_HAS_HISTORY",
                     "Mã đã có lượt sử dụng hoặc đã được lưu vào ví — chuyển trạng thái INACTIVE thay vì xóa");
         }
-        promotionRepository.delete(promotion);
+        promotion.setDeletedAt(LocalDateTime.now());
+        promotion.setDeletedBy(actorUserId);
+        promotion.setDeletedReason(deleteReason);
+        promotionRepository.save(promotion);
         CatalogChangeEvents.publish(rabbitTemplate, "order-service", CatalogChangeEvents.PROMOTION, id);
     }
 
