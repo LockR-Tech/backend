@@ -192,7 +192,7 @@ public class OrderService {
         if ("RENTAL".equalsIgnoreCase(order.getType())) {
             occupyBoxQuietly(order.getSendBoxId());
             order.setPickupDeadline(LocalDateTime.now().plusHours(resolveRentalDurationHours(order)));
-            return transition(order, "STORING", userId, null, "Renter placed items; multi-use PIN active until deadline");
+            return transition(order, "STORING", userId, null, "Người thuê đã cất đồ; mã mở ô dùng được nhiều lần tới hết hạn thuê");
         }
         if ("SEND".equalsIgnoreCase(order.getType())
                 && rules.sendConfirmRequiresOpen()
@@ -210,9 +210,9 @@ public class OrderService {
             order.setPickupDeadline(LocalDateTime.now().plusHours(sendStorageHours(order)));
             notifyParcelReadyForReceiver(order);
             return transition(order, "STORING", userId, null,
-                    "Sender dropped parcel; pickup PIN issued to receiver " + order.getReceiverPhone());
+                    "Người gửi đã bỏ kiện; đã cấp mã nhận hàng cho người nhận " + order.getReceiverPhone());
         }
-        return transition(order, "STORING", userId, null, "Customer confirmed items dropped in locker");
+        return transition(order, "STORING", userId, null, "Khách xác nhận đã bỏ đồ vào tủ");
     }
 
     /// iot-service báo ô vừa được mở bằng mã khi đơn còn INITIALIZED (người gửi đang bỏ
@@ -1013,7 +1013,7 @@ public class OrderService {
         order.setCompletedAt(LocalDateTime.now());
         order.setPinCode(null);
         return transition(order, "COMPLETED", staffId, order.getReceiveBoxId(),
-                StringUtils.hasText(note) ? note : "Order checked out by staff");
+                StringUtils.hasText(note) ? note : "Nhân viên đã kết thúc đơn");
     }
 
     @Transactional
@@ -1353,7 +1353,7 @@ public class OrderService {
         order.setCompletedAt(LocalDateTime.now());
         order.setPinCode(null);
         return transition(order, "COMPLETED", userId, order.getReceiveBoxId(),
-                "RENTAL".equalsIgnoreCase(order.getType()) ? "Rental ended, cell released" : "Storage order picked up");
+                "RENTAL".equalsIgnoreCase(order.getType()) ? "Kết thúc thuê, đã nhả ô" : "Đã lấy đồ gửi giữ");
     }
 
     @Transactional
