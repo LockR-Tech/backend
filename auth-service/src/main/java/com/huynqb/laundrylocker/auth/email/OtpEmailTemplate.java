@@ -22,10 +22,13 @@ public final class OtpEmailTemplate {
                   <div style="display:none;max-height:0;overflow:hidden;opacity:0">%s — %s</div>
                   <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#F2F5F9;padding:28px 12px">
                     <tr><td align="center"><table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#FFFFFF;border:1px solid #E4EAF1;border-radius:16px">
-                      <tr><td style="padding:20px 26px;background:#0B2545;border-radius:16px 16px 0 0">
-                        <div style="font-size:22px;font-weight:700;color:#FFFFFF;letter-spacing:1px">Lock<span style="color:#5CC8FF">.</span>R</div>
-                        <div style="margin-top:3px;font-size:11px;letter-spacing:1.5px;color:#D8E5F3">SMART LOCKER · DRONE DELIVERY</div>
-                      </td></tr>
+                      <tr><td style="padding:20px 26px;background:#0B2545;border-radius:16px 16px 0 0"><table role="presentation" cellspacing="0" cellpadding="0"><tr>
+                        <td style="vertical-align:middle"><img src="cid:lockr-logo" width="48" height="48" alt="Lock.R" style="display:block;width:48px;height:48px;border-radius:10px"></td>
+                        <td style="padding-left:12px;vertical-align:middle">
+                          <div style="font-size:22px;font-weight:700;color:#FFFFFF;letter-spacing:1px">Lock<span style="color:#5CC8FF">.</span>R</div>
+                          <div style="margin-top:3px;font-size:11px;letter-spacing:1.5px;color:#D8E5F3">SMART LOCKER · DRONE DELIVERY</div>
+                        </td>
+                      </tr></table></td></tr>
                       <tr><td style="padding:28px 26px 8px">
                         <h1 style="margin:0 0 6px;font-size:22px;line-height:1.3;color:#10243E">%s</h1>
                         <div style="font-size:13px;color:#718096">%s</div>

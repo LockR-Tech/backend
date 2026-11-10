@@ -5,6 +5,7 @@ import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -16,6 +17,8 @@ import org.springframework.util.StringUtils;
 @Service
 @RequiredArgsConstructor
 public class SmtpEmailService implements EmailService {
+
+    static final String LOGO_CID = "lockr-logo";
 
     private final JavaMailSender mailSender;
 
@@ -58,6 +61,11 @@ public class SmtpEmailService implements EmailService {
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
+            // Logo nhúng inline (cid) thay vì link ngoài: Gmail/Outlook chặn ảnh từ URL lạ cho tới khi người
+            // dùng bấm "hiện ảnh", còn ảnh đính kèm inline thì hiện ngay.
+            if (htmlContent != null && htmlContent.contains("cid:" + LOGO_CID)) {
+                helper.addInline(LOGO_CID, new ClassPathResource("email/lockr-logo.png"), "image/png");
+            }
             mailSender.send(message);
         } catch (MessagingException ex) {
             log.warn("Failed to send HTML email to {}: {}", to, ex.getMessage());
