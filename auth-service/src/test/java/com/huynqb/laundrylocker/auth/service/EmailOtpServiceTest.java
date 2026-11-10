@@ -81,6 +81,7 @@ class EmailOtpServiceTest {
         assertTrue(html.contains("Mã xác thực quản trị"));
         assertTrue(html.contains("123456"));
         assertTrue(html.contains("color-scheme"));
+        assertTrue(html.contains("cid:lockr-logo"), "logo Lock.R nhúng inline ở đầu thư");
         // Gmail/Outlook bỏ <style> và gradient; mẫu cũ dựa vào chúng nên mất màu ở chế độ tối.
         assertFalse(html.contains("<style"), "style must be inline");
         assertFalse(html.contains("gradient"));
