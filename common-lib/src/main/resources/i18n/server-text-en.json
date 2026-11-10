@@ -1265,6 +1265,8 @@
   "Mã đơn: {}": "Order code: {}",
   "Lấy tại: {}": "Pickup at: {}",
   "Mã mở ô: {}": "Box code: {}",
+  "MÃ MỞ Ô · CODE": "BOX CODE",
+  "MÃ MỞ TỦ · CODE": "LOCKER CODE",
   "Đơn {} qua tủ Lock.R đã bị hủy trước khi hàng được bỏ vào tủ.": "Order {} via a Lock.R locker was cancelled before the parcel was put in the locker.",
   "Rất tiếc, đơn hàng {} giao bằng drone không hoàn tất.": "Unfortunately, drone delivery of order {} could not be completed.",
   "Bạn xem chi tiết và trạng thái hoàn tiền trong ứng dụng Lock.R.": "You can see the details and refund status in the Lock.R app.",
