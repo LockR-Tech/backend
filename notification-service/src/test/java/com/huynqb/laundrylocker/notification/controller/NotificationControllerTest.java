@@ -20,6 +20,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -65,7 +67,7 @@ class NotificationControllerTest {
                 .andExpect(jsonPath("$.code").value("NOTIFICATION_DELETED"));
 
         verify(notificationService).delete(5L, 7L);
-        verify(notificationService, never()).delete(5L);
+        verify(notificationService, never()).delete(eq(5L), anyString(), any());
     }
 
     @Test
@@ -101,7 +103,7 @@ class NotificationControllerTest {
     void adminDeleteReadAndResendWorkById() throws Exception {
         when(notificationService.markRead(5L)).thenReturn(response(5L, 7L, "READ"));
         when(notificationService.resend(5L)).thenReturn(response(5L, 7L, "UNREAD"));
-        doThrow(new NotFoundException("Notification", 9L)).when(notificationService).delete(9L);
+        doThrow(new NotFoundException("Notification", 9L)).when(notificationService).delete(eq(9L), anyString(), any());
 
         mvc.perform(patch("/api/admin/notifications/5/read"))
                 .andExpect(status().isOk())
@@ -110,13 +112,13 @@ class NotificationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("NOTIFICATION_RESENT"))
                 .andExpect(jsonPath("$.data.userId").value(7));
-        mvc.perform(delete("/api/admin/notifications/5"))
+        mvc.perform(delete("/api/admin/notifications/5").param("reason", "Gửi nhầm").header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("NOTIFICATION_DELETED"));
-        mvc.perform(delete("/api/admin/notifications/9"))
+        mvc.perform(delete("/api/admin/notifications/9").param("reason", "Gửi nhầm"))
                 .andExpect(status().isNotFound());
 
-        verify(notificationService).delete(5L);
+        verify(notificationService).delete(5L, "Gửi nhầm", 1L);
     }
 
     @Test
