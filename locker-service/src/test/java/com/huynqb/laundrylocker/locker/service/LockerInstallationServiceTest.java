@@ -33,6 +33,7 @@ import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -218,6 +219,19 @@ class LockerInstallationServiceTest {
     }
 
     @Test
+    void technicianActionsReturnControllerSoAppKeepsBoxTestEnabled() {
+        inProgress();
+        commissioning(readyStatus(List.of()));
+
+        // App thay cả hồ sơ bằng phản hồi; thiếu bộ điều khiển thì app ẩn nút mở thử ô ("Gán bộ điều khiển trước").
+        InstallationResponse response = service.updateCheck(
+                ID, "LID", new InstallationCheckRequest("NOT_APPLICABLE", "Tủ không có bãi đáp"), TECH, false);
+
+        assertEquals("AA:BB:CC:DD:EE:FF", response.controllerMac());
+        assertTrue(response.iotAvailable());
+    }
+
+    @Test
     void otherTechnicianCannotWorkOnTheDossier() {
         inProgress();
 
@@ -266,6 +280,25 @@ class LockerInstallationServiceTest {
         commissioning(readyStatus(List.of(command("BOX_OPEN", 71L, "SUCCESS", 0))));
         service.detail(ID, TECH, false);
         assertEquals("PENDING", check(InstallationCheckItem.BOX_TEST).getStatus());
+    }
+
+    @Test
+    void failedLidCommandShowsControllerReason() {
+        inProgress();
+        commissioning(readyStatus(List.of(new IotClient.CommandResult("LID_OPEN", null, null, 1, "FAILED",
+                "Trục 1 chưa bật trên Pi", LocalDateTime.of(2026, 11, 9, 9, 0)))));
+        service.detail(ID, TECH, false);
+        assertEquals("FAILED", check(InstallationCheckItem.LID).getStatus());
+        assertEquals("Lệnh nắp lỗi (mở: FAILED — Trục 1 chưa bật trên Pi; đóng: chưa thử)",
+                check(InstallationCheckItem.LID).getNote());
+    }
+
+    @Test
+    void serverTimestampInNotesIsShownInVietnamTime() {
+        // Container lưu giờ UTC: 16:25 UTC là 23:25 ở Việt Nam.
+        assertEquals(" lúc 23:25 11/11/2026",
+                LockerInstallationService.atStorageTime(LocalDateTime.of(2026, 11, 11, 16, 25), ZoneOffset.UTC));
+        assertEquals("", LockerInstallationService.atStorageTime(null, ZoneOffset.UTC));
     }
 
     @Test
