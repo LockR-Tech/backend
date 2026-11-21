@@ -1499,5 +1499,11 @@
   "Đã tạo phiếu chi bồi thường (đã gắn STK ngân hàng) và yêu cầu hoàn phí giao": "Compensation payout created (bank account attached) and a delivery fee refund request",
   "Đã tạo phiếu chi bồi thường (chờ khách hàng bổ sung STK ngân hàng) và yêu cầu hoàn phí giao": "Compensation payout created (waiting for the customer to add a bank account) and a delivery fee refund request",
   "Đã lấy hàng tại {} — mang về tủ gửi để phóng drone": "Picked up at {} — bringing it to the sending locker to launch the drone",
-  "Kỹ thuật viên mang kiện về tủ gửi và gán drone {}": "The technician brought the parcel to the sending locker and assigned drone {}"
+  "Kỹ thuật viên mang kiện về tủ gửi và gán drone {}": "The technician brought the parcel to the sending locker and assigned drone {}",
+  "Thiếu giá trị autoShow": "autoShow is required",
+  "Mã nhóm hướng dẫn không hợp lệ (chỉ chữ thường, số, gạch ngang)": "Invalid guide group code (lowercase letters, digits and hyphens only)",
+  "Phiên bản hướng dẫn không hợp lệ": "Invalid guide version",
+  "Đã ghi quá nhiều nhóm hướng dẫn": "Too many guide groups recorded",
+  "Đã lưu cài đặt hướng dẫn": "Guide settings saved",
+  "Đã ghi nhận hướng dẫn đã xem": "Guide marked as seen"
 }
