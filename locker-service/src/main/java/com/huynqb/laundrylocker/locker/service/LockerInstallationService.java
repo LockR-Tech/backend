@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.common.media.CloudinaryMediaStorage;
 import com.huynqb.laundrylocker.common.media.MediaPurpose;
 import com.huynqb.laundrylocker.common.media.VerifiedMedia;
+import com.huynqb.laundrylocker.common.util.BusinessTime;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.dto.InstallationCheckRequest;
 import com.huynqb.laundrylocker.locker.dto.InstallationPhotosRequest;
@@ -34,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -247,6 +249,12 @@ public class LockerInstallationService {
     public InstallationResponse detail(Long id, Long actorId, boolean admin) {
         LockerInstallation installation = load(id);
         requireAssigneeOrAdmin(installation, actorId, admin);
+        return openView(installation);
+    }
+
+    /// Hồ sơ kèm dữ liệu tủ (bộ điều khiển, online) khi đang lắp / chờ duyệt. Dùng cho mọi phản hồi của thao tác
+    /// KTV: app thay cả hồ sơ bằng phản hồi, thiếu bộ điều khiển là app tưởng tủ chưa gán Pi (ẩn nút mở thử ô).
+    private InstallationResponse openView(LockerInstallation installation) {
         if (installation.getStatus() == IN_PROGRESS || installation.getStatus() == SUBMITTED) {
             IotClient.CommissioningStatus status = refreshAuto(installation);
             return toResponse(installation, status, status != null);
@@ -305,10 +313,7 @@ public class LockerInstallationService {
         check.setCheckedBy(PENDING.equals(status) ? null : actorId);
         check.setCheckedAt(PENDING.equals(status) ? null : LocalDateTime.now());
         checks.save(check);
-        if (item.auto()) {
-            refreshAuto(installation);
-        }
-        return toResponse(installation, null, true);
+        return openView(installation);
     }
 
     @Transactional
@@ -351,7 +356,7 @@ public class LockerInstallationService {
             rows.add(photo);
         }
         photos.saveAll(rows);
-        return toResponse(installation, null, true);
+        return openView(installation);
     }
 
     @Transactional
@@ -384,7 +389,7 @@ public class LockerInstallationService {
                 checks.save(check);
             }
         }
-        return toResponse(installation, null, true);
+        return openView(installation);
     }
 
     @Transactional
@@ -463,7 +468,8 @@ public class LockerInstallationService {
                     "Chờ admin áp cấu hình phần cứng (web admin › Điều khiển tủ)", null, changed);
         } else if (COMMAND_OK.contains(hardware)) {
             setAuto(byItem.get(InstallationCheckItem.HARDWARE_CONFIG), PASSED,
-                    "Tủ đã nhận cấu hình" + at(status.hardwareAppliedAt()), null, changed);
+                    "Tủ đã nhận cấu hình" + atStorageTime(status.hardwareAppliedAt(), ZoneId.systemDefault()),
+                    null, changed);
         } else {
             setAuto(byItem.get(InstallationCheckItem.HARDWARE_CONFIG), FAILED,
                     "Áp cấu hình " + hardware + (StringUtils.hasText(status.hardwareApplyMessage())
@@ -529,27 +535,38 @@ public class LockerInstallationService {
         if (NOT_APPLICABLE.equals(check.getStatus()) && VERIFIED_BY_TECHNICIAN.equals(check.getVerifiedBy())) {
             return;   // KTV đã ghi tủ không có nắp / bãi đáp
         }
-        String open = null;
-        String close = null;
+        IotClient.CommandResult open = null;
+        IotClient.CommandResult close = null;
         for (IotClient.CommandResult command : commands(status)) {
             String action = upper(command.action());
             if ("LID_OPEN".equals(action)) {
-                open = upper(command.status());
+                open = command;
             } else if ("LID_CLOSE".equals(action)) {
-                close = upper(command.status());
+                close = command;
             }
         }
-        boolean openOk = open != null && COMMAND_OK.contains(open);
-        boolean closeOk = close != null && COMMAND_OK.contains(close);
+        boolean openOk = open != null && COMMAND_OK.contains(upper(open.status()));
+        boolean closeOk = close != null && COMMAND_OK.contains(upper(close.status()));
         if (openOk && closeOk) {
             setAuto(check, PASSED, "Nắp mở và đóng thành công", null, changed);
         } else if ((open != null && !openOk) || (close != null && !closeOk)) {
-            setAuto(check, FAILED, "Lệnh nắp lỗi (mở: " + Objects.toString(open, "chưa thử") + ", đóng: "
-                    + Objects.toString(close, "chưa thử") + ")", null, changed);
+            // Kèm lý do tủ báo (vd. "Trục 1 chưa bật trên Pi") — trước đây KTV chỉ thấy "FAILED".
+            setAuto(check, FAILED, "Lệnh nắp lỗi (mở: " + lidResult(open) + "; đóng: " + lidResult(close) + ")",
+                    null, changed);
         } else {
             setAuto(check, PENDING, "Thử mở rồi đóng nắp trên app (tủ không có nắp thì đánh dấu không áp dụng)",
                     null, changed);
         }
+    }
+
+    /// "SUCCESS", "FAILED — Trục 1 chưa bật trên Pi" hoặc "chưa thử".
+    private static String lidResult(IotClient.CommandResult command) {
+        if (command == null) {
+            return "chưa thử";
+        }
+        String status = Objects.toString(upper(command.status()), "?");
+        String message = command.message() == null ? "" : command.message().trim();
+        return COMMAND_OK.contains(status) || message.isEmpty() ? status : status + " — " + message;
     }
 
     private static List<IotClient.CommandResult> commands(IotClient.CommissioningStatus status) {
@@ -667,8 +684,16 @@ public class LockerInstallationService {
         return value == null ? null : value.trim().toUpperCase(Locale.ROOT);
     }
 
+    /// Mốc đã theo giờ Việt Nam (lịch lắp admin nhập).
     private static String at(LocalDateTime time) {
         return time == null ? "" : " lúc " + time.format(TIME);
+    }
+
+    /// Mốc server tự ghi bằng `LocalDateTime.now()` theo giờ JVM (UTC trên container) ⇒ đổi sang giờ Việt Nam
+    /// trước khi đưa vào câu chữ (trước đây ghi "lúc 16:25" cho 23:25).
+    static String atStorageTime(LocalDateTime time, ZoneId storageZone) {
+        return time == null ? "" : at(time.atZone(storageZone)
+                .withZoneSameInstant(BusinessTime.DEFAULT_BUSINESS_ZONE).toLocalDateTime());
     }
 
     private static void applyRequest(LockerInstallation installation, InstallationRequest request) {
