@@ -89,7 +89,7 @@ public class DroneOrderBookingService {
         String mode = userId == null ? "STANDARD" : resolveFulfillmentMode(null, userId);
         DroneSourceLockerSelector.Selection selection = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null,
-                rules.droneShortRouteAllowed(mode));
+                rules.droneShortRouteAllowed(mode), true);
         flightControl.assertStationsOpen(null, routeContext(null, selection), selection.destination().id());
         DroneWeatherAssessment weather = weatherService.assessJourney(
                 request.pickupLatitude(), request.pickupLongitude(), selection.source(), selection.destination());
@@ -131,7 +131,7 @@ public class DroneOrderBookingService {
 
         DroneSourceLockerSelector.Selection route = sourceLockerSelector.select(
                 request.pickupLatitude(), request.pickupLongitude(), request.destinationLockerId(), null,
-                rules.droneShortRouteAllowed(fulfillmentMode));
+                rules.droneShortRouteAllowed(fulfillmentMode), true);
         DroneFlightControl.Context context = routeContext(userId, route);
         flightControl.assertStationsOpen(DroneFlightBlock.BOOKING, context, route.destination().id());
         DroneWeatherAssessment weather = weatherService.assessJourney(

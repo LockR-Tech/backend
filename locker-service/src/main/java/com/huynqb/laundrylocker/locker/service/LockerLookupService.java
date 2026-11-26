@@ -48,7 +48,8 @@ public class LockerLookupService {
                             locker.getAddress(), locker.getLatitude(), locker.getLongitude(),
                             locker.getLandingPad(), locker.getLandingMarkerId(), locker.getLandingPadStatus(),
                             boxes.size(), available,
-                            locker.getAssignedTechnicianId(), null, null);
+                            locker.getAssignedTechnicianId(), null, null,
+                            LockerService.acceptsNewOrders(locker), LockerService.orderPauseReason(locker));
                 })
                 .toList();
     }

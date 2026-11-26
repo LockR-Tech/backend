@@ -114,6 +114,36 @@ class DroneSourceLockerSelectorTest {
         assertEquals(0, demo.routeDistanceMeters());
     }
 
+    /// Đơn mới (F3-G16): tủ nhận chưa có KTV phụ trách bị từ chối; tủ bay chưa có KTV bị bỏ qua, chọn tủ khác.
+    /// Chọn lại tủ cho đơn đang chạy (newOrder=false) thì không xét KTV.
+    @Test
+    void newOrdersNeedATechnicianAtBothLockers() {
+        when(rules.droneMaxPickupMeters()).thenReturn(5000);
+        when(rules.droneMaxRouteMeters()).thenReturn(10000);
+        when(rules.droneMinRouteMeters()).thenReturn(200);
+        when(rules.droneMinPreflightBatteryPercent()).thenReturn(20);
+        LockerInfo nearNoTech = new LockerInfo(1L, 1L, "S1", "S1", "ACTIVE", "", 10.8411, 106.8097, true, null, "OK",
+                4, 2, null, false, "NO_TECHNICIAN");
+        LockerInfo far = new LockerInfo(2L, 1L, "S2", "S2", "ACTIVE", "", 10.8311, 106.8097, true, null, "OK",
+                4, 2, 7L, true, null);
+        LockerInfo destination = new LockerInfo(9L, 1L, "D", "D", "ACTIVE", "", 10.8711, 106.8097, true, null, "OK",
+                4, 2, 8L, true, null);
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(nearNoTech, far, destination)));
+        for (long id : new long[] {1L, 2L}) {
+            when(drones.getLockerLayout(id)).thenReturn(ApiResponse.ok(new LockerLayoutDto(id, "S", "S", "ACTIVE", true, "OK")));
+            when(drones.listDroneUnits(id)).thenReturn(ApiResponse.ok(List.of(drone("IDLE", 90, true))));
+        }
+
+        assertEquals(2L, selector.select(10.8412, 106.8097, 9L, null, false, true).source().id());
+        assertEquals(1L, selector.select(10.8412, 106.8097, 9L, null, false, false).source().id());
+
+        LockerInfo destinationNoTech = new LockerInfo(9L, 1L, "D", "D", "ACTIVE", "", 10.8711, 106.8097, true, null,
+                "OK", 4, 2, null, false, "NO_TECHNICIAN");
+        when(lookup.getLockers(null)).thenReturn(ApiResponse.ok(List.of(far, destinationNoTech)));
+        var error = assertThrows(BusinessException.class, () -> selector.select(10.8412, 106.8097, 9L, null, false, true));
+        assertEquals("LOCKER_NO_TECHNICIAN", error.getCode());
+    }
+
     /// Tủ nhận sát nơi gửi (dưới quãng bay tối thiểu) thì không giao bằng drone — kể cả khi có tủ bay xa hơn
     /// làm quãng bay "đủ" (test 2026-10-29: tủ nhận cách người gửi 13 m vẫn đặt được, drone bay 1,6 km).
     @Test

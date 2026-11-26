@@ -1821,6 +1821,7 @@
   "Tài khoản vẫn thấy điểm gửi demo khi đã ẩn": "Accounts that still see hidden demo drop-off points",
   "Chế độ thử mở ô qua Bluetooth đang tắt": "Bluetooth test-opening is turned off",
   "Tủ này hiện không nhận đơn mới": "This locker is not taking new orders right now",
+  "Tủ này chưa có kỹ thuật viên phụ trách nên tạm ngưng nhận đơn mới": "This locker has no assigned technician yet, so it is not taking new orders",
   "Lệnh nắp lỗi (mở: {}; đóng: {})": "Lid command failed (open: {}; close: {})",
   "Mã đã có lượt sử dụng hoặc đã có khách lưu lại — hãy chuyển sang Ngừng hoạt động thay vì xoá": "The code has been used or saved by a customer — set it to Inactive instead of deleting it",
   "Mã OTP gửi qua email (đăng nhập, quên mật khẩu, xác thực 2 bước của admin) hết hạn sau khoảng này.": "OTP codes sent by email (sign-in, forgotten password, admin two-step verification) expire after this long.",

@@ -45,13 +45,20 @@ public class LockerController {
         return ApiResponse.ok(lockerService.listLockers(storeId, userId, roles));
     }
 
-    /// Tủ có nhận đơn mới của người này không (tủ demo đã ẩn ⇒ không) — order-service gọi khi tạo đơn (F3-G14).
+    /// Tủ có nhận đơn mới của người này không — order-service gọi khi tạo đơn. `visible=false`: tủ demo đã ẩn
+    /// (F3-G14). `acceptingOrders=false` kèm `orderPauseReason`: bảo trì / đang lắp đặt / chưa có KTV phụ trách (F3-G16).
     @GetMapping("/internal/lockers/{id}/customer-visible")
     public ApiResponse<Map<String, Object>> customerVisible(
             @PathVariable Long id,
             @RequestParam(required = false) Long userId,
             @RequestParam(required = false) String roles) {
-        return ApiResponse.ok(Map.of("lockerId", id, "visible", lockerService.lockerOpenToCustomer(id, userId, roles)));
+        String pauseReason = lockerService.orderPauseReasonOf(id);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("lockerId", id);
+        body.put("visible", lockerService.lockerOpenToCustomer(id, userId, roles));
+        body.put("acceptingOrders", pauseReason == null);
+        body.put("orderPauseReason", pauseReason);
+        return ApiResponse.ok(body);
     }
 
     @GetMapping("/api/lockers/{id}")

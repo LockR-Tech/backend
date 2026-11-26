@@ -721,22 +721,28 @@ public class OrderService {
         }
     }
 
-    /// Tủ demo đã ẩn với khách (cụm "Giả lập & demo", F3-G14) thì không nhận đơn mới. Không hỏi được
-    /// locker-service thì cho qua — không chặn khách thật chỉ vì lỗi mạng tạm thời.
+    /// Tủ demo đã ẩn với khách (cụm "Giả lập & demo", F3-G14) hoặc tủ chưa có KTV phụ trách (F3-G16) thì không
+    /// nhận đơn mới. Không hỏi được locker-service thì cho qua — không chặn khách thật chỉ vì lỗi mạng tạm thời
+    /// (giữ ô vẫn bị locker-service chặn nếu tủ đang bảo trì).
     private void assertLockerOpenToCustomer(Long lockerId, Long userId) {
         if (lockerId == null) {
             return;
         }
-        Object visible;
+        Map<String, Object> data;
         try {
             ApiResponse<Map<String, Object>> res = lockerLookupClient.customerVisible(lockerId, userId);
-            visible = res == null || res.data() == null ? null : res.data().get("visible");
+            data = res == null || res.data() == null ? Map.of() : res.data();
         } catch (Exception ex) {
             log.warn("Cannot check customer visibility of locker {}: {}", lockerId, ex.getMessage());
             return;
         }
-        if (Boolean.FALSE.equals(visible)) {
+        if (Boolean.FALSE.equals(data.get("visible"))) {
             throw new BusinessException("LOCKER_NOT_AVAILABLE", "Tủ này hiện không nhận đơn mới");
+        }
+        if (Boolean.FALSE.equals(data.get("acceptingOrders"))
+                && "NO_TECHNICIAN".equals(data.get("orderPauseReason"))) {
+            throw new BusinessException(
+                    "LOCKER_NO_TECHNICIAN", "Tủ này chưa có kỹ thuật viên phụ trách nên tạm ngưng nhận đơn mới");
         }
     }
 
