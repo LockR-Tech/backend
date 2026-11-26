@@ -36,11 +36,11 @@ public class IotSettingsCatalog implements SettingsCatalog {
                 integer(LOCKOUT_MINUTES, UNLOCK, "Thời gian tạm khoá ô",
                         "Ô bị khoá trong khoảng này sau khi nhập sai quá số lần cho phép.", 15, 1, 1440, "phút").asPublic(),
                 integer(UNLOCK_WAIT_SECONDS, UNLOCK, "Thời gian chờ tủ phản hồi lệnh mở",
-                        "Hết thời gian này mà tủ chưa báo kết quả thì lệnh mở bị coi là quá hạn (TIMEOUT). "
-                                + "Đặt trên 20 giây cần tăng timeout gọi từ locker-service (APP_RESILIENCE4J_TL_TIMEOUT).",
+                        "Hết thời gian này mà tủ chưa báo kết quả thì lệnh mở bị coi là quá hạn. "
+                                + "Đặt trên 20 giây thì cần tăng thời gian chờ của hệ thống tủ (biến APP_RESILIENCE4J_TL_TIMEOUT).",
                         20, 5, 60, "giây"),
                 integer(DOOR_OPEN_TIMEOUT_SECONDS, UNLOCK, "Thời gian cửa ô mở chờ lấy/bỏ hàng",
-                        "Giá trị `timeout` gửi xuống tủ trong lệnh mở cửa.", 15, 5, 120, "giây"),
+                        "Thời gian cửa ô được mở, gửi xuống tủ cùng lệnh mở cửa.", 15, 5, 120, "giây"),
                 integer(KIOSK_CONFIRM_WINDOW_MINUTES, UNLOCK, "Thời hạn xác nhận tại tủ sau khi mở ô",
                         "Xác nhận đã bỏ hàng / kết thúc thuê trên màn hình tủ chỉ được chấp nhận trong "
                                 + "khoảng này kể từ lần mở ô thành công gần nhất của đơn.",

@@ -136,18 +136,18 @@ public class OrderSettingsCatalog implements SettingsCatalog {
     public List<SettingDefinition> definitions() {
         return List.of(
                 integer(SEND_BASE_FEE, PRICING, "Phí gửi hàng qua tủ",
-                        "Giá mỗi đơn gửi hàng (SEND). Áp dụng cho đơn tạo sau khi lưu.", 15000, 0, 100_000_000, "VND").asPublic(),
+                        "Giá mỗi đơn gửi hàng qua tủ. Áp dụng cho đơn tạo sau khi lưu.", 15000, 0, 100_000_000, "VND").asPublic(),
                 integer(DRONE_DELIVERY_FEE, PRICING, "Phí giao hàng drone",
                         "Giá cơ bản mỗi đơn giao bằng drone, đã gồm khối lượng cơ bản.", 15000, 0, 100_000_000, "VND").asPublic(),
                 integer(DRONE_WEIGHT_STEP_FEE, PRICING, "Phụ phí drone mỗi nấc khối lượng",
                         "Cộng thêm cho mỗi nấc khối lượng (kể cả nấc chưa trọn) vượt khối lượng cơ bản. 0 = giá đồng nhất.",
                         3000, 0, 10_000_000, "VND").asPublic(),
                 integer(RENTAL_RATE_STANDARD, PRICING, "Giá thuê ô tiêu chuẩn",
-                        "Giá mỗi giờ thuê ô STANDARD (và mọi loại ô không phải XL).", 5000, 0, 10_000_000, "VND/giờ").asPublic(),
+                        "Giá mỗi giờ thuê ô tiêu chuẩn (mọi loại ô không phải XL).", 5000, 0, 10_000_000, "VND/giờ").asPublic(),
                 integer(RENTAL_RATE_XL, PRICING, "Giá thuê ô XL",
                         "Giá mỗi giờ thuê ô cỡ XL.", 10000, 0, 10_000_000, "VND/giờ").asPublic(),
                 integer(RENTAL_DAILY_RATE_STANDARD, PRICING, "Giá thuê ô tiêu chuẩn theo ngày",
-                        "Giá mỗi 24 giờ thuê ô STANDARD, cũng là trần của phần giờ lẻ trong ngày: thuê 30 giờ = "
+                        "Giá mỗi 24 giờ thuê ô tiêu chuẩn, cũng là trần của phần giờ lẻ trong ngày: thuê 30 giờ = "
                                 + "1 ngày + min(6 × giá giờ, giá ngày). 0 = không có giá ngày, chỉ tính theo giờ.",
                         40000, 0, 100_000_000, "VND/ngày").asPublic(),
                 integer(RENTAL_DAILY_RATE_XL, PRICING, "Giá thuê ô XL theo ngày",
@@ -174,7 +174,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 integer(DRONE_PICKUP_HOURS, DEADLINES, "Hạn lấy hàng giao bằng drone",
                         "Tính từ lúc drone thả hàng vào ô.", 24, 1, 720, "giờ").asPublic(),
                 integer(AUTO_CANCEL_HOURS, DEADLINES, "Tự huỷ đơn chưa bỏ hàng sau",
-                        "Đơn INITIALIZED không xác nhận bỏ hàng sẽ bị huỷ và nhả ô. Nên ≤ thời gian giữ ô RESERVED bên locker.", 24, 1, 720, "giờ"),
+                        "Đơn chưa xác nhận bỏ hàng sau thời gian này bị huỷ và nhả ô. Nên đặt ≤ quy tắc «Thời gian giữ chỗ ô» của tủ.", 24, 1, 720, "giờ"),
                 integer(DRONE_UNPAID_CANCEL_MINUTES, DEADLINES, "Tự huỷ đơn drone chưa thanh toán sau",
                         "Đơn drone chưa trả tiền vẫn giữ ô ở tủ nhận; quá thời gian này thì huỷ và nhả ô. "
                                 + "0 = không tự huỷ.", 30, 0, 10_080, "phút").asPublic(),
@@ -200,10 +200,10 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Tính từ lúc nạp hàng. Quá hạn thì huỷ, nhả drone, hoàn phần đã trả và trả kiện cho người gửi. "
                                 + "0 = không tự huỷ.", 60, 0, 10_080, "phút").asPublic(),
                 integer(AUTO_CANCEL_UNPAID_MINUTES, DEADLINES, "Tự huỷ đơn chưa thanh toán sau",
-                        "Đơn INITIALIZED chưa thanh toán sẽ tự động bị huỷ và giải phóng ô tủ sau số phút này nếu khách không hoàn tất thanh toán.",
+                        "Đơn mới tạo chưa thanh toán sẽ tự động bị huỷ và giải phóng ô tủ sau số phút này nếu khách không hoàn tất thanh toán.",
                         15, 1, 180, "phút").asPublic(),
                 integer(OVERDUE_RELEASE_HOURS, DEADLINES, "Nhả ô quá hạn sau",
-                        "Số giờ sau hạn lấy hàng thì đơn chuyển EXPIRED và nhả ô. 0 = không tự nhả (tiếp tục lưu giữ tại tủ và tính phí quá hạn).", 72, 0, 720, "giờ").asPublic(),
+                        "Số giờ sau hạn lấy hàng thì đơn chuyển sang Quá hạn (đồ dời vào kho) và nhả ô. 0 = không tự nhả (tiếp tục lưu giữ tại tủ và tính phí quá hạn).", 72, 0, 720, "giờ").asPublic(),
                 integer(BOX_INCIDENT_PICKUP_GRACE_HOURS, DEADLINES, "Thời gian lấy đồ thêm sau khi xử lý sự cố ô",
                         "Ô của đơn đang có hàng bị báo sự cố: phí quá giờ dừng trong lúc chờ KTV. Xử lý xong, hạn lấy "
                                 + "đồ được cộng bù đúng thời gian bị kẹt và thêm số giờ này để khách kịp tới lấy.",
@@ -266,7 +266,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                 bool(INCIDENT_APPROVAL_REQUIRED, INCIDENT, "Bắt buộc duyệt bồi thường",
                         "Khoản bồi thường chỉ được thanh toán sau khi Admin duyệt.", true),
                 bool(INCIDENT_DISPUTE_ALLOWED, INCIDENT, "Cho phép khách yêu cầu xem xét lại",
-                        "Giữ proposal cũ và tạo phiên bản mới thay vì ghi đè lịch sử.", true),
+                        "Giữ phương án cũ và tạo phiên bản mới thay vì ghi đè lịch sử.", true),
 
                 // === GIAO HÀNG DRONE (VẬN HÀNH) ===
                 integer(DRONE_MIN_PREFLIGHT_BATTERY, DRONE, "Pin tối thiểu để nhận đơn drone",
@@ -298,8 +298,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                                 + "0 = không giới hạn.", 5000, 0, 100_000, "mét").asPublic(),
                 integer(DRONE_MIN_ROUTE_METERS, DRONE, "Quãng bay tối thiểu giữa hai tủ",
                         "Tủ gửi cách tủ nhận dưới mức này thì không được chọn làm tủ gửi — hai tủ cùng chỗ thì "
-                                + "khách gửi thẳng vào tủ, không cần drone. Ngoại lệ: đơn DEMO khi bật Indoor Demo "
-                                + "ArUco (quay demo trong phòng). 0 = không giới hạn.", 200, 0, 10_000, "mét").asPublic(),
+                                + "khách gửi thẳng vào tủ, không cần drone. Ngoại lệ: đơn thử nghiệm khi bật mô phỏng ArUco "
+                                + "trong phòng. 0 = không giới hạn.", 200, 0, 10_000, "mét").asPublic(),
                 integer(DRONE_MAX_PICKUP_METERS, DRONE, "Bán kính lấy hàng tận nhà",
                         "Điểm lấy hàng phải cách một tủ có bãi đáp không quá mức này (đường chim bay).",
                         5000, 100, 100_000, "mét").asPublic(),
@@ -358,7 +358,7 @@ public class OrderSettingsCatalog implements SettingsCatalog {
 
                 // === KẾT NỐI TỦ & ĐỊNH VỊ DRONE ===
                 integer(LID_ACK_TIMEOUT_SECONDS, DRONE_LINK, "Chờ tủ xác nhận lệnh nắp",
-                        "Tủ chưa trả ACCEPTED cho lệnh mở/đóng nắp sau chừng này giây thì gửi lại đúng lệnh cũ. "
+                        "Tủ chưa xác nhận đã nhận lệnh mở/đóng nắp sau chừng này giây thì gửi lại đúng lệnh cũ. "
                                 + "0 = gửi lại ở lượt quét kế tiếp.", 10, 0, 300, "giây"),
                 integer(LID_MOTION_TIMEOUT_SECONDS, DRONE_LINK, "Chờ nắp chạy xong",
                         "Tủ đã nhận lệnh nhưng chưa báo nắp chạy xong sau chừng này giây thì hỏi lại (nắp chạy tối đa "
@@ -367,8 +367,8 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Hết số lần này mà tủ vẫn không phản hồi thì phiên giao báo lỗi, drone được báo không thả hàng.",
                         5, 0, 50, "lần"),
                 integer(LOCKER_OFFLINE_AFTER_SECONDS, DRONE_LINK, "Coi tủ mất kết nối sau",
-                        "Không thấy heartbeat của tủ quá chừng này giây thì chờ tủ quay lại thay vì gửi lại lệnh nắp. "
-                                + "Pi gửi heartbeat mỗi 60 giây.", 90, 30, 3600, "giây"),
+                        "Không nhận được tín hiệu định kỳ (heartbeat) của tủ quá chừng này giây thì chờ tủ quay lại thay vì gửi lại lệnh nắp. "
+                                + "Pi gửi tín hiệu mỗi 60 giây.", 90, 30, 3600, "giây"),
                 integer(TELEMETRY_DEPARTED_DISTANCE, DRONE_LINK, "Drone đã rời tủ gửi khi cách",
                         "Telemetry báo drone cách tủ gửi quá mức này thì chuyển chặng sang 'Đang bay' "
                                 + "(tuyến ngắn thì lấy ¼ chiều dài tuyến).", 30, 5, 1000, "mét"),
@@ -379,17 +379,17 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                         "Drone đã đáp và cách tủ nhận không quá mức này thì coi là đã tới.", 30, 2, 500, "mét"),
 
                 // === MÔ PHỎNG & THỬ NGHIỆM DRONE (DEMO) ===
-                bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE_DEMO, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng (Indoor Demo)",
+                bool(DRONE_DEMO_INDOOR_ARUCO_ENABLED, DRONE_DEMO, "Bật mô phỏng giao hàng bằng nhận diện ArUco trong phòng",
                         "Khi bật (Chế độ B): camera ArUco thật nhận diện đúng mã ô tủ đích thì tủ trượt mở nắp THẬT; "
                                 + "tủ báo mở xong thì Pi drone nhận lệnh nhả hàng, giả lập theo số giây cấu hình rồi báo đã nhả "
                                 + "xong; hệ thống mới gửi lệnh đóng nắp thật, chỉ khi tủ báo đóng xong mới chuyển Sẵn sàng lấy "
                                 + "hàng. Tắt (Chế độ A): quy trình vận hành ngoài trời có GPS, drone tự báo đã nhả hàng.", false),
                 bool(DRONE_DEMO_INDOOR_HANDHELD_ENABLED, DRONE_DEMO, "Cho phép demo drone cầm tay (bỏ qua bước KTV)",
-                        "Chỉ dùng khi trình diễn trong nhà: khi bật cùng Chế độ B và chỉ có đúng một đơn DEMO đang chờ, "
+                        "Chỉ dùng khi trình diễn trong nhà: khi bật cùng Chế độ B và chỉ có đúng một đơn thử nghiệm đang chờ, "
                                 + "camera thấy đúng mã ô là hệ thống tự tạo nhiệm vụ — KHÔNG cần KTV lấy hàng, nạp và phóng. "
                                 + "Tắt (mặc định): drone phải được KTV phóng theo đúng quy trình mới được mở nắp tủ.", false),
                 integer(DRONE_DEMO_HOLD_OPEN_SECONDS, DRONE_DEMO, "Thời gian giả lập drone nhả hàng (giây)",
-                        "Chế độ Indoor Demo: sau khi tủ báo nắp trượt đã mở THẬT, Pi drone nhận lệnh nhả hàng, chờ "
+                        "Chế độ mô phỏng trong phòng: sau khi tủ báo nắp trượt đã mở THẬT, Pi drone nhận lệnh nhả hàng, chờ "
                                 + "chừng này giây (giả lập nhả hàng) rồi báo đã nhả xong; hệ thống mới gửi lệnh đóng nắp thật. "
                                 + "Nắp chỉ đóng khi drone báo nhả xong (quá số giây này + 60 giây thì nhật ký báo cảnh báo, "
                                 + "KTV đóng nắp ở trang Điều khiển tủ nếu cần). Không ảnh hưởng việc "
@@ -403,17 +403,17 @@ public class OrderSettingsCatalog implements SettingsCatalog {
                                 + "THẬT, chờ vài giây rồi đóng THẬT — không cần đơn hàng, không đổi trạng thái đơn nào. "
                                 + "Trong lúc bật, camera không xử lý giao hàng của đơn. Bật/tắt ở trang Nhật ký Drone & Tủ.", false),
                 integer(DRONE_LID_TEST_LOCKER_ID, DRONE_DEMO, "Tủ dùng cho chế độ thử nắp",
-                        "Mã tủ (lockerId) có nắp trượt dùng khi thử. Mặc định tủ thật CAB-TU01 (#7).", 7, 1, null, null),
+                        "Mã tủ có nắp trượt dùng khi thử. Mặc định tủ thật CAB-TU01 (#7).", 7, 1, null, null),
                 string(DRONE_LID_TEST_MARKERS, DRONE_DEMO, "Mã ArUco → ô khi thử nắp",
-                        "Danh sách mã ArUco:mã ô (box id), cách nhau dấu phẩy. Mặc định 0:39,1:40 = mã #0 → ô 2, "
+                        "Danh sách cặp mã ArUco:mã ô, cách nhau dấu phẩy. Mặc định 0:39,1:40 = mã #0 → ô 2, "
                                 + "mã #1 → ô 3 của tủ CAB-TU01.", "0:39,1:40", List.of()),
                 integer(DRONE_LID_TEST_HOLD_SECONDS, DRONE_DEMO, "Thời gian giữ nắp mở khi thử (giây)",
                         "Sau khi tủ báo nắp đã mở xong, chờ chừng này giây rồi gửi lệnh đóng.", 5, 1, 120, "giây"),
-                bool(DRONE_DEMO_ENABLED, DRONE_DEMO, "Cho phép chế độ drone DEMO",
+                bool(DRONE_DEMO_ENABLED, DRONE_DEMO, "Cho phép chế độ drone thử nghiệm",
                         "Bật bộ giả lập chặng bay cho đơn drone.", true),
                 integer(DRONE_DEMO_STAGE_DELAY_MS, DRONE_DEMO, "Thời gian mỗi chặng bay giả lập",
                         "Khoảng thời gian (ms) giữa các bước bay trong chế độ giả lập.", 15_000, 1000, 600_000, "ms"),
-                string(DRONE_DEMO_ALLOWED_USER_IDS, DRONE_DEMO, "User được dùng drone DEMO",
-                        "Danh sách user id cách nhau bởi dấu phẩy. Để trống = áp dụng cho mọi người.", "", List.of()));
+                string(DRONE_DEMO_ALLOWED_USER_IDS, DRONE_DEMO, "Người dùng được dùng drone thử nghiệm",
+                        "Mã người dùng (id), cách nhau bởi dấu phẩy. Để trống = áp dụng cho mọi người.", "", List.of()));
     }
 }

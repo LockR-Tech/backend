@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.AbstractJackson2HttpMessageConverter;
@@ -20,7 +21,8 @@ import java.util.Map;
 
 /// App gửi `X-App-Language: en` ⇒ mọi chuỗi tiếng Việt trong JSON trả về (lỗi, thông báo, ghi chú…)
 /// được dịch qua [ServerText] ngay trước khi ghi ra. Chỉ đụng response HTTP: tin RabbitMQ, lời gọi giữa
-/// service và WebSocket vẫn tiếng Việt, dữ liệu lưu trong DB không đổi.
+/// service và WebSocket vẫn tiếng Việt, dữ liệu lưu trong DB không đổi. Controller gắn [KeepServerText]
+/// được bỏ qua (tự dịch phần cần dịch).
 @RestControllerAdvice
 @RequiredArgsConstructor
 public class EnglishResponseAdvice implements ResponseBodyAdvice<Object> {
@@ -29,7 +31,9 @@ public class EnglishResponseAdvice implements ResponseBodyAdvice<Object> {
 
     @Override
     public boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
-        return AbstractJackson2HttpMessageConverter.class.isAssignableFrom(converterType);
+        return AbstractJackson2HttpMessageConverter.class.isAssignableFrom(converterType)
+                && !returnType.hasMethodAnnotation(KeepServerText.class)
+                && !AnnotatedElementUtils.hasAnnotation(returnType.getContainingClass(), KeepServerText.class);
     }
 
     @Override

@@ -37,10 +37,25 @@ class EnglishResponseAdviceTest {
         }
     }
 
+    /// Dữ liệu admin soạn: giữ nguyên chữ kể cả khi trùng một câu có bản dịch; lỗi vẫn được dịch.
+    @RestController
+    @KeepServerText
+    static class AuthoredProbe {
+        @GetMapping("/authored")
+        ApiResponse<Map<String, String>> authored() {
+            return ApiResponse.ok(Map.of("value", "Thanh toán thành công"));
+        }
+
+        @GetMapping("/authored/fail")
+        ApiResponse<Void> fail() {
+            throw new BusinessException("INVALID_POINTS", "Số điểm đổi phải lớn hơn 0");
+        }
+    }
+
     private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule())
             .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
-    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new Probe())
+    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new Probe(), new AuthoredProbe())
             .setControllerAdvice(new GlobalExceptionHandler(), new EnglishResponseAdvice(mapper))
             .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
             .build();
@@ -55,6 +70,16 @@ class EnglishResponseAdviceTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_BALANCE"))
                 .andExpect(jsonPath("$.message").value("Insufficient wallet balance"));
+    }
+
+    @Test
+    void keepServerTextSkipsBodyButNotErrors() throws Exception {
+        mvc.perform(get("/authored").header(ServerText.LANGUAGE_HEADER, "en"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.value").value("Thanh toán thành công"));
+        mvc.perform(get("/authored/fail").header(ServerText.LANGUAGE_HEADER, "en"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("The points to redeem must be greater than 0"));
     }
 
     @Test

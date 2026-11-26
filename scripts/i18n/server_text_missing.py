@@ -9,8 +9,8 @@ sẽ hiện tiếng Việt cho khách dùng tiếng Anh. Chạy sau khi thêm/đ
 
 Mẫu câu: biểu thức `"a" + x + "b"` ⇒ "a{}b"; `"..%s".formatted(..)` ⇒ %s thành {}. Bỏ qua log.*,
 comment, text block (khung HTML thư — các câu trong đó thêm tay vào bảng), file *Sms* (SMS viết không
-dấu, mẫu SMS thêm tay), prompt và tài liệu của assistant-service,
-mô tả cài đặt admin (*SettingsCatalog*).
+dấu, mẫu SMS thêm tay), prompt và tài liệu của assistant-service. Nhóm/tên/mô tả/đơn vị cài đặt admin
+(*SettingsCatalog*) có kiểm; giá trị mặc định dạng danh sách "a,b,c" là dữ liệu admin sửa nên bỏ qua.
 """
 import json
 import os
@@ -146,12 +146,15 @@ def templates_in(src):
 
 
 EXCLUDE = re.compile(
-    r'(Sms|scripts/|SettingsCatalog|HardwareConfigValidator|GatewayProvisioning|RevenueReport'
+    r'(Sms|scripts/|HardwareConfigValidator|GatewayProvisioning|RevenueReport'
     r'|DroneDeliverySimulator|common-lib/src/main/java/com/huynqb/laundrylocker/common/i18n/'
     r'|assistant-service/(?!src/main/java/com/huynqb/laundrylocker/assistant/(chat/AssistantService'
     r'|controller/AssistantExceptionHandler)))')
 # Không phải câu hiển thị: định dạng số/ngày, mã viết hoa ghép nội dung chuyển khoản, trang HTML, biểu thức regex.
 IGNORE = re.compile(r'^(%,dđ|HH:mm .*|[A-ZÀ-Ỹ ]{2,12}|<!DOCTYPE html>.*|\^.*\$)$', re.S)
+# Giá trị mặc định kiểu danh sách trong *SettingsCatalog* ("Tủ lỗi không mở được,Thanh toán trùng đơn"):
+# dấu phẩy không kèm khoảng trắng. Câu mô tả luôn viết ", " nên không bị bỏ sót.
+CSV_VALUE = re.compile(r'^[^,]+(?:,\S[^,]*)+$')
 
 
 def main():
@@ -174,6 +177,8 @@ def main():
             src = open(path, encoding='utf-8').read()
             for text, pos in templates_in(src):
                 if text.strip() in known or IGNORE.match(text.strip()):
+                    continue
+                if 'SettingsCatalog' in rel and CSV_VALUE.match(text.strip()) and ', ' not in text:
                     continue
                 missing.setdefault(text, f"{rel}:{src.count(chr(10), 0, pos) + 1}")
     out = sys.stdout.buffer

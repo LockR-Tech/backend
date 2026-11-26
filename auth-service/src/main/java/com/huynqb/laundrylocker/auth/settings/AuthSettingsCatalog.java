@@ -29,23 +29,23 @@ public class AuthSettingsCatalog implements SettingsCatalog {
     public List<SettingDefinition> definitions() {
         return List.of(
                 integer(OTP_EXPIRY_SECONDS, AUTH, "Thời hạn mã OTP email",
-                        "Mã OTP gửi qua email (đăng nhập, quên mật khẩu, 2FA admin) hết hạn sau khoảng này.",
+                        "Mã OTP gửi qua email (đăng nhập, quên mật khẩu, xác thực 2 bước của admin) hết hạn sau khoảng này.",
                         300, 60, 3600, "giây"),
                 integer(OTP_LENGTH, AUTH, "Số chữ số của mã OTP",
                         "Áp dụng cho mã gửi sau khi lưu; mã đã gửi vẫn dùng được đến khi hết hạn.", 6, 4, 8, "chữ số"),
-                integer(TEMP_TOKEN_TTL_SECONDS, AUTH, "Thời hạn token tạm",
-                        "Token tạm cấp sau khi xác thực OTP/số điện thoại để hoàn tất đăng ký hoặc 2FA admin.",
+                integer(TEMP_TOKEN_TTL_SECONDS, AUTH, "Thời hạn phiên đăng nhập tạm",
+                        "Phiên tạm cấp sau khi xác thực OTP/số điện thoại để hoàn tất đăng ký hoặc xác thực 2 bước của admin.",
                         600, 60, 3600, "giây"),
-                integer(ADMIN_2FA_MAX_ATTEMPTS, AUTH, "Số lần nhập sai OTP 2FA admin",
-                        "Nhập sai đủ số lần này thì token tạm bị huỷ, admin phải đăng nhập lại từ đầu.", 5, 1, 20, "lần"),
+                integer(ADMIN_2FA_MAX_ATTEMPTS, AUTH, "Số lần nhập sai OTP xác thực 2 bước của admin",
+                        "Nhập sai đủ số lần này thì phiên tạm bị huỷ, admin phải đăng nhập lại từ đầu.", 5, 1, 20, "lần"),
                 integer(KIOSK_QR_SESSION_TTL_SECONDS, KIOSK, "Thời hạn mã QR đăng nhập kiosk",
                         "Mã QR hiện trên kiosk hết hạn sau khoảng này nếu khách chưa xác nhận trên app.",
                         120, 30, 900, "giây"),
                 integer(KIOSK_QR_MAX_CONFIRM_ATTEMPTS, KIOSK, "Số lần nhập sai mã xác nhận QR",
                         "Khách nhập sai mã xác nhận trên app đủ số lần này thì phiên đăng nhập kiosk bị huỷ.",
                         5, 1, 20, "lần"),
-                integer(SPLASH_DURATION_MS, APP, "Thời gian màn hình splash",
-                        "Thời gian hiển thị màn hình khởi động (splash screen) trước khi chuyển vào ứng dụng.",
+                integer(SPLASH_DURATION_MS, APP, "Thời gian màn hình chào",
+                        "Thời gian hiển thị màn hình chào khi mở ứng dụng, trước khi chuyển vào trang chính.",
                         1200, 300, 10000, "ms").asPublic());
     }
 }
