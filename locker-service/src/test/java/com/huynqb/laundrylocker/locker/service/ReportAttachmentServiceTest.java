@@ -152,6 +152,11 @@ class ReportAttachmentServiceTest {
         assertEquals("REPORT_ALREADY_RESOLVED", assertThrows(
                 BusinessException.class,
                 () -> service.addByReporter(2L, 7L, List.of(photo(7L, "r3")))).getCode());
+
+        when(reportRepository.findById(3L)).thenReturn(Optional.of(report(3L, "REJECTED", 7L, 42L)));
+        assertEquals("REPORT_ALREADY_RESOLVED", assertThrows(
+                BusinessException.class,
+                () -> service.addByReporter(3L, 7L, List.of(photo(7L, "r4")))).getCode());
     }
 
     @Test

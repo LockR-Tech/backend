@@ -11,6 +11,7 @@ import com.huynqb.laundrylocker.locker.model.AttachmentStage;
 import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
 import com.huynqb.laundrylocker.locker.model.RepairLog;
+import com.huynqb.laundrylocker.locker.model.TechnicianPresence;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.LockerRules;
 import com.huynqb.laundrylocker.locker.settings.TestLockerRules;
@@ -155,6 +156,10 @@ class LockerServiceReportPhotoTest {
 
     @Test
     void claimBlockThresholdFollowsAdminSetting() {
+        TechnicianPresence onDuty = new TechnicianPresence();
+        onDuty.setUserId(42L);
+        onDuty.setOnDuty(true);
+        when(presenceRepository.findByUserId(42L)).thenReturn(Optional.of(onDuty));
         LockerReport open = inProgress();
         open.setStatus("OPEN");
         open.setAssignedToUserId(null);

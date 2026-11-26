@@ -19,6 +19,7 @@ import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
 import com.huynqb.laundrylocker.locker.model.RepairLog;
 import com.huynqb.laundrylocker.locker.model.ReportCategory;
+import com.huynqb.laundrylocker.locker.model.TechnicianPresence;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.TestLockerRules;
 import org.junit.jupiter.api.BeforeEach;
@@ -112,6 +113,8 @@ class LockerServiceTicketRoutingTest {
         when(userClient.getUser(TECH)).thenReturn(ApiResponse.ok(user(TECH, "LOCKER_TECHNICIAN")));
         when(userClient.getUser(OTHER_TECH)).thenReturn(ApiResponse.ok(user(OTHER_TECH, "LOCKER_TECHNICIAN")));
         when(userClient.getUser(CUSTOMER)).thenReturn(ApiResponse.ok(user(CUSTOMER, "CUSTOMER")));
+        when(presenceRepository.findByUserId(TECH)).thenReturn(Optional.of(presence(TECH, true)));
+        when(presenceRepository.findByUserId(OTHER_TECH)).thenReturn(Optional.of(presence(OTHER_TECH, true)));
     }
 
     @Test
@@ -650,6 +653,117 @@ class LockerServiceTicketRoutingTest {
         verify(boxRepository).findByStatusAndReservedUntilBeforeAndCellTypeNot(
                 eq("RESERVED"), any(), eq(CellType.DRONE));
         verify(boxRepository, never()).findByStatusAndReservedUntilBefore(anyString(), any());
+    }
+
+    @Test
+    void customerCanOnlyReadTheirOwnReportAndLogs() {
+        LockerReport own = report(55L, "OPEN", null);
+        own.setUserId(CUSTOMER);
+        when(reportRepository.findById(55L)).thenReturn(Optional.of(own));
+
+        assertEquals(55L, service.getReportForUser(55L, CUSTOMER).id());
+        assertNotNull(service.repairLogsForUser(55L, CUSTOMER));
+
+        BusinessException viewOther = assertThrows(
+                BusinessException.class, () -> service.getReportForUser(55L, 999L));
+        assertEquals("REPORT_NOT_OWNED", viewOther.getCode());
+        assertEquals(HttpStatus.FORBIDDEN, viewOther.getStatus());
+
+        BusinessException logsOther = assertThrows(
+                BusinessException.class, () -> service.repairLogsForUser(55L, 999L));
+        assertEquals("REPORT_NOT_OWNED", logsOther.getCode());
+        assertEquals(HttpStatus.FORBIDDEN, logsOther.getStatus());
+    }
+
+    @Test
+    void offDutyTechnicianIsNotRoutedNotifiedOrAllowedToClaim() {
+        locker.setAssignedTechnicianId(TECH);
+        when(presenceRepository.findByUserId(TECH)).thenReturn(Optional.of(presence(TECH, false)));
+        when(userClient.listByRole("LOCKER_TECHNICIAN"))
+                .thenReturn(ApiResponse.ok(List.of(user(TECH, "LOCKER_TECHNICIAN"), user(OTHER_TECH, "LOCKER_TECHNICIAN"))));
+
+        service.markFault(BOX_ID, "Cửa kẹt", CUSTOMER, List.of(), "CUSTOMER");
+
+        LockerReport created = savedReport();
+        assertNull(created.getRoutedToUserId());
+        List<DomainEvent> routed = published(DomainEventNames.LOCKER_REPORT_ROUTED);
+        assertEquals(1, routed.size());
+        assertEquals(OTHER_TECH, routed.get(0).payload().get("userId"));
+
+        // KTV ngoài ca không thấy phiếu trong danh sách routed=true và không nhận được việc.
+        assertTrue(service.routedReports(TECH).isEmpty());
+        when(reportRepository.findById(created.getId())).thenReturn(Optional.of(created));
+        BusinessException claimEx = assertThrows(
+                BusinessException.class, () -> service.claimReport(created.getId(), TECH));
+        assertEquals("TECHNICIAN_OFF_DUTY", claimEx.getCode());
+        assertEquals("OPEN", created.getStatus());
+        assertNull(created.getAssignedToUserId());
+
+        // Khi KTV vào ca lại thì nhận việc bình thường.
+        when(presenceRepository.findByUserId(TECH)).thenReturn(Optional.of(presence(TECH, true)));
+        assertEquals("IN_PROGRESS", service.claimReport(created.getId(), TECH).status());
+    }
+
+    @Test
+    void assigningOffDutyTechnicianDoesNotRouteWaitingTicketsToThem() {
+        when(presenceRepository.findByUserId(TECH)).thenReturn(Optional.of(presence(TECH, false)));
+        when(userClient.listByRole("LOCKER_TECHNICIAN"))
+                .thenReturn(ApiResponse.ok(List.of(user(TECH, "LOCKER_TECHNICIAN"), user(OTHER_TECH, "LOCKER_TECHNICIAN"))));
+        LockerReport waiting = report(55L, "OPEN", null);
+        when(reportRepository.findByLockerIdAndStatusAndAssignedToUserIdIsNull(LOCKER_ID, "OPEN"))
+                .thenReturn(List.of(waiting));
+        when(lockerRepository.save(any(LockerUnit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.assignLockerTechnician(LOCKER_ID, TECH);
+
+        assertNull(waiting.getRoutedToUserId());
+        List<DomainEvent> routed = published(DomainEventNames.LOCKER_REPORT_ROUTED);
+        assertEquals(1, routed.size());
+        assertEquals(OTHER_TECH, routed.get(0).payload().get("userId"));
+    }
+
+    @Test
+    void openAndClosedReportsCannotSkipLifecycleStages() {
+        LockerReport open = report(55L, "OPEN", null);
+        when(reportRepository.findById(55L)).thenReturn(Optional.of(open));
+
+        assertEquals("REPORT_NOT_IN_PROGRESS", assertThrows(
+                BusinessException.class, () -> service.addRepairLog(55L, "Đang kiểm tra", TECH)).getCode());
+        assertEquals("REPORT_NOT_CLAIMED", assertThrows(
+                BusinessException.class, () -> service.unassignReport(55L)).getCode());
+        assertEquals("REPORT_NOT_IN_PROGRESS", assertThrows(
+                BusinessException.class, () -> service.extendSlaAsTechnician(55L, 2, "Chờ linh kiện", TECH)).getCode());
+        assertEquals("REPORT_NOT_IN_PROGRESS", assertThrows(
+                BusinessException.class, () -> service.resolveReportAndClearFault(55L, TECH, null, false)).getCode());
+        assertEquals("REPORT_NOT_IN_PROGRESS", assertThrows(
+                BusinessException.class,
+                () -> service.rejectReport(55L, "Không lỗi", List.of(), TECH, "LOCKER_TECHNICIAN")).getCode());
+        assertEquals("REPORT_NOT_IN_PROGRESS", assertThrows(
+                BusinessException.class,
+                () -> service.resolveBoxIncident(
+                        55L,
+                        new com.huynqb.laundrylocker.locker.dto.BoxIncidentResolutionRequest(
+                                BOX_ID, "QUICK_FIX", null, "Ok", null, null, null),
+                        1L, "ADMIN")).getCode());
+        assertEquals("REPORT_NOT_IN_PROGRESS", assertThrows(
+                BusinessException.class,
+                () -> service.forceOpen(
+                        BOX_ID, TECH,
+                        new com.huynqb.laundrylocker.locker.dto.ForceOpenRequest("Kẹt đồ", null, null, 55L),
+                        false)).getCode());
+
+        LockerReport closed = report(56L, "REJECTED", TECH);
+        when(reportRepository.findById(56L)).thenReturn(Optional.of(closed));
+        assertEquals("REPORT_ALREADY_RESOLVED", assertThrows(
+                BusinessException.class, () -> service.addRepairLog(56L, "Sửa xong", TECH)).getCode());
+    }
+
+    private static TechnicianPresence presence(Long userId, boolean onDuty) {
+        TechnicianPresence presence = new TechnicianPresence();
+        presence.setUserId(userId);
+        presence.setTechnicianType("LOCKER_TECHNICIAN");
+        presence.setOnDuty(onDuty);
+        return presence;
     }
 
     private LockerReport savedReport() {
