@@ -5,7 +5,6 @@ import com.huynqb.laundrylocker.common.dto.PageResponse;
 import com.huynqb.laundrylocker.payment.dto.admin.AdminPaymentDetailResponse;
 import com.huynqb.laundrylocker.payment.dto.admin.AdminPaymentResponse;
 import com.huynqb.laundrylocker.payment.dto.admin.AdminRefundResponse;
-import com.huynqb.laundrylocker.payment.dto.admin.AdminWalletTransactionResponse;
 import com.huynqb.laundrylocker.payment.service.AdminPaymentQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -36,8 +35,6 @@ public class AdminPaymentController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) List<String> method,
-            @RequestParam(required = false) String kind,
-            @RequestParam(required = false) Boolean includeTopups,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
             @RequestParam(required = false) Long userId,
@@ -45,7 +42,7 @@ public class AdminPaymentController {
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String sort) {
         return ApiResponse.ok(queryService.searchPayments(new AdminPaymentQueryService.PaymentCriteria(
-                page, size, status, method, kind, includeTopups, from, to, userId, orderId, q, sort)));
+                page, size, status, method, from, to, userId, orderId, q, sort)));
     }
 
     @GetMapping("/api/admin/payments/{id}/detail")
@@ -66,21 +63,6 @@ public class AdminPaymentController {
             @RequestParam(required = false) String sort) {
         return ApiResponse.ok(queryService.searchRefunds(new AdminPaymentQueryService.RefundCriteria(
                 page, size, status, from, to, orderId, paymentId, userId, sort)));
-    }
-
-    @GetMapping("/api/admin/payments/wallet-transactions")
-    public ApiResponse<PageResponse<AdminWalletTransactionResponse>> walletTransactions(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) Long userId,
-            @RequestParam(required = false) List<String> type,
-            @RequestParam(required = false) List<String> source,
-            @RequestParam(required = false) String from,
-            @RequestParam(required = false) String to,
-            @RequestParam(required = false) String q,
-            @RequestParam(required = false) String sort) {
-        return ApiResponse.ok(queryService.searchWalletTransactions(new AdminPaymentQueryService.WalletCriteria(
-                page, size, userId, type, source, from, to, q, sort)));
     }
 
     @PostMapping("/api/admin/payments/refunds/{id}/approve")

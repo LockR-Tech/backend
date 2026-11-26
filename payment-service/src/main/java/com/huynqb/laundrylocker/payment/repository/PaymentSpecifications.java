@@ -2,7 +2,6 @@ package com.huynqb.laundrylocker.payment.repository;
 
 import com.huynqb.laundrylocker.payment.model.PaymentRecord;
 import com.huynqb.laundrylocker.payment.model.RefundRecord;
-import com.huynqb.laundrylocker.payment.model.WalletTransaction;
 import com.huynqb.laundrylocker.payment.service.PaymentReportRules;
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Root;
@@ -123,34 +122,6 @@ public final class PaymentSpecifications {
                     from == null ? cb.conjunction() : cb.greaterThanOrEqualTo(at, from),
                     toExclusive == null ? cb.conjunction() : cb.lessThan(at, toExclusive));
         };
-    }
-
-    // ---- wallet transactions ----
-
-    public static Specification<WalletTransaction> walletUser(Long userId) {
-        return userId == null ? null : (root, query, cb) -> cb.equal(root.get("userId"), userId);
-    }
-
-    public static Specification<WalletTransaction> walletTypeIn(Collection<String> types) {
-        return empty(types) ? null : (root, query, cb) -> upper(root.get("type"), cb).in(upperAll(types));
-    }
-
-    public static Specification<WalletTransaction> walletSourceIn(Collection<String> sources) {
-        return empty(sources) ? null : (root, query, cb) -> upper(root.get("source"), cb).in(upperAll(sources));
-    }
-
-    public static Specification<WalletTransaction> walletCreatedBetween(LocalDateTime from, LocalDateTime toExclusive) {
-        return between("createdAt", from, toExclusive);
-    }
-
-    public static Specification<WalletTransaction> walletReferenceLike(String q) {
-        if (q == null || q.isBlank()) {
-            return null;
-        }
-        String pattern = "%" + q.trim().toLowerCase(Locale.ROOT) + "%";
-        return (root, query, cb) -> cb.or(
-                cb.like(cb.lower(root.get("referenceId")), pattern),
-                cb.like(cb.lower(root.get("description")), pattern));
     }
 
     // ---- helpers ----

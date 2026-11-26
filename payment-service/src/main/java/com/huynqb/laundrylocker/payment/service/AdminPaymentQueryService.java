@@ -8,16 +8,13 @@ import com.huynqb.laundrylocker.common.util.BusinessTime;
 import com.huynqb.laundrylocker.payment.dto.admin.AdminPaymentDetailResponse;
 import com.huynqb.laundrylocker.payment.dto.admin.AdminPaymentResponse;
 import com.huynqb.laundrylocker.payment.dto.admin.AdminRefundResponse;
-import com.huynqb.laundrylocker.payment.dto.admin.AdminWalletTransactionResponse;
 import com.huynqb.laundrylocker.payment.dto.admin.OrderBrief;
 import com.huynqb.laundrylocker.payment.dto.admin.OrderRef;
 import com.huynqb.laundrylocker.payment.dto.admin.PersonRef;
 import com.huynqb.laundrylocker.payment.model.PaymentRecord;
 import com.huynqb.laundrylocker.payment.model.RefundRecord;
-import com.huynqb.laundrylocker.payment.model.WalletTransaction;
 import com.huynqb.laundrylocker.payment.repository.PaymentRepository;
 import com.huynqb.laundrylocker.payment.repository.RefundRepository;
-import com.huynqb.laundrylocker.payment.repository.WalletTransactionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -31,7 +28,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -39,7 +35,8 @@ import java.util.stream.Collectors;
 import static com.huynqb.laundrylocker.payment.repository.PaymentSpecifications.*;
 import static com.huynqb.laundrylocker.payment.service.PaymentReportRules.amount;
 
-/// Danh sách/chi tiết giao dịch, hoàn tiền, biến động ví cho trang /admin/payments.
+/// Danh sách/chi tiết giao dịch và hoàn tiền cho trang /admin/payments. Chỉ gồm khoản thu theo đơn: giao dịch
+/// nạp ví cũ (tính năng đã gỡ) không hiện ở trang quản trị.
 @Service
 @RequiredArgsConstructor
 public class AdminPaymentQueryService {
@@ -48,7 +45,6 @@ public class AdminPaymentQueryService {
 
     private final PaymentRepository paymentRepository;
     private final RefundRepository refundRepository;
-    private final WalletTransactionRepository walletTransactionRepository;
     private final PaymentReferenceResolver resolver;
 
     private BusinessTime time = BusinessTime.system();
@@ -58,7 +54,7 @@ public class AdminPaymentQueryService {
     }
 
     public record PaymentCriteria(
-            int page, int size, List<String> statuses, List<String> methods, String kind, Boolean includeTopups,
+            int page, int size, List<String> statuses, List<String> methods,
             String from, String to, Long userId, Long orderId, String q, String sort) {
     }
 
@@ -67,25 +63,12 @@ public class AdminPaymentQueryService {
             Long userId, String sort) {
     }
 
-    public record WalletCriteria(
-            int page, int size, Long userId, List<String> types, List<String> sources, String from, String to,
-            String q, String sort) {
-    }
-
     @Transactional(readOnly = true)
     public PageResponse<AdminPaymentResponse> searchPayments(PaymentCriteria c) {
-        String kind = c.kind();
-        if (Boolean.FALSE.equals(c.includeTopups()) && (kind == null || kind.isBlank() || "ALL".equalsIgnoreCase(kind))) {
-            kind = PaymentReportRules.KIND_ORDER;
-        }
-        if (kind != null && !kind.isBlank()
-                && !Set.of("ALL", PaymentReportRules.KIND_ORDER, PaymentReportRules.KIND_TOPUP).contains(kind.toUpperCase())) {
-            throw new BusinessException("INVALID_KIND", "kind must be ALL, ORDER or TOPUP");
-        }
         Page<PaymentRecord> page = paymentRepository.findAll(
                 all(paymentStatusIn(c.statuses()),
                         paymentMethodIn(c.methods()),
-                        paymentKind(kind),
+                        paymentKind(PaymentReportRules.KIND_ORDER),
                         paymentCreatedBetween(time.parseFrom(c.from()), time.parseToExclusive(c.to())),
                         paymentUser(c.userId()),
                         paymentOrder(c.orderId()),
@@ -96,10 +79,10 @@ public class AdminPaymentQueryService {
 
     @Transactional(readOnly = true)
     public AdminPaymentDetailResponse paymentDetail(Long id) {
-        PaymentRecord payment = paymentRepository.findById(id).orElseThrow(() -> new NotFoundException("Payment", id));
-        List<PaymentRecord> orderPayments = PaymentReportRules.isTopup(payment)
-                ? List.of()
-                : paymentRepository.findByOrderId(payment.getOrderId()).stream()
+        PaymentRecord payment = paymentRepository.findById(id)
+                .filter(p -> !PaymentReportRules.isTopup(p))
+                .orElseThrow(() -> new NotFoundException("Payment", id));
+        List<PaymentRecord> orderPayments = paymentRepository.findByOrderId(payment.getOrderId()).stream()
                         .filter(p -> !p.getId().equals(payment.getId()))
                         .sorted((a, b) -> compareDesc(a.getCreatedAt(), b.getCreatedAt()))
                         .toList();
@@ -109,33 +92,11 @@ public class AdminPaymentQueryService {
         List<AdminPaymentResponse> responses = toPaymentResponses(all);
 
         List<RefundRecord> refunds = refundRepository.findByPaymentIdIn(List.of(payment.getId()));
-        List<WalletTransaction> walletTransactions = new ArrayList<>();
-        if (PaymentReportRules.isTopupMethod(payment.getMethod()) && payment.getReferenceId() != null) {
-            walletTransactionRepository.findFirstBySourceAndReferenceId(WalletService.SOURCE_TOPUP, payment.getReferenceId())
-                    .ifPresent(walletTransactions::add);
-        } else if ("WALLET".equalsIgnoreCase(payment.getMethod())) {
-            // Lần trả bằng ví thứ n của đơn ứng với biến động ví mã thứ n.
-            long sequence = 1 + orderPayments.stream()
-                    .filter(p -> "WALLET".equalsIgnoreCase(p.getMethod()) && "COMPLETED".equals(p.getStatus()))
-                    .filter(p -> p.getId() != null && payment.getId() != null && p.getId() < payment.getId())
-                    .count();
-            walletTransactionRepository
-                    .findFirstBySourceAndReferenceId(
-                            WalletService.SOURCE_ORDER_PAYMENT,
-                            WalletTransactionRefs.orderPaymentRef(payment.getOrderId(), sequence))
-                    .filter(tx -> Objects.equals(tx.getUserId(), payment.getUserId()))
-                    .ifPresent(walletTransactions::add);
-        }
         Map<Long, UserSummary> users = resolver.users(refunds.stream().map(RefundRecord::getProcessedByUserId).toList());
-        Map<Long, OrderBrief> walletOrders = resolver.orders(
-                walletTransactions.stream().map(WalletTransactionRefs::relatedOrderId).toList());
         return new AdminPaymentDetailResponse(
                 responses.get(0),
                 refunds.stream()
                         .map(r -> toRefund(r, payment, responses.get(0).order(), responses.get(0).customer(), users))
-                        .toList(),
-                walletTransactions.stream()
-                        .map(tx -> toWallet(tx, responses.get(0).customer(), walletOrders))
                         .toList(),
                 responses.subList(1, responses.size()));
     }
@@ -168,23 +129,6 @@ public class AdminPaymentQueryService {
                 .toList());
     }
 
-    @Transactional(readOnly = true)
-    public PageResponse<AdminWalletTransactionResponse> searchWalletTransactions(WalletCriteria c) {
-        Page<WalletTransaction> page = walletTransactionRepository.findAll(
-                all(walletUser(c.userId()),
-                        walletTypeIn(c.types()),
-                        walletSourceIn(c.sources()),
-                        walletCreatedBetween(time.parseFrom(c.from()), time.parseToExclusive(c.to())),
-                        walletReferenceLike(c.q())),
-                pageable(c.page(), c.size(), c.sort(), Set.of("createdAt", "amount", "id"), "createdAt"));
-        Map<Long, UserSummary> users = resolver.users(page.getContent().stream().map(WalletTransaction::getUserId).toList());
-        Map<Long, OrderBrief> orders = resolver.orders(
-                page.getContent().stream().map(WalletTransactionRefs::relatedOrderId).toList());
-        return page(page, page.getContent().stream()
-                .map(tx -> toWallet(tx, person(lookup(users, tx.getUserId())), orders))
-                .toList());
-    }
-
     private List<AdminPaymentResponse> toPaymentResponses(List<PaymentRecord> payments) {
         if (payments.isEmpty()) {
             return List.of();
@@ -199,7 +143,7 @@ public class AdminPaymentQueryService {
         return payments.stream()
                 .map(p -> new AdminPaymentResponse(
                         p.getId(), p.getOrderId(), p.getUserId(), p.getAmount(), p.getMethod(), p.getStatus(),
-                        PaymentReportRules.kind(p), p.getReferenceId(), p.getReferenceTransactionId(), p.getUrl(),
+                        p.getReferenceId(), p.getReferenceTransactionId(), p.getUrl(),
                         p.getQr(), p.getDeeplink(), p.getDescription(), p.getContent(), p.getCreatedAt(),
                         p.getUpdatedAt(), PaymentReportRules.paidAt(p), refunded.getOrDefault(p.getId(), BigDecimal.ZERO),
                         orderRef(lookup(orders, p.getOrderId())), person(lookup(users, p.getUserId()))))
@@ -220,16 +164,6 @@ public class AdminPaymentQueryService {
                 order,
                 customer,
                 person(lookup(users, r.getProcessedByUserId())));
-    }
-
-    private AdminWalletTransactionResponse toWallet(
-            WalletTransaction tx, PersonRef customer, Map<Long, OrderBrief> orders) {
-        Long orderId = WalletTransactionRefs.relatedOrderId(tx);
-        OrderBrief order = orderId == null ? null : orders.get(orderId);
-        return new AdminWalletTransactionResponse(
-                tx.getId(), tx.getWalletId(), tx.getUserId(), tx.getType(), tx.getAmount(), tx.getBalanceAfter(),
-                tx.getSource(), tx.getReferenceId(), tx.getDescription(), tx.getCreatedAt(),
-                orderId, order == null ? null : order.orderCode(), customer);
     }
 
     static Pageable pageable(int page, int size, String sort, Set<String> sortable, String defaultField) {

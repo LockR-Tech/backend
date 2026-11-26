@@ -4,7 +4,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.payment.dto.CreatePaymentRequest;
 import com.huynqb.laundrylocker.payment.dto.RefundRequest;
 import com.huynqb.laundrylocker.payment.service.PaymentService;
-import com.huynqb.laundrylocker.payment.service.WalletService;
+import com.huynqb.laundrylocker.payment.service.TransactionHistoryService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -25,7 +25,7 @@ import static org.mockito.Mockito.verify;
 class PaymentControllerAccessTest {
 
     @Mock private PaymentService paymentService;
-    @Mock private WalletService walletService;
+    @Mock private TransactionHistoryService historyService;
     @InjectMocks private PaymentController controller;
 
     @Test

@@ -87,7 +87,7 @@ class PaymentSpecificationsJpaTest {
         assertEquals(4, paymentRepository.findAll(all(paymentStatusIn(List.of(" ")), null)).size());
     }
 
-    /// Nạp ví SePay (hiện tại) và VNPay (dữ liệu cũ) cùng được xếp loại TOPUP, không lẫn vào đơn.
+    /// Giao dịch nạp ví cũ (SePay, VNPay) được xếp loại TOPUP để trang quản trị loại ra, không lẫn vào đơn.
     @Test
     void topupKindCoversCurrentAndLegacyTopupMethods() {
         persistPayment(0L, 45L, "SEPAY_TOPUP", "COMPLETED", "TOPUP_45_1", LocalDateTime.of(2026, 9, 9, 3, 0));
@@ -108,12 +108,11 @@ class PaymentSpecificationsJpaTest {
                 refundStatusIn(List.of("completed")))).size());
     }
 
+    /// Ví đã gỡ: biến động ví cũ chỉ còn được đọc cho lịch sử giao dịch của đúng chủ tài khoản.
     @Test
-    void walletFiltersMatchTypeSourceAndReference() {
-        assertEquals(1, walletTransactionRepository.findAll(all(
-                walletUser(44L), walletTypeIn(List.of("DEBIT")), walletSourceIn(List.of("ORDER_PAYMENT")),
-                walletReferenceLike("orderpay"))).size());
-        assertEquals(0, walletTransactionRepository.findAll(all(walletSourceIn(List.of("TOPUP")))).size());
+    void legacyWalletRowsAreReadForTheirOwnerOnly() {
+        assertEquals(1, walletTransactionRepository.findByUserIdOrderByCreatedAtDesc(44L).size());
+        assertEquals(0, walletTransactionRepository.findByUserIdOrderByCreatedAtDesc(45L).size());
     }
 
     private PaymentRecord persistPayment(Long orderId, Long userId, String method, String status, String ref, LocalDateTime at) {

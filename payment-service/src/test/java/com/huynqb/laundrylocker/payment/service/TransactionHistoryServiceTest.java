@@ -5,10 +5,8 @@ import com.huynqb.laundrylocker.payment.model.PaymentRecord;
 import com.huynqb.laundrylocker.payment.model.Wallet;
 import com.huynqb.laundrylocker.payment.model.WalletTransaction;
 import com.huynqb.laundrylocker.payment.repository.PaymentRepository;
-import com.huynqb.laundrylocker.payment.repository.RefundRepository;
 import com.huynqb.laundrylocker.payment.repository.WalletRepository;
 import com.huynqb.laundrylocker.payment.repository.WalletTransactionRepository;
-import com.huynqb.laundrylocker.payment.repository.WithdrawalRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,30 +24,19 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class WalletServiceTotalByMethodTest {
+/// Lịch sử giao dịch của khách (mục "Lịch sử giao dịch" trên app) — chỉ đọc, gồm cả dòng ví cũ.
+class TransactionHistoryServiceTest {
 
     @Mock private WalletRepository walletRepository;
     @Mock private WalletTransactionRepository transactionRepository;
-    @Mock private WithdrawalRepository withdrawalRepository;
     @Mock private PaymentRepository paymentRepository;
-    @Mock private RefundRepository refundRepository;
     @Mock private PaymentReferenceResolver resolver;
-    @Mock private WalletEvents walletEvents;
 
-    private WalletService walletService;
+    private TransactionHistoryService historyService;
 
     @BeforeEach
     void setUp() {
-        walletService = new WalletService(
-                walletRepository,
-                transactionRepository,
-                withdrawalRepository,
-                paymentRepository,
-                refundRepository,
-                resolver,
-                walletEvents,
-                com.huynqb.laundrylocker.payment.settings.TestPaymentRules.defaults()
-        );
+        historyService = new TransactionHistoryService(walletRepository, transactionRepository, paymentRepository, resolver);
     }
 
     @Test
@@ -66,7 +53,7 @@ class WalletServiceTotalByMethodTest {
         tx1.setUserId(userId);
         tx1.setType("DEBIT");
         tx1.setAmount(BigDecimal.valueOf(50000));
-        tx1.setSource(WalletService.SOURCE_ORDER_PAYMENT);
+        tx1.setSource(WalletTransactionRefs.SOURCE_ORDER_PAYMENT);
         tx1.setReferenceId("ORDER-101");
         tx1.setDescription("Thanh toán đơn #101");
         tx1.setCreatedAt(LocalDateTime.now().minusHours(2));
@@ -77,7 +64,7 @@ class WalletServiceTotalByMethodTest {
         tx2.setUserId(userId);
         tx2.setType("CREDIT");
         tx2.setAmount(BigDecimal.valueOf(100000));
-        tx2.setSource(WalletService.SOURCE_TOPUP);
+        tx2.setSource(TransactionHistoryService.SOURCE_TOPUP);
         tx2.setReferenceId("SEPAY-12345");
         tx2.setDescription("Nạp ví qua SePay");
         tx2.setCreatedAt(LocalDateTime.now().minusHours(1));
@@ -100,7 +87,7 @@ class WalletServiceTotalByMethodTest {
         when(resolver.orders(any())).thenReturn(Map.of());
 
         // Test with method="ALL", period="ALL"
-        TransactionMethodTotalResponse response = walletService.calculateTotalByMethod(userId, "ALL", "ALL", null, null);
+        TransactionMethodTotalResponse response = historyService.calculateTotalByMethod(userId, "ALL", "ALL", null, null);
 
         assertNotNull(response);
         assertEquals("ALL", response.selectedMethod());
@@ -119,7 +106,7 @@ class WalletServiceTotalByMethodTest {
         assertEquals(0, BigDecimal.valueOf(170000).compareTo(response.summary().get("SEPAY")));
 
         // Test with method="SEPAY"
-        TransactionMethodTotalResponse sepayResponse = walletService.calculateTotalByMethod(userId, "SEPAY", "ALL", null, null);
+        TransactionMethodTotalResponse sepayResponse = historyService.calculateTotalByMethod(userId, "SEPAY", "ALL", null, null);
         assertEquals("SEPAY", sepayResponse.selectedMethod());
         assertEquals(2, sepayResponse.transactionCount());
         assertEquals(0, BigDecimal.valueOf(170000).compareTo(sepayResponse.totalAmount()));
@@ -141,7 +128,7 @@ class WalletServiceTotalByMethodTest {
         txOld.setUserId(userId);
         txOld.setType("DEBIT");
         txOld.setAmount(BigDecimal.valueOf(30000));
-        txOld.setSource(WalletService.SOURCE_ORDER_PAYMENT);
+        txOld.setSource(WalletTransactionRefs.SOURCE_ORDER_PAYMENT);
         txOld.setReferenceId("OLD-1");
         txOld.setDescription("Order old");
         txOld.setCreatedAt(LocalDateTime.now().minusDays(5));
@@ -152,7 +139,7 @@ class WalletServiceTotalByMethodTest {
         txToday.setUserId(userId);
         txToday.setType("DEBIT");
         txToday.setAmount(BigDecimal.valueOf(20000));
-        txToday.setSource(WalletService.SOURCE_ORDER_PAYMENT);
+        txToday.setSource(WalletTransactionRefs.SOURCE_ORDER_PAYMENT);
         txToday.setReferenceId("TODAY-1");
         txToday.setDescription("Order today");
         txToday.setCreatedAt(LocalDateTime.now());
@@ -162,7 +149,7 @@ class WalletServiceTotalByMethodTest {
         when(resolver.orders(any())).thenReturn(Map.of());
 
         // Filter DAY
-        TransactionMethodTotalResponse dayResp = walletService.calculateTotalByMethod(userId, "ALL", "DAY", null, null);
+        TransactionMethodTotalResponse dayResp = historyService.calculateTotalByMethod(userId, "ALL", "DAY", null, null);
         assertEquals(1, dayResp.transactionCount());
         assertEquals(0, BigDecimal.valueOf(20000).compareTo(dayResp.totalAmount()));
     }

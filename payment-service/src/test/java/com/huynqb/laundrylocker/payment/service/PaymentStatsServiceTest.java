@@ -23,6 +23,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -45,6 +46,7 @@ class PaymentStatsServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void bucketsByVietnamDayAndComparesWithPreviousPeriodAndYesterday() {
+        // Giao dịch nạp ví cũ (orderId 0, *_TOPUP) không tính vào bất kỳ số nào: ví đã gỡ khỏi sản phẩm.
         List<PaymentRecord> payments = List.of(
                 // Hôm nay (VN): 2026-09-15 08:00 VN = 01:00 UTC
                 payment(1L, 10L, "WALLET", "COMPLETED", 15000, LocalDateTime.of(2026, 9, 15, 1, 0)),
@@ -70,21 +72,21 @@ class PaymentStatsServiceTest {
         assertEquals(LocalDate.of(2026, 9, 13), stats.previousTo());
 
         PaymentStatsResponse.PeriodStats today = stats.today();
-        assertEquals(3, today.totalCount());
-        assertEquals(2, today.completedCount());
+        assertEquals(2, today.totalCount());
+        assertEquals(1, today.completedCount());
         assertEquals(1, today.failedCount());
         assertEquals(0, BigDecimal.valueOf(15000).compareTo(today.orderPayments().completedAmount()));
-        assertEquals(0, BigDecimal.valueOf(50000).compareTo(today.topups().completedAmount()));
         assertEquals(0, BigDecimal.valueOf(10000).compareTo(today.netCollectedAmount()));
-        assertEquals(new BigDecimal("66.67"), today.successRate());
+        assertEquals(new BigDecimal("50.00"), today.successRate());
 
         assertEquals(1, stats.yesterday().totalCount());
-        assertEquals(4, stats.current().totalCount());
+        assertEquals(3, stats.current().totalCount());
         assertEquals(1, stats.previous().totalCount());
         // Kỳ này thu đơn 25000 − hoàn 5000 = 20000; kỳ trước 30000 ⇒ −33.33%
         assertEquals(new BigDecimal("-33.33"), stats.changes().netCollectedAmountPct());
         assertNull(stats.changes().refundAmountPct());
-        assertEquals("VNPAY_TOPUP", stats.current().byMethod().get(0).key());
+        assertEquals("VNPAY", stats.current().byMethod().get(0).key());
+        assertTrue(stats.current().byMethod().stream().noneMatch(b -> b.key().endsWith("_TOPUP")));
     }
 
     @Test

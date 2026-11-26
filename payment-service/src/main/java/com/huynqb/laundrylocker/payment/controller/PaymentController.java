@@ -3,7 +3,7 @@ package com.huynqb.laundrylocker.payment.controller;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
 import com.huynqb.laundrylocker.payment.dto.*;
 import com.huynqb.laundrylocker.payment.service.PaymentService;
-import com.huynqb.laundrylocker.payment.service.WalletService;
+import com.huynqb.laundrylocker.payment.service.TransactionHistoryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -17,7 +17,7 @@ import java.util.Map;
 public class PaymentController {
 
     private final PaymentService paymentService;
-    private final WalletService walletService;
+    private final TransactionHistoryService historyService;
 
     @GetMapping("/api/payments/total-by-method")
     public ApiResponse<com.huynqb.laundrylocker.payment.dto.TransactionMethodTotalResponse> totalByMethod(
@@ -29,14 +29,7 @@ public class PaymentController {
         return ApiResponse.ok(
                 "TOTAL_BY_METHOD_OK",
                 "Tổng tiền theo hình thức giao dịch",
-                walletService.calculateTotalByMethod(userId, method, period, from, to));
-    }
-
-    @PostMapping("/api/payments/topup/create")
-    public ApiResponse<TopupResponse> createTopup(
-            @Valid @RequestBody CreateTopupRequest request,
-            @RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok("TOPUP_URL_CREATED", "Topup URL created", paymentService.createTopupUrl(userId, request));
+                historyService.calculateTotalByMethod(userId, method, period, from, to));
     }
 
     @PostMapping("/api/payments/checkout")
@@ -46,7 +39,7 @@ public class PaymentController {
     }
 
     /// Nút "Giả lập thanh toán" khi test (admin bật trong Cài đặt → Thanh toán). Body: `paymentId` hoặc
-    /// `referenceId` (mã nạp ví), `amount` tuỳ chọn (bỏ trống = đủ số tiền).
+    /// `referenceId` (mã tham chiếu giao dịch), `amount` tuỳ chọn (bỏ trống = đủ số tiền).
     @PostMapping("/api/payments/simulate")
     public ApiResponse<PaymentResponse> simulate(
             @RequestBody SimulatePaymentRequest request,
@@ -226,7 +219,7 @@ public class PaymentController {
             @RequestParam(required = false) String reason,
             @RequestParam(required = false) Long actorUserId) {
         return ApiResponse.ok(
-                "ORDER_REFUNDED", "Order payments refunded to wallet",
+                "ORDER_REFUNDED", "Order payments queued for bank refund",
                 paymentService.refundOrder(orderId, reason, actorUserId));
     }
 

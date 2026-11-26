@@ -106,11 +106,9 @@ class SepayServiceTest {
 
     @Test
     void testExtractReferenceIdFromContent() {
-        Map<String, Object> body = Map.of(
-                "content", "MBVCB.12345 TOPUP_42_1728392102123 chuyen tien"
-        );
-        String ref = sepayService.extractReferenceId(body);
-        assertEquals("TOPUP_42_1728392102123", ref);
+        // Mã nạp ví cũ (TOPUP_…) không còn được nhận ra: ví đã gỡ, nội dung được giữ nguyên để đối soát tay.
+        Map<String, Object> body = Map.of("content", "MBVCB.12345 TOPUP_42_1728392102123 chuyen tien");
+        assertEquals("MBVCB.12345 TOPUP_42_1728392102123 chuyen tien", sepayService.extractReferenceId(body));
 
         // PAY-38 với dấu chấm ngân hàng
         Map<String, Object> bankBody1 = Map.of("content", "MBVCB.12345.PAY-38.CT tu 0912345678");

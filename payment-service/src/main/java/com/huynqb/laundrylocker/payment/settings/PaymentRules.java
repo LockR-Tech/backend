@@ -24,25 +24,14 @@ public class PaymentRules {
 
     /// Phương thức đã ngừng hỗ trợ: không tạo giao dịch mới được (400 PAYMENT_METHOD_UNSUPPORTED) nhưng
     /// vẫn còn trong dữ liệu cũ (payments.method, kể cả dạng `*_TOPUP`) — giữ tên để đọc/hiển thị lịch sử.
-    public static final Set<String> RETIRED_METHODS = Set.of("VNPAY", "MOMO");
+    /// WALLET: ví Lock.R đã gỡ khỏi sản phẩm.
+    public static final Set<String> RETIRED_METHODS = Set.of("VNPAY", "MOMO", "WALLET");
 
     private static final String TOPUP_SUFFIX = "_TOPUP";
 
     private final BusinessSettings settings;
 
-    public BigDecimal topupMinAmount() {
-        return BigDecimal.valueOf(settings.getLong(TOPUP_MIN_AMOUNT));
-    }
-
-    public BigDecimal withdrawMinAmount() {
-        return BigDecimal.valueOf(settings.getLong(WITHDRAW_MIN_AMOUNT));
-    }
-
-    public BigDecimal topupMaxAmount() {
-        return BigDecimal.valueOf(Math.max(settings.getLong(TOPUP_MIN_AMOUNT), settings.getLong(TOPUP_MAX_AMOUNT)));
-    }
-
-    /// `true` nếu là phương thức đã ngừng hỗ trợ (VNPAY, MOMO, VNPAY_TOPUP…), không phân biệt hoa thường.
+    /// `true` nếu là phương thức đã ngừng hỗ trợ (VNPAY, MOMO, WALLET, VNPAY_TOPUP…), không phân biệt hoa thường.
     public static boolean isRetiredMethod(String method) {
         if (method == null) {
             return false;
@@ -55,7 +44,7 @@ public class PaymentRules {
     }
 
     /// BusinessSettings đã chuẩn hoá giá trị theo {@link PaymentSettingsCatalog#PAYMENT_METHODS} (viết hoa,
-    /// bỏ trùng). Giá trị admin lưu từ trước còn VNPAY/MOMO thì khi đọc chỉ bỏ hai phần tử đó.
+    /// bỏ trùng). Giá trị admin lưu từ trước còn VNPAY/MOMO/WALLET thì khi đọc chỉ bỏ các phần tử đó.
     public Set<String> enabledMethods() {
         Set<String> enabled = new LinkedHashSet<>();
         for (String token : settings.getString(ENABLED_METHODS).split(",")) {

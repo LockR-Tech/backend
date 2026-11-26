@@ -8,8 +8,8 @@ import java.util.List;
 /**
  * Response của /api/admin/revenue/**.
  *
- * <p>Doanh thu = tiền thực thu: payment COMPLETED của đơn thật (orderId &gt; 0), không gồm nạp
- * ví (method *_TOPUP); thanh toán bằng ví (WALLET) được tính khi payment của đơn hoàn tất. Ngày
+ * <p>Doanh thu = tiền thực thu: payment COMPLETED của đơn thật (orderId &gt; 0), không gồm giao dịch
+ * nạp cũ (method *_TOPUP, tính năng ví đã gỡ); khoản cũ trả bằng ví vẫn là tiền đơn đã thu. Ngày
  * doanh thu = ngày (giờ Việt Nam) của thời điểm thu (updatedAt của payment COMPLETED). Hoàn
  * tiền = refund COMPLETED của đơn, theo processedAt. netRevenue = totalRevenue − refundAmount.
  */
