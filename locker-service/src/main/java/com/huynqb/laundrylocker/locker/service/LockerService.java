@@ -2886,7 +2886,7 @@ public class LockerService {
     private String buildIncidentInspectionDescription(CreateIncidentTicketsRequest request) {
         StringBuilder value = new StringBuilder()
                 .append("Kiểm tra hook/gripper, servo/actuator, dây điện và cơ cấu giữ hàng. ")
-                .append("Incident ").append(request.incidentCode())
+                .append("Sự cố ").append(request.incidentCode())
                 .append(", đơn ").append(request.orderCode()).append(". ")
                 .append(request.reason() == null ? "" : request.reason());
         if (request.latitude() != null && request.longitude() != null) {

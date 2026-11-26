@@ -198,7 +198,7 @@ public class AuthService {
             UserSummary user = userClient.provisionUser(new UserProvisionRequest(
                     email,
                     phone,
-                    StringUtils.hasText(name) ? name : "User",
+                    StringUtils.hasText(name) ? name : "Người dùng",
                     "",
                     "ACTIVE",
                     Set.of("CUSTOMER")

@@ -190,7 +190,7 @@ public class BleOrderService {
         if (ok) {
             iotService.logExternalAccess(token.getBoxId(), lockerId, token.getOrderId(), token.getUserId(),
                     CREDENTIAL_BLE, "SUCCESS",
-                    "Mở ô " + token.getBoxNumber() + " qua Bluetooth bằng mã của đơn (" + token.getAction() + ")");
+                    "Mở ô " + token.getBoxNumber() + " qua Bluetooth bằng mã của đơn (" + actionLabel(token.getAction()) + ")");
             followUps.execute(() -> afterOpen(token));
         } else {
             String code = errorCode != null ? errorCode : "OPEN_FAILED";
@@ -243,5 +243,18 @@ public class BleOrderService {
 
     private static String upper(String value) {
         return value == null || value.isBlank() ? null : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    /// Việc của lượt mở trong nhật ký tủ (DROP | RENTAL_ACCESS | PICKUP) — chữ hiển thị, không phải mã.
+    static String actionLabel(String action) {
+        if (action == null) {
+            return "mở ô";
+        }
+        return switch (action) {
+            case "DROP" -> "bỏ hàng";
+            case "RENTAL_ACCESS" -> "mở ô thuê";
+            case "PICKUP" -> "lấy hàng";
+            default -> action;
+        };
     }
 }
