@@ -89,6 +89,26 @@ public class LockerRules {
         return settings.getString(CELL_DIMENSIONS_XL);
     }
 
+    /// Tủ demo đang ẩn với người này (F3-G14). Tủ không nằm trong danh sách tủ demo luôn hiện.
+    public boolean demoLockerHiddenFor(Long lockerId, Long userId, String roles) {
+        if (lockerId == null || settings.getBoolean(DEMO_VISIBLE)) {
+            return false;
+        }
+        if (!settings.getIntList(DEMO_LOCKER_IDS).contains(lockerId.intValue())) {
+            return false;
+        }
+        return !demoViewer(userId, roles);
+    }
+
+    /// Admin và tài khoản trong danh sách được phép vẫn thấy tủ demo đã ẩn.
+    public boolean demoViewer(Long userId, String roles) {
+        if (roles != null && java.util.Arrays.stream(roles.split(","))
+                .map(String::trim).anyMatch(r -> r.equalsIgnoreCase("ADMIN") || r.equalsIgnoreCase("ROLE_ADMIN"))) {
+            return true;
+        }
+        return userId != null && userId > 0 && settings.getIntList(DEMO_ALLOWED_USER_IDS).contains(userId.intValue());
+    }
+
     /// Số phiếu trễ hạn tối thiểu cho từng mức chế tài KTV.
     public record PenaltyThresholds(int warning, int restricted, int suspended) {
     }

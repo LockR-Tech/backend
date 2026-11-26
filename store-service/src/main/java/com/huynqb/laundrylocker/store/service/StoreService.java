@@ -58,7 +58,15 @@ public class StoreService {
 
     @Transactional(readOnly = true)
     public List<StoreResponse> list() {
-        return repository.findAll().stream().map(this::toResponse).toList();
+        return list(null, null);
+    }
+
+    /// Danh sách cho khách: ẩn điểm gửi demo khi admin tắt "Hiện điểm gửi demo cho khách" (F3-G14).
+    @Transactional(readOnly = true)
+    public List<StoreResponse> list(Long userId, String roles) {
+        return repository.findAll().stream()
+                .filter(store -> !rules.demoStoreHiddenFor(store.getId(), userId, roles))
+                .map(this::toResponse).toList();
     }
 
     /// Tra cứu theo lô cho báo cáo admin; `ids` rỗng/null ⇒ toàn bộ cửa hàng.
@@ -90,8 +98,13 @@ public class StoreService {
 
     @Transactional(readOnly = true)
     public List<StoreResponse> nearby(Double latitude, Double longitude, Double radiusKm) {
+        return nearby(latitude, longitude, radiusKm, null, null);
+    }
+
+    public List<StoreResponse> nearby(Double latitude, Double longitude, Double radiusKm, Long userId, String roles) {
         double radius = radiusKm == null ? rules.nearbyDefaultRadiusKm() : radiusKm;
         return repository.findByStatusAndActiveTrue("ACTIVE").stream()
+                .filter(store -> !rules.demoStoreHiddenFor(store.getId(), userId, roles))
                 .map(store -> toResponse(store, distanceKm(latitude, longitude, store.getLatitude(), store.getLongitude())))
                 .filter(store -> store.distanceKm() == null || store.distanceKm() <= radius)
                 .toList();

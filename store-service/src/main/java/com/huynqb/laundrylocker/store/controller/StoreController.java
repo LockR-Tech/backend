@@ -29,19 +29,23 @@ public class StoreController {
     public ApiResponse<List<StoreResponse>> list(
             @RequestParam(required = false) Double latitude,
             @RequestParam(required = false) Double longitude,
-            @RequestParam(required = false) Double radiusKm) {
+            @RequestParam(required = false) Double radiusKm,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         if (latitude != null && longitude != null) {
-            return ApiResponse.ok(service.nearby(latitude, longitude, radiusKm));
+            return ApiResponse.ok(service.nearby(latitude, longitude, radiusKm, userId, roles));
         }
-        return ApiResponse.ok(service.list());
+        return ApiResponse.ok(service.list(userId, roles));
     }
 
     @GetMapping("/api/stores/nearby")
     public ApiResponse<List<StoreResponse>> nearby(
             @RequestParam Double latitude,
             @RequestParam Double longitude,
-            @RequestParam(required = false) Double radiusKm) {
-        return ApiResponse.ok(service.nearby(latitude, longitude, radiusKm));
+            @RequestParam(required = false) Double radiusKm,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(service.nearby(latitude, longitude, radiusKm, userId, roles));
     }
 
     @GetMapping("/api/stores/{id}")
