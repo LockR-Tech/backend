@@ -138,8 +138,10 @@ class ReceiverOrderQueryServiceTest {
         assertNull(response.delegateName());
     }
 
+    /// Ủy quyền lấy hộ đã gỡ (F3-G15): đơn đã ủy quyền trước đó hiện luôn ở "Hàng chờ nhận" của người lấy hộ,
+    /// kèm mã — không còn danh sách "Được ủy quyền" riêng.
     @Test
-    void orderReachingMeOnlyThroughDelegationStaysOutOfIncoming() {
+    void orderDelegatedBeforeRemovalShowsInIncomingWithTheCode() {
         callerPhone("0907654321");
         LockerOrder order = sendOrder("STORING");
         order.setReceiverPhone("0907654321");
@@ -147,37 +149,9 @@ class ReceiverOrderQueryServiceTest {
         when(orderRepository.findIncoming(eq(66L), anyCollection(), anyBoolean(), anyCollection(), any(Pageable.class)))
                 .thenReturn(List.of(order));
 
-        assertTrue(service.incoming(66L, false, null).isEmpty());
-    }
+        ReceiverOrderResponse response = service.incoming(66L, false, null).getFirst();
 
-    @Test
-    void delegatedToMeShowsCodeAndDelegationDetails() {
-        callerPhone("0907654321");
-        LockerOrder order = sendOrder("STORING");
-        order.setDelegatePhone("0907654321");
-        order.setDelegateName("Người Lấy Hộ");
-        order.setDelegateNote("Lấy giúp trước 6h");
-        order.setDelegatedAt(LocalDateTime.of(2026, 10, 11, 3, 0));
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Collection<String>> phones = ArgumentCaptor.forClass(Collection.class);
-        when(orderRepository.findDelegatedTo(phones.capture(), eq(false), anyCollection(), any(Pageable.class)))
-                .thenReturn(List.of(order));
-
-        ReceiverOrderResponse response = service.delegatedToMe(66L, true, null).getFirst();
-
-        assertTrue(phones.getValue().contains("+84907654321"));
         assertEquals("123456", response.pickupPin());
-        assertEquals("Người Lấy Hộ", response.delegateName());
-        assertEquals("Lấy giúp trước 6h", response.delegateNote());
-        assertEquals("Người Gửi", response.senderName());
-    }
-
-    @Test
-    void accountWithoutPhoneHasNoDelegatedOrders() {
-        callerPhone(null);
-
-        assertTrue(service.delegatedToMe(66L, false, null).isEmpty());
-        verify(orderRepository, never()).findDelegatedTo(anyCollection(), anyBoolean(), anyCollection(), any());
     }
 
     @Test

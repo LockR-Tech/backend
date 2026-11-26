@@ -8,7 +8,6 @@ import com.huynqb.laundrylocker.order.client.LockerClient;
 import com.huynqb.laundrylocker.order.client.LockerLookupClient;
 import com.huynqb.laundrylocker.order.client.NotificationClient;
 import com.huynqb.laundrylocker.order.client.UserClient;
-import com.huynqb.laundrylocker.order.dto.DelegateOrderRequest;
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 import com.huynqb.laundrylocker.order.repository.*;
 import com.huynqb.laundrylocker.order.settings.TestOrderRules;
@@ -160,19 +159,6 @@ class OrderServiceHandoverAndCompletionTest {
 
         verify(rabbitTemplate, never()).convertAndSend(anyString(), eq(DomainEventNames.ORDER_COMPLETED), any(Object.class));
         verify(rabbitTemplate).convertAndSend(anyString(), eq(DomainEventNames.ORDER_STATUS_CHANGED), any(Object.class));
-    }
-
-    @Test
-    void delegationRecordsTheDelegateSeparately() {
-        LockerOrder order = storedOrder();
-        when(orderRepository.findById(21L)).thenReturn(Optional.of(order));
-
-        orderService.delegate(21L, 10L, new DelegateOrderRequest(" 0907654321 ", "Người Lấy Hộ", "Lấy giúp"));
-
-        assertEquals("0907654321", order.getDelegatePhone());
-        assertEquals("Người Lấy Hộ", order.getDelegateName());
-        assertEquals("Lấy giúp", order.getDelegateNote());
-        assertNotNull(order.getDelegatedAt());
     }
 
     private static LockerOrder storedOrder() {

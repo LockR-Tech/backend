@@ -1274,69 +1274,6 @@ public class OrderService {
     }
 
     @Transactional
-    public OrderResponse delegate(Long id, Long userId, DelegateOrderRequest request) {
-        LockerOrder order = find(id);
-        assertOwner(order, userId);
-        // Chỉ ủy quyền khi đồ đang nằm trong tủ chờ lấy
-        validateStatus(order, Set.of("STORING", "RETURNED"));
-        order.setPinCode(generatePinCode());
-        order.setPinCodeIssuedAt(LocalDateTime.now());
-        order.setReceiverPhone(request.phone());
-        if (StringUtils.hasText(request.name())) {
-            order.setReceiverName(request.name());
-        }
-        // Lưu riêng người lấy hộ để họ thấy đơn ở GET /api/orders/delegated-to-me.
-        order.setDelegatePhone(request.phone().trim());
-        order.setDelegateName(StringUtils.hasText(request.name()) ? request.name().trim() : null);
-        order.setDelegateNote(StringUtils.hasText(request.note()) ? truncate(request.note().trim(), 500) : null);
-        order.setDelegatedAt(LocalDateTime.now());
-        LockerOrder saved = orderRepository.save(order);
-        addHistory(
-                saved.getId(),
-                saved.getStatus(),
-                saved.getStatus(),
-                userId,
-                "Delegated pickup to " + request.phone()
-                        + (StringUtils.hasText(request.note()) ? " - " + request.note() : ""));
-        try {
-            notificationClient.requestNotification(
-                    new NotificationRequest(
-                            saved.getUserId(),
-                            "Đã uỷ quyền nhận hàng",
-                            "Đơn " + saved.getOrderCode() + " đã uỷ quyền cho " + request.phone()
-                                    + " lấy hộ. Mã lấy hàng đã đổi, mã cũ không còn dùng được.",
-                            "ORDER_DELEGATED",
-                            saved.getId(),
-                            "ORDER"));
-        } catch (Exception ex) {
-            log.warn("Could not notify delegation for order {}: {}", saved.getId(), ex.getMessage());
-        }
-        notifyDelegateQuietly(saved);
-        return toResponse(saved);
-    }
-
-    /// Người lấy hộ có tài khoản Lock.R ⇒ báo trong app; mã mở ô xem ở mục "Được ủy quyền".
-    private void notifyDelegateQuietly(LockerOrder order) {
-        try {
-            var delegate = userClient.getUserByPhone(order.getDelegatePhone()).data();
-            if (delegate == null || delegate.id() == null || delegate.id().equals(order.getUserId())) {
-                return;
-            }
-            notificationClient.requestNotification(new NotificationRequest(
-                    delegate.id(),
-                    "Bạn được ủy quyền lấy hộ",
-                    "Bạn được ủy quyền lấy hộ đơn " + order.getOrderCode()
-                            + ". Mở mục \"Được ủy quyền\" trong app để xem mã mở tủ.",
-                    "ORDER_DELEGATED_TO_YOU",
-                    order.getId(),
-                    "ORDER"));
-        } catch (Exception ex) {
-            log.info("Delegate of order {} not notified in-app: {}", order.getId(), ex.getMessage());
-        }
-    }
-
-
-    @Transactional
     public OrderResponse pickupStorage(Long id, Long userId) {
         LockerOrder order = find(id);
         assertOwner(order, userId);
