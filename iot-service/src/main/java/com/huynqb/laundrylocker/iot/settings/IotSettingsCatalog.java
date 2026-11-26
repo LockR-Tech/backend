@@ -24,6 +24,7 @@ public class IotSettingsCatalog implements SettingsCatalog {
     public static final String TEST_OPEN_USER_IDS = "app.iot.test-open.user-ids";
     public static final String TEST_OPEN_LOCKER_IDS = "app.iot.test-open.locker-ids";
     public static final String BLE_TOKEN_TTL_SECONDS = "app.iot.ble-token-ttl-seconds";
+    public static final String BLE_TEST_ENABLED = "app.iot.ble-test.enabled";
 
     private static final String UNLOCK = "Mở tủ & chống dò mã";
     private static final String TEST_OPEN = "Thử tủ bằng QR (không cần đơn)";
@@ -53,6 +54,10 @@ public class IotSettingsCatalog implements SettingsCatalog {
                         "Id người dùng được mở thử, cách nhau bởi dấu phẩy. 0 = chưa có ai.", "0", 0, null, null),
                 integerList(TEST_OPEN_LOCKER_IDS, TEST_OPEN, "Tủ được mở thử",
                         "Id tủ cho phép mở thử, cách nhau bởi dấu phẩy. 0 = chưa có tủ nào.", "0", 0, null, null),
+                // Cụm "Giả lập & demo" trên web admin tắt/bật cờ này cùng các cờ giả lập khác (F3-G14).
+                bool(BLE_TEST_ENABLED, TEST_OPEN, "Cho tài khoản thử mở ô qua Bluetooth",
+                        "Bật thì tài khoản admin đã cấp quyền ở từng tủ thấy mục \"Thử mở ô qua Bluetooth\" trong app "
+                                + "và xin được mã thử. Tắt khi vận hành chính thức; quyền đã cấp vẫn giữ để bật lại.", true),
                 integer(BLE_TOKEN_TTL_SECONDS, TEST_OPEN, "Thời hạn mã thử mở ô qua Bluetooth",
                         "Mã ký cấp cho tài khoản thử mở ô qua Bluetooth chỉ dùng một lần và hết hạn sau khoảng này.",
                         120, 30, 900, "giây"));

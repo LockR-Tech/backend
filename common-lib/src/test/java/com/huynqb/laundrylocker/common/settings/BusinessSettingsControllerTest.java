@@ -51,7 +51,7 @@ class BusinessSettingsControllerTest {
         mvc.perform(get("/api/admin/settings/order").header(ServerText.LANGUAGE_HEADER, "en"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].group").value("Prices & fees"))
-                .andExpect(jsonPath("$.data[0].label").value("Locker delivery fee"))
+                .andExpect(jsonPath("$.data[0].label").value("Locker send fee"))
                 .andExpect(jsonPath("$.data[0].description")
                         .value("Price per locker delivery order. Applies to orders created after saving."))
                 .andExpect(jsonPath("$.data[0].unit").value("VND"))
@@ -95,6 +95,6 @@ class BusinessSettingsControllerTest {
         mvc.perform(put("/api/admin/settings/order").header(ServerText.LANGUAGE_HEADER, "en")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("“Locker delivery fee” must be ≥ 0"));
+                .andExpect(jsonPath("$.message").value("“Locker send fee” must be ≥ 0"));
     }
 }

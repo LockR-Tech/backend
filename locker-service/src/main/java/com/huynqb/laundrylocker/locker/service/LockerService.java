@@ -1151,8 +1151,24 @@ public class LockerService {
     /// Danh sách cho khách / kiosk: tủ đang lắp đặt chưa nghiệm thu thì chưa hiện.
     @Transactional(readOnly = true)
     public List<LockerResponse> listLockers(Long storeId) {
-        return toResponses(customerVisible(
-                storeId == null ? lockerRepository.findAll() : lockerRepository.findByStoreId(storeId)), null);
+        return listLockers(storeId, null, null);
+    }
+
+    /// Như trên, thêm ẩn tủ demo khi admin tắt "Hiện tủ demo cho khách" (F3-G14) — trừ admin và
+    /// tài khoản demo được phép.
+    @Transactional(readOnly = true)
+    public List<LockerResponse> listLockers(Long storeId, Long userId, String roles) {
+        List<LockerUnit> lockers = customerVisible(
+                storeId == null ? lockerRepository.findAll() : lockerRepository.findByStoreId(storeId));
+        return toResponses(lockers.stream()
+                .filter(locker -> rules == null || !rules.demoLockerHiddenFor(locker.getId(), userId, roles))
+                .toList(), null);
+    }
+
+    /// order-service hỏi trước khi giữ ô cho đơn mới: tủ demo đã ẩn thì khách thường không đặt được.
+    @Transactional(readOnly = true)
+    public boolean lockerOpenToCustomer(Long lockerId, Long userId, String roles) {
+        return rules == null || !rules.demoLockerHiddenFor(lockerId, userId, roles);
     }
 
     private static List<LockerUnit> customerVisible(List<LockerUnit> lockers) {

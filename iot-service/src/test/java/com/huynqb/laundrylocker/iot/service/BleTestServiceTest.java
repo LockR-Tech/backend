@@ -69,6 +69,26 @@ class BleTestServiceTest {
                         new LockerLayoutView.Cell(41L, 4, 2, 1, "AVAILABLE")))));
     }
 
+    /// Cụm "Giả lập & demo" tắt cờ ⇒ app không thấy tủ thử, xin mã bị chặn; quyền đã cấp vẫn giữ (F3-G14).
+    @Test
+    void bleTestDisabledHidesLockersAndBlocksTokens() {
+        BleTestService off = new BleTestService(grants, signer, lockerClient, layoutLookup, logs,
+                com.huynqb.laundrylocker.iot.settings.TestIotRules.of(java.util.Map.of(
+                        com.huynqb.laundrylocker.iot.settings.IotSettingsCatalog.BLE_TEST_ENABLED, false)));
+        BleTestGrant granted = new BleTestGrant();
+        granted.setLockerId(LOCKER);
+        granted.setUserId(CUSTOMER);
+        when(grants.findByUserIdOrderByLockerIdAsc(CUSTOMER)).thenReturn(List.of(granted));
+        when(grants.existsByLockerIdAndUserId(LOCKER, CUSTOMER)).thenReturn(true);
+
+        assertTrue(off.lockersOf(CUSTOMER).isEmpty());
+        BusinessException ex = assertThrows(BusinessException.class, () -> off.issueToken(LOCKER, 3, CUSTOMER));
+        assertEquals("BLE_TEST_DISABLED", ex.getCode());
+        verifyNoInteractions(logs);
+        // Bật lại (mặc định) ⇒ quyền cũ dùng lại được ngay.
+        assertEquals(1, service.lockersOf(CUSTOMER).size());
+    }
+
     @Test
     void customerWithoutGrantGetsNoToken() {
         when(grants.existsByLockerIdAndUserId(LOCKER, CUSTOMER)).thenReturn(false);

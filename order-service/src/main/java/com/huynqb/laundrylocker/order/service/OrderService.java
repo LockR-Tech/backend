@@ -229,6 +229,7 @@ public class OrderService {
 
     @Transactional
     public OrderResponse createSend(SendOrderRequest request, Long userId) {
+        assertLockerOpenToCustomer(request.lockerId(), userId);
         // Gửi hàng qua tủ bắt buộc có email người nhận: mã mở tủ luôn tới được người nhận (kể cả chưa có
         // tài khoản Lock.R) và người gửi gửi lại được từ chi tiết đơn khi cần.
         requireReceiverEmail(request.receiverEmail());
@@ -387,6 +388,7 @@ public class OrderService {
 
     @Transactional
     public OrderResponse createRental(RentalOrderRequest request, Long userId) {
+        assertLockerOpenToCustomer(request.lockerId(), userId);
         String cellType = StringUtils.hasText(request.cellType()) ? request.cellType().toUpperCase() : "STANDARD";
         if ("DRONE".equals(cellType)) {
             throw new BusinessException("DRONE_CELL_RESTRICTED", "Drone cells cannot be rented");
@@ -716,6 +718,25 @@ public class OrderService {
         if (hours == null || hours < min || hours > max) {
             throw new BusinessException(
                     "RENTAL_HOURS_OUT_OF_RANGE", "hours must be between " + min + " and " + max);
+        }
+    }
+
+    /// Tủ demo đã ẩn với khách (cụm "Giả lập & demo", F3-G14) thì không nhận đơn mới. Không hỏi được
+    /// locker-service thì cho qua — không chặn khách thật chỉ vì lỗi mạng tạm thời.
+    private void assertLockerOpenToCustomer(Long lockerId, Long userId) {
+        if (lockerId == null) {
+            return;
+        }
+        Object visible;
+        try {
+            ApiResponse<Map<String, Object>> res = lockerLookupClient.customerVisible(lockerId, userId);
+            visible = res == null || res.data() == null ? null : res.data().get("visible");
+        } catch (Exception ex) {
+            log.warn("Cannot check customer visibility of locker {}: {}", lockerId, ex.getMessage());
+            return;
+        }
+        if (Boolean.FALSE.equals(visible)) {
+            throw new BusinessException("LOCKER_NOT_AVAILABLE", "Tủ này hiện không nhận đơn mới");
         }
     }
 
