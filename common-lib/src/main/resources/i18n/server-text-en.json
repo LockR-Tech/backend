@@ -228,7 +228,6 @@
   "Bảo trì không đạt, chuyển {} → FAULT: {}": "Maintenance failed, moved {} → FAULT: {}",
   "Tủ {} không có bãi đáp drone — không gán drone vào tủ này được": "Locker {} has no drone landing pad — drones cannot be assigned to this locker",
   "Đổi KTV phụ trách: {} → {}": "Technician in charge changed: {} → {}",
-  "Admin mở phiếu sự cố: {}": "Admin opened an issue ticket: {}",
   "Kiểm tra an toàn sau sự cố {}": "Safety check after incident {}",
   "Bạn được giao kiểm tra {} sau sự cố {}.": "You have been assigned to check {} after incident {}.",
   "Kiểm tra hook/gripper, servo/actuator, dây điện và cơ cấu giữ hàng. ": "Check the hook/gripper, servo/actuator, wiring and the parcel holding mechanism.",
@@ -1929,5 +1928,11 @@
   "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi xử lý sự cố ô": "This ticket has not been claimed yet — please claim it before resolving the box incident",
   "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi từ chối": "This ticket has not been claimed yet — please claim it before rejecting",
   "Phiếu đã được đóng": "This ticket is already closed",
-  "Xin lỗi, mình không thể hỗ trợ yêu cầu này. Bạn có thể liên hệ bộ phận hỗ trợ Lock.R để được giúp đỡ.": "Sorry, I can't help with this request. You can contact Lock.R support for help."
+  "Xin lỗi, mình không thể hỗ trợ yêu cầu này. Bạn có thể liên hệ bộ phận hỗ trợ Lock.R để được giúp đỡ.": "Sorry, I can't help with this request. You can contact Lock.R support for help.",
+  "Tủ này đã giao cho KTV khác phụ trách — chỉ KTV phụ trách tủ hoặc Admin mới được ngưng cả tủ": "This locker is assigned to another technician — only the technician in charge of the locker or an admin can suspend the whole locker",
+  "Phiếu này đang được định tuyến riêng cho KTV phụ trách thiết bị": "This ticket is routed to the technician in charge of the device",
+  "Bảo trì Drone {}": "Drone maintenance {}",
+  "Đưa drone vào bảo trì": "Put the drone under maintenance",
+  "Admin mở phiếu bảo trì: ": "Admin opened a maintenance ticket:",
+  "Admin mở phiếu sự cố: ": "Admin opened an incident ticket:"
 }
