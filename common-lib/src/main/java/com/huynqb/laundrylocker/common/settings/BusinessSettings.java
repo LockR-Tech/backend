@@ -153,7 +153,7 @@ public class BusinessSettings {
     /// Kiểm tra toàn bộ trước rồi mới ghi — một giá trị sai thì không ghi giá trị nào.
     public List<SettingView> update(Map<String, ?> values, Long actorUserId) {
         if (values == null || values.isEmpty()) {
-            throw new BusinessException("SETTINGS_EMPTY", "No settings to update");
+            throw new BusinessException("SETTINGS_EMPTY", "Chưa có quy tắc nào được thay đổi");
         }
         Map<String, String> normalized = new LinkedHashMap<>();
         for (Map.Entry<String, ?> entry : values.entrySet()) {
@@ -269,7 +269,7 @@ public class BusinessSettings {
         SettingDefinition definition = key == null ? null : definitions.get(key);
         if (definition == null) {
             throw new BusinessException(
-                    "SETTING_UNKNOWN", "Unknown setting for " + scope + ": " + key, HttpStatus.NOT_FOUND);
+                    "SETTING_UNKNOWN", "Không có quy tắc " + key + " trong nhóm " + scope, HttpStatus.NOT_FOUND);
         }
         return definition;
     }
@@ -341,7 +341,7 @@ public class BusinessSettings {
             if (definition.type() == SettingType.STRING && definition.allowedValues().isEmpty()) {
                 return "";
             }
-            throw invalid(definition, "value is required");
+            throw invalid("«%s» không được để trống".formatted(definition.label()));
         }
         return switch (definition.type()) {
             case INTEGER -> String.valueOf(checkRange(definition, parseLong(definition, value)));
@@ -350,37 +350,38 @@ public class BusinessSettings {
                 try {
                     decimal = new BigDecimal(value);
                 } catch (NumberFormatException ex) {
-                    throw invalid(definition, "must be a number");
+                    throw invalid("«%s» phải là số".formatted(definition.label()));
                 }
                 if (definition.min() != null && decimal.compareTo(new BigDecimal(definition.min())) < 0) {
-                    throw invalid(definition, "must be ≥ " + definition.min());
+                    throw invalid("«%s» phải ≥ %s".formatted(definition.label(), definition.min()));
                 }
                 if (definition.max() != null && decimal.compareTo(new BigDecimal(definition.max())) > 0) {
-                    throw invalid(definition, "must be ≤ " + definition.max());
+                    throw invalid("«%s» phải ≤ %s".formatted(definition.label(), definition.max()));
                 }
                 yield decimal.stripTrailingZeros().toPlainString();
             }
             case BOOLEAN -> {
                 String lower = value.toLowerCase(Locale.ROOT);
                 if (!lower.equals("true") && !lower.equals("false")) {
-                    throw invalid(definition, "must be true or false");
+                    throw invalid("«%s» chỉ nhận bật hoặc tắt".formatted(definition.label()));
                 }
                 yield lower;
             }
             case STRING -> {
                 if (value.length() > MAX_STRING_LENGTH) {
-                    throw invalid(definition, "is too long");
+                    throw invalid("«%s» quá dài".formatted(definition.label()));
                 }
                 if (!definition.allowedValues().isEmpty() && !definition.allowedValues().contains(value)) {
-                    throw invalid(definition, "must be one of " + definition.allowedValues());
+                    throw invalid("«%s» chỉ nhận: %s".formatted(
+                            definition.label(), String.join(", ", definition.allowedValues())));
                 }
                 if (isItemList(definition)) {
                     Set<String> items = new LinkedHashSet<>();
                     for (String token : splitItems(value)) {
                         String item = matchItem(definition, token);
                         if (item == null) {
-                            throw invalid(definition, "có giá trị không được hỗ trợ: " + token
-                                    + " (chỉ nhận: " + String.join(", ", definition.allowedItems()) + ")");
+                            throw invalid("«%s» có giá trị không được hỗ trợ: %s (chỉ nhận: %s)".formatted(
+                                    definition.label(), token, String.join(", ", definition.allowedItems())));
                         }
                         items.add(item);
                     }
@@ -395,7 +396,7 @@ public class BusinessSettings {
                         .map(part -> checkRange(definition, parseLong(definition, part)))
                         .toList();
                 if (items.isEmpty()) {
-                    throw invalid(definition, "needs at least one number");
+                    throw invalid("«%s» cần ít nhất một số".formatted(definition.label()));
                 }
                 yield items.stream().map(String::valueOf).collect(Collectors.joining(","));
             }
@@ -406,26 +407,27 @@ public class BusinessSettings {
         try {
             long parsed = Long.parseLong(value);
             if (parsed > Integer.MAX_VALUE || parsed < Integer.MIN_VALUE) {
-                throw invalid(definition, "is out of range");
+                throw invalid("«%s» vượt giới hạn cho phép".formatted(definition.label()));
             }
             return parsed;
         } catch (NumberFormatException ex) {
-            throw invalid(definition, "must be a whole number");
+            throw invalid("«%s» phải là số nguyên".formatted(definition.label()));
         }
     }
 
     private static long checkRange(SettingDefinition definition, long value) {
         if (definition.min() != null && value < Long.parseLong(definition.min())) {
-            throw invalid(definition, "must be ≥ " + definition.min());
+            throw invalid("«%s» phải ≥ %s".formatted(definition.label(), definition.min()));
         }
         if (definition.max() != null && value > Long.parseLong(definition.max())) {
-            throw invalid(definition, "must be ≤ " + definition.max());
+            throw invalid("«%s» phải ≤ %s".formatted(definition.label(), definition.max()));
         }
         return value;
     }
 
-    private static BusinessException invalid(SettingDefinition definition, String reason) {
-        return new BusinessException(
-                "SETTING_INVALID", definition.label() + " (" + definition.key() + ") " + reason);
+    /// Câu lỗi mở đầu bằng «tên quy tắc» — đặt trong «» để mẫu dịch tiếng Anh (`server-text-en.json`) khớp
+    /// đúng cả khi tên có ngoặc đơn.
+    private static BusinessException invalid(String message) {
+        return new BusinessException("SETTING_INVALID", message);
     }
 }

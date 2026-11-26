@@ -7,9 +7,7 @@ import com.huynqb.laundrylocker.common.event.DomainEventNames;
 import com.huynqb.laundrylocker.payment.client.OrderClient;
 import com.huynqb.laundrylocker.payment.dto.CheckoutRequest;
 import com.huynqb.laundrylocker.payment.dto.CreatePaymentRequest;
-import com.huynqb.laundrylocker.payment.dto.CreateTopupRequest;
 import com.huynqb.laundrylocker.payment.dto.PaymentResponse;
-import com.huynqb.laundrylocker.payment.dto.TopupResponse;
 import com.huynqb.laundrylocker.payment.model.PaymentRecord;
 import com.huynqb.laundrylocker.payment.repository.PaymentRepository;
 import com.huynqb.laundrylocker.payment.repository.RefundRepository;
@@ -43,7 +41,6 @@ class PaymentServiceCheckoutTest {
     @Mock private RefundRepository refundRepository;
     @Mock private com.huynqb.laundrylocker.payment.repository.UserBankAccountRepository userBankAccountRepository;
     @Mock private RabbitTemplate rabbitTemplate;
-    @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
     @Mock private com.huynqb.laundrylocker.payment.client.NotificationClient notificationClient;
     @Mock private SepayService sepayService;
@@ -57,16 +54,15 @@ class PaymentServiceCheckoutTest {
                 refundRepository,
                 userBankAccountRepository,
                 rabbitTemplate,
-                walletService,
                 orderClient,
                 notificationClient,
                 sepayService,
                 TestPaymentRules.of(ALL_METHODS));
     }
 
-    // Mặc định production chỉ bật SePay; các ca kiểm thử ví / tiền mặt bật tường minh cả ba.
+    // Mặc định production chỉ bật SePay; các ca kiểm thử tiền mặt bật tường minh cả hai.
     private static final Map<String, Object> ALL_METHODS =
-            Map.of(com.huynqb.laundrylocker.payment.settings.PaymentSettingsCatalog.ENABLED_METHODS, "CASH,WALLET,SEPAY");
+            Map.of(com.huynqb.laundrylocker.payment.settings.PaymentSettingsCatalog.ENABLED_METHODS, "CASH,SEPAY");
 
     /// Ô của đơn đang chờ KTV xử lý sự cố: khách chưa lấy được đồ thì không tạo mã thu tiền.
     @Test
@@ -182,7 +178,7 @@ class PaymentServiceCheckoutTest {
 
     @Test
     void checkoutRejectsMethodDisabledByAdminBeforeLookingUpOrder() {
-        PaymentService service = serviceWith(Map.of("app.payment.enabled-methods", "WALLET, sepay"));
+        PaymentService service = serviceWith(Map.of("app.payment.enabled-methods", "sepay"));
 
         BusinessException error = assertThrows(
                 BusinessException.class,
@@ -205,28 +201,11 @@ class PaymentServiceCheckoutTest {
         verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(Object.class));
     }
 
-    @Test
-    void topupAmountMustStayWithinAdminLimits() {
-        PaymentService service = serviceWith(Map.of(
-                "app.payment.topup-min-amount", 10_000,
-                "app.payment.topup-max-amount", 2_000_000));
-
-        assertEquals("TOPUP_AMOUNT_OUT_OF_RANGE", assertThrows(
-                BusinessException.class,
-                () -> service.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(5_000), null, null)))
-                .getCode());
-        assertEquals("TOPUP_AMOUNT_OUT_OF_RANGE", assertThrows(
-                BusinessException.class,
-                () -> service.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(3_000_000), null, null)))
-                .getCode());
-        verify(repository, never()).save(any(PaymentRecord.class));
-    }
-
-    /// VNPay/MoMo đã ngừng hỗ trợ: thanh toán đơn bằng hai phương thức này bị từ chối 400 trước khi tra đơn,
-    /// kể cả khi giá trị cấu hình cũ còn liệt kê chúng.
+    /// VNPay/MoMo và ví Lock.R đã ngừng hỗ trợ: thanh toán đơn bằng các phương thức này bị từ chối 400 trước khi
+    /// tra đơn, kể cả khi giá trị cấu hình cũ còn liệt kê chúng.
     @Test
     void checkoutRejectsRetiredMethodsBeforeLookingUpOrder() {
-        for (String method : new String[]{"VNPAY", "momo", " MoMo"}) {
+        for (String method : new String[]{"VNPAY", "momo", " MoMo", "WALLET", "wallet"}) {
             BusinessException error = assertThrows(
                     BusinessException.class,
                     () -> paymentService.checkout(44L, new CheckoutRequest(55L, method, null, null)),
@@ -255,41 +234,6 @@ class PaymentServiceCheckoutTest {
     }
 
     @Test
-    void topupRejectsRetiredMethods() {
-        for (String method : new String[]{"VNPAY", "momo"}) {
-            BusinessException error = assertThrows(
-                    BusinessException.class,
-                    () -> paymentService.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(50_000), null, method)),
-                    method);
-
-            assertEquals("PAYMENT_METHOD_UNSUPPORTED", error.getCode(), method);
-            assertEquals(HttpStatus.BAD_REQUEST, error.getStatus(), method);
-        }
-        assertEquals("PAYMENT_METHOD_INVALID", assertThrows(
-                BusinessException.class,
-                () -> paymentService.createTopupUrl(44L, new CreateTopupRequest(BigDecimal.valueOf(50_000), null, "WALLET")))
-                .getCode());
-        verify(repository, never()).save(any(PaymentRecord.class));
-        verify(sepayService, never()).createPayment(any(), any());
-    }
-
-    /// Bỏ trống `method` ⇒ nạp qua SePay (trước đây mặc định VNPay).
-    @Test
-    void topupWithoutMethodGoesThroughSepay() {
-        when(sepayService.createPayment(any(PaymentRecord.class), any())).thenReturn("https://pay.example/sepay");
-
-        TopupResponse response = paymentService.createTopupUrl(
-                44L, new CreateTopupRequest(BigDecimal.valueOf(50_000), null, null));
-
-        assertEquals("https://pay.example/sepay", response.paymentUrl());
-        ArgumentCaptor<PaymentRecord> captor = ArgumentCaptor.forClass(PaymentRecord.class);
-        verify(repository).save(captor.capture());
-        assertEquals("SEPAY_TOPUP", captor.getValue().getMethod());
-        assertEquals(0L, captor.getValue().getOrderId());
-        assertEquals(44L, captor.getValue().getUserId());
-    }
-
-    @Test
     void checkoutSelectsDroneReceiverOnlyForDroneDeliveryOrders() {
         when(orderClient.getOrder(55L)).thenReturn(ApiResponse.ok(
                 new OrderSummary(55L, 44L, "AWAITING_DISPATCH", BigDecimal.valueOf(15000), "DRONE_DELIVERY")));
@@ -314,7 +258,7 @@ class PaymentServiceCheckoutTest {
     }
 
     @Test
-    void refundOrderCreatesPendingRefundWithoutWalletCredit() {
+    void refundOrderCreatesPendingBankRefund() {
         PaymentRecord paid = new PaymentRecord();
         paid.setId(7L);
         paid.setOrderId(55L);
@@ -337,13 +281,7 @@ class PaymentServiceCheckoutTest {
         assertEquals(1, result.refundedPayments());
         verify(refundRepository).save(org.mockito.ArgumentMatchers.argThat(refund ->
                 refund.getPaymentId().equals(7L) && "PENDING".equals(refund.getStatus())));
-        // Không hoàn tiền về ví nữa; chờ admin duyệt chuyển khoản ngân hàng.
-        verify(walletService, org.mockito.Mockito.never()).credit(
-                org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any());
+        // Hoàn tiền chờ admin duyệt chuyển khoản ngân hàng (không còn ví).
     }
 
     @Test
@@ -366,16 +304,12 @@ class PaymentServiceCheckoutTest {
 
         assertEquals(0, result.refundedPayments());
         verify(refundRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
-        verify(walletService, org.mockito.Mockito.never()).credit(
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any());
     }
 
     private PaymentService serviceWith(Map<String, ?> overrides) {
         return new PaymentService(
                 repository, refundRepository, userBankAccountRepository, rabbitTemplate,
-                walletService, orderClient, notificationClient, sepayService, TestPaymentRules.of(withAllMethods(overrides)));
+                orderClient, notificationClient, sepayService, TestPaymentRules.of(withAllMethods(overrides)));
     }
 
     private static Map<String, Object> withAllMethods(Map<String, ?> overrides) {

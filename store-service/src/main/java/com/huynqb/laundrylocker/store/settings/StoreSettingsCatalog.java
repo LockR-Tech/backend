@@ -31,7 +31,7 @@ public class StoreSettingsCatalog implements SettingsCatalog {
     public List<SettingDefinition> definitions() {
         return List.of(
                 decimal(NEARBY_DEFAULT_RADIUS_KM, NEARBY, "Bán kính tìm cửa hàng gần đây mặc định",
-                        "Dùng khi app không gửi radiusKm; chỉ trả cửa hàng trong bán kính này.", "10", "0.5", "200", "km")
+                        "Dùng khi app không gửi bán kính tìm kiếm; chỉ trả cửa hàng trong bán kính này.", "10", "0.5", "200", "km")
                         .asPublic(),
                 // Cụm "Giả lập & demo" trên web admin tắt/bật cờ này cùng các cờ giả lập khác (F3-G14).
                 bool(DEMO_VISIBLE, DEMO, "Hiện điểm gửi demo cho khách",

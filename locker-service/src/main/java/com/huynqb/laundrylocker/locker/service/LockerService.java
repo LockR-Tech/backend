@@ -1350,49 +1350,41 @@ public class LockerService {
     }
 
     @Transactional
-    public void deleteReport(Long reportId) {
+    public void deleteReport(Long reportId, Long actorUserId, String reason) {
+        String why = DeleteReason.require(reason);
         LockerReport report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
-        doDeleteReport(report);
+        doDeleteReport(report, actorUserId, why);
     }
 
-    private void doDeleteReport(LockerReport report) {
+    /// Xoá mềm (ADR-0009): phiếu, ảnh, nhật ký sửa chữa và đánh giá vẫn nằm trong DB kèm lý do, chỉ ẩn khỏi
+    /// mọi danh sách (`@SQLRestriction` trên LockerReport). Phiếu đang mở thì trả ô/tủ/drone về như khi đóng phiếu.
+    private void doDeleteReport(LockerReport report, Long actorUserId, String reason) {
         Long reportId = report.getId();
         if (OPEN_REPORT_STATUSES.contains(report.getStatus())) {
             restoreAssetsAfterClose(report);
         }
 
-        // 1. Unlink inspection logs
+        // Biên bản kiểm tra và lịch không còn trỏ vào phiếu đã ẩn (lịch được sinh phiếu mới ở lần kiểm tra sau).
         List<MaintenanceInspectionLog> inspectionLogs = inspectionLogRepository.findByCreatedReportId(reportId);
         for (MaintenanceInspectionLog log : inspectionLogs) {
             log.setCreatedReportId(null);
             inspectionLogRepository.save(log);
         }
-
-        // 2. Clear schedule pendingReportId if pointing to this report
         for (MaintenanceSchedule schedule : scheduleRepository.findByPendingReportId(reportId)) {
             schedule.setPendingReportId(null);
             scheduleRepository.save(schedule);
         }
 
-        // 3. Delete attachments & cloudinary images
-        attachmentService.deleteByReportId(reportId);
-
-        // 4. Delete repair logs
-        List<RepairLog> logs = repairLogRepository.findByReportIdOrderByCreatedAtAsc(reportId);
-        if (!logs.isEmpty()) {
-            repairLogRepository.deleteAll(logs);
-        }
-
-        // 5. Delete ratings
-        ratingRepository.findByReportId(reportId).ifPresent(ratingRepository::delete);
-
-        // 6. Delete report entity
-        reportRepository.delete(report);
+        report.setDeletedAt(LocalDateTime.now());
+        report.setDeletedBy(actorUserId);
+        report.setDeletedReason(reason);
+        reportRepository.save(report);
     }
 
     @Transactional
-    public int deleteReportsBatch(BatchDeleteReportsRequest request) {
+    public int deleteReportsBatch(BatchDeleteReportsRequest request, Long actorUserId) {
+        String why = DeleteReason.require(request == null ? null : request.reason());
         List<LockerReport> targetReports;
         boolean isAll = request != null && Boolean.TRUE.equals(request.deleteAll());
         String category = request != null ? request.category() : null;
@@ -1422,7 +1414,7 @@ public class LockerService {
         }
 
         for (LockerReport report : targetReports) {
-            doDeleteReport(report);
+            doDeleteReport(report, actorUserId, why);
         }
 
         return targetReports.size();
@@ -2576,12 +2568,16 @@ public class LockerService {
 
     /// Xóa mềm (active=false) để giữ lịch sử.
     @Transactional
-    public void deleteSchedule(Long id) {
+    public void deleteSchedule(Long id, Long actorUserId, String reason) {
+        String why = DeleteReason.require(reason);
         MaintenanceSchedule schedule =
                 scheduleRepository
                         .findById(id)
                         .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
         schedule.setActive(false);
+        schedule.setDeletedAt(LocalDateTime.now());
+        schedule.setDeletedBy(actorUserId);
+        schedule.setDeletedReason(why);
         scheduleRepository.save(schedule);
         if (schedule.getDroneUnitId() != null) {
             synchronizeDroneOperationalStatus(schedule.getDroneUnitId(), null);

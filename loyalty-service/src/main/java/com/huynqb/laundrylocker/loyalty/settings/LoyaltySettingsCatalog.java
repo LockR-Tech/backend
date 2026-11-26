@@ -31,14 +31,14 @@ public class LoyaltySettingsCatalog implements SettingsCatalog {
     @Override
     public List<SettingDefinition> definitions() {
         return List.of(
-                integer(TIER_SILVER_POINTS, LOYALTY, "Điểm lên hạng BẠC (SILVER)",
-                        "Tổng điểm ĐÃ TÍCH từ trước tới nay tối thiểu để đạt hạng SILVER — dùng điểm thanh toán "
+                integer(TIER_SILVER_POINTS, LOYALTY, "Điểm lên hạng Bạc",
+                        "Tổng điểm đã tích từ trước tới nay tối thiểu để đạt hạng Bạc — dùng điểm thanh toán "
                                 + "không làm tụt hạng. Các mốc luôn tăng dần: mốc sau nhỏ hơn mốc trước thì dùng mốc trước.",
                         50_000, 1, 10_000_000, "điểm").asPublic(),
-                integer(TIER_GOLD_POINTS, LOYALTY, "Điểm lên hạng VÀNG (GOLD)",
-                        "Tổng điểm đã tích tối thiểu để đạt hạng GOLD.", 200_000, 1, 10_000_000, "điểm").asPublic(),
-                integer(TIER_PLATINUM_POINTS, LOYALTY, "Điểm lên hạng BẠCH KIM (PLATINUM)",
-                        "Tổng điểm đã tích tối thiểu để đạt hạng PLATINUM.", 500_000, 1, 10_000_000, "điểm").asPublic(),
+                integer(TIER_GOLD_POINTS, LOYALTY, "Điểm lên hạng Vàng",
+                        "Tổng điểm đã tích tối thiểu để đạt hạng Vàng.", 200_000, 1, 10_000_000, "điểm").asPublic(),
+                integer(TIER_PLATINUM_POINTS, LOYALTY, "Điểm lên hạng Bạch kim",
+                        "Tổng điểm đã tích tối thiểu để đạt hạng Bạch kim.", 500_000, 1, 10_000_000, "điểm").asPublic(),
                 integer(STAMPS_PER_REWARD, LOYALTY, "Số tem đổi một phần thưởng",
                         "Thẻ tích tem đủ số tem này thì đổi được phần thưởng tem.", 10, 1, 100, "tem").asPublic(),
                 integer(POINTS_REWARD_COST, LOYALTY, "Số điểm đổi một phần thưởng",

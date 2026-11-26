@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.assistant.knowledge;
 
+import com.huynqb.laundrylocker.common.util.DeleteReason;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import org.springframework.http.HttpStatus;
@@ -92,8 +93,10 @@ public class KnowledgeService {
         return get(id);
     }
 
-    public void delete(long id) {
-        if (!documents.delete(id)) {
+    /// Xoá mềm tài liệu kèm lý do bắt buộc (ADR-0009).
+    public void delete(long id, Long actorUserId, String reason) {
+        String why = DeleteReason.require(reason);
+        if (!documents.softDelete(id, actorUserId, why)) {
             throw new NotFoundException("KnowledgeDocument", id);
         }
     }

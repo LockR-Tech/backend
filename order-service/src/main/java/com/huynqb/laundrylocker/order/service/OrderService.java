@@ -2025,7 +2025,7 @@ public class OrderService {
         return lockerId == null || lockerId <= 0 ? null : lockerId;
     }
 
-    /// Xóa cứng một mã đã có lượt dùng/đã được lưu vào ví sẽ mất dữ liệu lịch
+    /// Xóa một mã đã có lượt dùng/đã được khách lưu lại sẽ mất dữ liệu lịch
     /// sử (audit khuyến mãi, số tiền đã giảm cho từng đơn). Chặn và yêu cầu
     /// chuyển INACTIVE thay vì xóa. Mã chưa dùng thì xoá mềm: biến khỏi mọi truy vấn (@SQLRestriction)
     /// nhưng còn trong DB kèm lý do.
@@ -2037,7 +2037,7 @@ public class OrderService {
                 || promotionClaimRepository.existsByPromotionId(id)) {
             throw new BusinessException(
                     "PROMOTION_HAS_HISTORY",
-                    "Mã đã có lượt sử dụng hoặc đã được lưu vào ví — chuyển trạng thái INACTIVE thay vì xóa");
+                    "Mã đã có lượt sử dụng hoặc đã có khách lưu lại — hãy chuyển sang Ngừng hoạt động thay vì xoá");
         }
         promotion.setDeletedAt(LocalDateTime.now());
         promotion.setDeletedBy(actorUserId);

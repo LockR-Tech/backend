@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 /**
- * Pay for an existing order. method = WALLET | SEPAY | CASH (VNPAY/MOMO đã ngừng hỗ trợ ⇒ 400).
+ * Pay for an existing order. method = SEPAY | CASH (VNPAY/MOMO và ví Lock.R đã ngừng hỗ trợ ⇒ 400).
  */
 public record CheckoutRequest(
         @NotNull Long orderId,

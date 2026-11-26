@@ -107,7 +107,7 @@ public class SepayService {
     }
 
     /// Nội dung chuyển khoản: với đơn hàng dùng PAY-{orderId}-{orderCode} hoặc PAY-{orderId} ngắn gọn;
-    /// các giao dịch khác (nạp ví...) dùng referenceId (TOPUP_...).
+    /// giao dịch không gắn đơn (dữ liệu cũ) dùng referenceId.
     public String transferContent(PaymentRecord payment) {
         if (payment == null) return "";
         if (payment.getOrderId() != null && payment.getOrderId() > 0) {
@@ -319,8 +319,6 @@ public class SepayService {
                 actual.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static final java.util.regex.Pattern TOPUP_PATTERN =
-            java.util.regex.Pattern.compile("(TOPUP_[0-9]+_[0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final java.util.regex.Pattern PAY_PATTERN =
             java.util.regex.Pattern.compile("PAY[-_\\s]?([0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final java.util.regex.Pattern ORD_PATTERN =
@@ -340,7 +338,7 @@ public class SepayService {
         if (body.get("orderId") != null) {
             return body.get("orderId").toString();
         }
-        // Trường hợp webhook ngân hàng chuyển khoản: content, description, code chứa TOPUP_... hoặc PAY-...
+        // Trường hợp webhook ngân hàng chuyển khoản: content, description, code chứa PAY-... hoặc mã đơn
         if (body.get("content") != null) {
             String ref = parseReferenceIdFromContent(body.get("content").toString());
             if (StringUtils.hasText(ref)) return ref;
@@ -394,12 +392,7 @@ public class SepayService {
 
     public String parseReferenceIdFromContent(String content) {
         if (!StringUtils.hasText(content)) return null;
-        // 1. Quét tìm chuỗi TOPUP_...
-        java.util.regex.Matcher topupMatcher = TOPUP_PATTERN.matcher(content);
-        if (topupMatcher.find()) {
-            return topupMatcher.group(1).toUpperCase();
-        }
-        // 2. Quét tìm chuỗi PAY-... (hỗ trợ PAY-85-ORD-..., PAY-12, PAY 12, PAY12, PAY_12, trong chuỗi MBVCB.PAY-12.CT...)
+        // 1. Quét tìm chuỗi PAY-... (hỗ trợ PAY-85-ORD-..., PAY-12, PAY 12, PAY12, PAY_12, trong chuỗi MBVCB.PAY-12.CT...)
         java.util.regex.Matcher payMatcher = PAY_PATTERN.matcher(content);
         if (payMatcher.find()) {
             String digits = payMatcher.group(1);
@@ -411,7 +404,7 @@ public class SepayService {
             }
             return "PAY-" + digits;
         }
-        // 3. Quét tìm chuỗi ORD-... (nếu khách chỉ gõ mã đơn hàng)
+        // 2. Quét tìm chuỗi ORD-... (nếu khách chỉ gõ mã đơn hàng)
         java.util.regex.Matcher ordMatcher = ORD_PATTERN.matcher(content);
         if (ordMatcher.find()) {
             return ordMatcher.group(1).toUpperCase().replace(" ", "-").replace("_", "-");

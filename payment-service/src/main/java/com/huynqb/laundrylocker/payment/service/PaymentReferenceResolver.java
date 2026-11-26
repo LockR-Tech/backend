@@ -33,7 +33,7 @@ public class PaymentReferenceResolver {
         return batch("users", ids, userLookupClient::getUsers, UserSummary::id);
     }
 
-    /// Bỏ qua orderId ≤ 0 (nạp ví).
+    /// Bỏ qua orderId ≤ 0 (giao dịch nạp cũ không gắn đơn).
     public Map<Long, OrderBrief> orders(Collection<Long> ids) {
         List<Long> real = ids == null ? List.of() : ids.stream().filter(Objects::nonNull).filter(id -> id > 0).toList();
         return batch("orders", real, orderLookupClient::getOrders, OrderBrief::id);

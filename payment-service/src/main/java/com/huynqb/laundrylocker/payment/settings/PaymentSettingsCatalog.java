@@ -17,16 +17,12 @@ import static com.huynqb.laundrylocker.common.settings.SettingDefinition.stringL
 @Component
 public class PaymentSettingsCatalog implements SettingsCatalog {
 
-    public static final String TOPUP_MIN_AMOUNT = "app.payment.topup-min-amount";
-    public static final String WITHDRAW_MIN_AMOUNT = "app.payment.withdraw-min-amount";
-    public static final String TOPUP_MAX_AMOUNT = "app.payment.topup-max-amount";
-    public static final String TOPUP_DEFAULT_AMOUNT = "app.payment.topup-default-amount";
-    public static final String TOPUP_PRESETS = "app.payment.topup-presets";
     public static final String ENABLED_METHODS = "app.payment.enabled-methods";
     public static final String CASH_AUTO_COMPLETE = "app.payment.cash-auto-complete";
 
-    /// Phương thức thanh toán đơn đang hỗ trợ — giá trị hợp lệ của {@link #ENABLED_METHODS}.
-    public static final List<String> PAYMENT_METHODS = List.of("CASH", "WALLET", "SEPAY");
+    /// Phương thức thanh toán đơn đang hỗ trợ — giá trị hợp lệ của {@link #ENABLED_METHODS}. Ví Lock.R đã gỡ:
+    /// giá trị cũ admin đã lưu còn WALLET thì khi đọc chỉ bỏ phần tử đó.
+    public static final List<String> PAYMENT_METHODS = List.of("SEPAY", "CASH");
 
     // Quy tắc hoàn tiền & khiếu nại (ADR-0005)
     public static final String REFUND_ENABLED = "app.payment.refund-enabled";
@@ -39,35 +35,20 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
     public static final String SIMULATION_ENABLED = "app.payment.simulation-enabled";
     public static final String SIMULATION_ALLOWED_USER_IDS = "app.payment.simulation-allowed-user-ids";
 
-    private static final String TOPUP = "Nạp ví";
     private static final String METHODS = "Phương thức thanh toán";
     private static final String REFUND = "Hoàn tiền & khiếu nại";
-    private static final String SIMULATION = "Giả lập thanh toán (test)";
+    private static final String SIMULATION = "Giả lập thanh toán (thử nghiệm)";
 
     @Override
     public List<SettingDefinition> definitions() {
         return List.of(
-                integer(TOPUP_MIN_AMOUNT, TOPUP, "Số tiền nạp tối thiểu",
-                        "Yêu cầu nạp ví nhỏ hơn số này bị từ chối.", 1000, 1000, 100_000_000, "VND").asPublic(),
-                integer(WITHDRAW_MIN_AMOUNT, TOPUP, "Số tiền rút tối thiểu",
-                        "Yêu cầu rút tiền từ ví về ngân hàng nhỏ hơn số này bị từ chối.", 10_000, 1000, 100_000_000, "VND")
-                        .asPublic(),
-                integer(TOPUP_MAX_AMOUNT, TOPUP, "Số tiền nạp tối đa mỗi lần",
-                        "Yêu cầu nạp ví lớn hơn số này bị từ chối. Nhỏ hơn mức tối thiểu thì dùng mức tối thiểu.",
-                        50_000_000, 1000, 1_000_000_000, "VND").asPublic(),
-                integer(TOPUP_DEFAULT_AMOUNT, TOPUP, "Số tiền nạp mặc định trên app",
-                        "Số tiền điền sẵn khi mở màn hình nạp ví.", 100_000, 1000, 1_000_000_000, "VND").asPublic(),
-                integerList(TOPUP_PRESETS, TOPUP, "Nút chọn nhanh số tiền nạp",
-                        "Danh sách số tiền hiển thị trên app, phân tách bằng dấu phẩy.",
-                        "20000,50000,100000,200000,500000,1000000", 1000, 1_000_000_000, "VND").asPublic(),
-
                 stringList(ENABLED_METHODS, METHODS, "Phương thức thanh toán đang bật",
-                        "Danh sách cách nhau bởi dấu phẩy, nhận CASH, WALLET, SEPAY. "
-                                + "Thanh toán đơn bằng phương thức không có trong danh sách bị từ chối. "
-                                + "Mặc định chỉ SePay (chuyển khoản VietQR).",
+                        "Phương thức khách được dùng để thanh toán đơn: SEPAY là chuyển khoản VietQR, CASH là tiền mặt "
+                                + "tại quầy. Thanh toán bằng phương thức không có trong danh sách bị từ chối. "
+                                + "Mặc định chỉ chuyển khoản VietQR.",
                         "SEPAY", PAYMENT_METHODS).asPublic(),
                 bool(CASH_AUTO_COMPLETE, METHODS, "Tự hoàn tất thanh toán tiền mặt",
-                        "Bật: thanh toán CASH được ghi nhận COMPLETED ngay. Tắt: giữ PENDING chờ nhân viên xác nhận.",
+                        "Bật: thanh toán tiền mặt được ghi nhận thành công ngay. Tắt: giữ ở trạng thái chờ để nhân viên xác nhận.",
                         true),
 
                 bool(REFUND_ENABLED, REFUND, "Bật tính năng hoàn tiền ngân hàng",
@@ -79,7 +60,7 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
                         "Số ngày tối đa kể từ khi phát sinh đơn hàng mà khách được gửi yêu cầu hoàn tiền.", 7, 1, 90, "ngày").asPublic(),
                 string(REFUND_ALLOWED_REASONS, REFUND, "Danh sách lý do hoàn tiền gợi ý",
                         "Các lý do hoàn tiền hợp lệ hiển thị trên ứng dụng, phân tách bằng dấu phẩy.",
-                        "Tủ lỗi không mở được,Không nhận được đồ giặt,Máy giặt gặp sự cố,Thanh toán trùng đơn,Phí lưu kho tính sai",
+                        "Tủ lỗi không mở được,Đơn bị huỷ sau khi đã thanh toán,Thanh toán trùng đơn,Phí quá hạn tính sai,Giao drone không thành công",
                         List.of()).asPublic(),
                 bool(REFUND_REQUIRE_TRANSFER_REF, REFUND, "Bắt buộc nhập mã GD ngân hàng khi duyệt",
                         "Bật: Quản trị viên bắt buộc phải điền mã giao dịch / UNC ngân hàng trước khi xác nhận đã chuyển tiền.",
@@ -87,11 +68,11 @@ public class PaymentSettingsCatalog implements SettingsCatalog {
 
                 bool(SIMULATION_ENABLED, SIMULATION, "Hiện nút giả lập thanh toán",
                         "Bật: màn thanh toán VietQR trên app và kiosk có nút \"Giả lập thanh toán\" — bấm là coi như "
-                                + "đã nhận chuyển khoản (đủ hoặc một phần), không có tiền thật. CHỈ BẬT KHI TEST: giao dịch "
-                                + "giả lập vẫn tính như thật (đơn PAID, tích điểm, doanh thu, yêu cầu hoàn tiền).",
+                                + "đã nhận chuyển khoản (đủ hoặc một phần), không có tiền thật. CHỈ BẬT KHI THỬ NGHIỆM: giao dịch "
+                                + "giả lập vẫn tính như thật (đơn đã thanh toán, tích điểm, doanh thu, yêu cầu hoàn tiền).",
                         false).asPublic(),
                 string(SIMULATION_ALLOWED_USER_IDS, SIMULATION, "Tài khoản được giả lập thanh toán",
-                        "Danh sách user id cách nhau bởi dấu phẩy. Để trống = mọi tài khoản (nút hiện với mọi khách).",
+                        "Mã người dùng (id), cách nhau bởi dấu phẩy. Để trống = mọi tài khoản (nút hiện với mọi khách).",
                         "", List.of()));
     }
 }

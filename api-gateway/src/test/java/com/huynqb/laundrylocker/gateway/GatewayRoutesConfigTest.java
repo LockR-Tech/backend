@@ -28,11 +28,22 @@ class GatewayRoutesConfigTest {
         assertRoutedTo("/api/admin/payments/search", "lb://payment-service");
         assertRoutedTo("/api/admin/payments/stats", "lb://payment-service");
         assertRoutedTo("/api/admin/payments/refunds", "lb://payment-service");
-        assertRoutedTo("/api/admin/payments/wallet-transactions", "lb://payment-service");
         assertRoutedTo("/api/admin/feedback", "lb://order-service");
         assertRoutedTo("/api/admin/feedback/7/reply", "lb://order-service");
         assertRoutedTo("/api/admin/analytics/satisfaction", "lb://order-service");
         assertRoutedTo("/api/admin/dashboard/peak-hours", "lb://order-service");
+    }
+
+    /// Ví Lock.R đã gỡ: chỉ còn lịch sử giao dịch app khách đang đọc; số dư, nạp, rút, điều chỉnh không còn route.
+    @Test
+    void walletRoutesKeepOnlyTransactionHistory() {
+        assertRoutedTo("/api/wallet/transactions", "lb://payment-service");
+        assertRoutedTo("/api/wallet/spending-stats", "lb://payment-service");
+        assertRoutedTo("/api/wallet/total-by-method", "lb://payment-service");
+        assertTrue(matchingRouteUris("/api/wallet").isEmpty());
+        assertTrue(matchingRouteUris("/api/wallet/withdraw").isEmpty());
+        assertTrue(matchingRouteUris("/api/admin/wallet/14").isEmpty());
+        assertTrue(matchingRouteUris("/api/admin/withdrawals").isEmpty());
     }
 
     /// Callback SePay ngoài /api vẫn tới payment-service; đường VNPay cũ không còn route nào.

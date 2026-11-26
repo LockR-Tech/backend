@@ -66,15 +66,15 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                 integer(TECHNICIAN_CLAIM_BLOCK_OVERDUE, MAINTENANCE, "Chặn KTV nhận việc khi trễ hạn từ",
                         "KTV đang giữ từ số phiếu trễ hạn SLA này trở lên (đang xử lý) thì không nhận thêm phiếu mới.",
                         3, 1, 100, "phiếu"),
-                integer(PENALTY_WARNING_OVERDUE, MAINTENANCE, "Mức CẢNH BÁO khi trễ hạn từ",
-                        "Số phiếu trễ hạn để xếp KTV vào mức WARNING. Nếu đặt lớn hơn mức HẠN CHẾ/ĐÌNH CHỈ, "
+                integer(PENALTY_WARNING_OVERDUE, MAINTENANCE, "Mức cảnh báo khi trễ hạn từ",
+                        "Số phiếu trễ hạn để xếp KTV vào mức cảnh báo. Nếu đặt lớn hơn mức hạn chế/đình chỉ, "
                                 + "hệ thống tự nâng các mức sau cho bằng (cảnh báo ≤ hạn chế ≤ đình chỉ).",
                         1, 1, 100, "phiếu"),
-                integer(PENALTY_RESTRICTED_OVERDUE, MAINTENANCE, "Mức HẠN CHẾ khi trễ hạn từ",
-                        "Số phiếu trễ hạn để xếp KTV vào mức RESTRICTED. Nhỏ hơn mức cảnh báo thì dùng mức cảnh báo.",
+                integer(PENALTY_RESTRICTED_OVERDUE, MAINTENANCE, "Mức hạn chế khi trễ hạn từ",
+                        "Số phiếu trễ hạn để xếp KTV vào mức hạn chế. Nhỏ hơn mức cảnh báo thì dùng mức cảnh báo.",
                         3, 1, 100, "phiếu"),
-                integer(PENALTY_SUSPENDED_OVERDUE, MAINTENANCE, "Mức ĐÌNH CHỈ khi trễ hạn từ",
-                        "Số phiếu trễ hạn để xếp KTV vào mức SUSPENDED. Nhỏ hơn mức hạn chế thì dùng mức hạn chế.",
+                integer(PENALTY_SUSPENDED_OVERDUE, MAINTENANCE, "Mức đình chỉ khi trễ hạn từ",
+                        "Số phiếu trễ hạn để xếp KTV vào mức đình chỉ. Nhỏ hơn mức hạn chế thì dùng mức hạn chế.",
                         5, 1, 100, "phiếu"),
                 bool(REQUIRE_RESOLUTION_PHOTO, MAINTENANCE, "Bắt buộc ảnh nghiệm thu",
                         "KTV phải có ít nhất một ảnh nghiệm thu mới hoàn tất được phiếu (admin không bị chặn).",
@@ -90,7 +90,7 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                         "Số ảnh xác nhận/quá trình/nghiệm thu tối đa trong một lần gửi.", 10, 1, 50, "ảnh")
                         .asPublic(),
                 integer(REPORT_PHOTOS_REPORTER_TOTAL, MAINTENANCE, "Tổng ảnh hiện trường mỗi phiếu",
-                        "Tổng số ảnh giai đoạn báo sự cố (REPORT) tối đa trên một phiếu.", 10, 1, 200, "ảnh"),
+                        "Tổng số ảnh giai đoạn báo sự cố tối đa trên một phiếu.", 10, 1, 200, "ảnh"),
                 integer(REPORT_PHOTOS_TOTAL, MAINTENANCE, "Tổng ảnh mỗi phiếu",
                         "Tổng số ảnh mọi giai đoạn tối đa trên một phiếu.", 30, 1, 500, "ảnh"),
                 integer(PENDING_CHECK_HOLD_HOURS, MAINTENANCE, "Giữ ô chờ KTV kiểm tra tối đa",
@@ -98,8 +98,8 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                                 + "giờ này chưa có KTV kiểm tra thì ô tự trở lại hoạt động, phiếu vẫn mở. 0 = giữ tới khi KTV xử lý.",
                         24, 0, 720, "giờ"),
 
-                integer(RESERVED_TTL_HOURS, CELLS, "Thời gian giữ ô RESERVED",
-                        "Ô giữ chỗ quá thời gian này sẽ được nhả về AVAILABLE. Nên ≥ thời gian tự huỷ đơn bên order.",
+                integer(RESERVED_TTL_HOURS, CELLS, "Thời gian giữ chỗ ô",
+                        "Ô đang giữ chỗ quá thời gian này được nhả về trống. Nên đặt ≥ quy tắc «Tự huỷ đơn chưa bỏ hàng sau».",
                         24, 1, 720, "giờ"),
                 string(CELL_DIMENSIONS_STANDARD, CELLS, "Kích thước ô tiêu chuẩn",
                         "Chỉ để hiển thị trên app (dài × rộng × cao).", "45 × 30 × 50 cm", List.of()).asPublic(),
@@ -107,7 +107,7 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                         "Chỉ để hiển thị trên app (dài × rộng × cao).", "30 × 80 × 40 cm", List.of()).asPublic(),
 
                 integer(DRONE_LOW_BATTERY_PERCENT, DRONE, "Pin tối thiểu để drone cất cánh",
-                        "Drone có pin ≤ ngưỡng này không được chuyển sang IN_FLIGHT.", 20, 0, 100, "%").asPublic(),
+                        "Drone có pin ≤ ngưỡng này không được chuyển sang trạng thái đang bay.", 20, 0, 100, "%").asPublic(),
                 integer(TECHNICIAN_LOCATION_MAX_AGE_MINUTES, MAINTENANCE, "Vị trí KTV còn hiệu lực khi phân công kiện rơi",
                         "Khi drone báo rơi kiện, hệ thống giao việc cho KTV trong ca ở gần nhất; vị trí KTV cũ hơn mức này "
                                 + "thì không được xét.", 60, 1, 1440, "phút"),

@@ -10,12 +10,15 @@ import com.huynqb.laundrylocker.notification.dto.FcmTokenRequest;
 import com.huynqb.laundrylocker.notification.dto.NotificationResponse;
 import com.huynqb.laundrylocker.notification.model.FcmToken;
 import com.huynqb.laundrylocker.notification.model.NotificationMessage;
+import com.huynqb.laundrylocker.notification.repository.AdminNotificationSpecifications;
 import com.huynqb.laundrylocker.notification.repository.FcmTokenRepository;
 import com.huynqb.laundrylocker.notification.repository.NotificationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -158,9 +161,16 @@ public class NotificationService {
         return notificationRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().map(this::toResponse).toList();
     }
 
+    /// Danh sách cho admin (`GET /api/admin/notifications`): mọi người dùng hoặc một người, mới nhất trước,
+    /// bỏ thông báo ví cũ. Trang Thông báo dùng bản phân trang `/api/admin/notifications/search`.
     @Transactional(readOnly = true)
-    public List<NotificationResponse> all() {
-        return notificationRepository.findAll().stream().map(this::toResponse).toList();
+    public List<NotificationResponse> adminList(Long userId) {
+        Specification<NotificationMessage> spec = AdminNotificationSpecifications.notLegacyWallet();
+        if (userId != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("userId"), userId));
+        }
+        return notificationRepository.findAll(spec, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")))
+                .stream().map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)
@@ -246,12 +256,11 @@ public class NotificationService {
     public void consumeDomainEvent(DomainEvent event) {
         Map<String, Object> payload = event.payload();
 
-        // Web quản trị: dữ liệu admin đang xem vừa đổi (người dùng, đơn, thanh toán, hoàn/rút tiền, phản hồi,
-        // ví, điểm thưởng) ⇒ đẩy loại + mã cho trang admin tải lại. Ví/điểm còn xử lý tiếp cho chủ tài khoản.
+        // Web quản trị: dữ liệu admin đang xem vừa đổi (người dùng, đơn, thanh toán, hoàn tiền, phản hồi,
+        // điểm thưởng) ⇒ đẩy loại + mã cho trang admin tải lại. Điểm thưởng còn xử lý tiếp cho chủ tài khoản.
         if (DomainEventNames.ADMIN_DATA_CHANGED.equals(event.type()) || isUserSyncEvent(event.type())) {
             Map<String, Object> wsMsg = new HashMap<>();
-            wsMsg.put("entity", DomainEventNames.WALLET_UPDATED.equals(event.type()) ? "WALLET"
-                    : DomainEventNames.LOYALTY_POINTS_CHANGED.equals(event.type()) ? "LOYALTY"
+            wsMsg.put("entity", DomainEventNames.LOYALTY_POINTS_CHANGED.equals(event.type()) ? "LOYALTY"
                     : payload.get("entity"));
             wsMsg.put("id", DomainEventNames.ADMIN_DATA_CHANGED.equals(event.type())
                     ? payload.get("id") : payload.get("userId"));
@@ -328,14 +337,14 @@ public class NotificationService {
         }
         // Sự kiện không kèm `message` (order.*, payment.*) chỉ để đồng bộ realtime ở trên: service phát
         // sự kiện tự gửi thông báo tiếng Việt chi tiết riêng, tạo thêm ở đây thành ra mỗi việc báo hai lần,
-        // một lần là câu tiếng Anh "<type> event received". Riêng nạp ví và thanh toán lỗi chưa nơi nào
-        // báo nên soạn nội dung ở đây.
+        // một lần là câu tiếng Anh "<type> event received". Riêng thanh toán đơn lỗi chưa nơi nào báo nên
+        // soạn nội dung ở đây.
         Object rawMessage = payload.get("message");
         String message = rawMessage != null && StringUtils.hasText(String.valueOf(rawMessage))
                 ? String.valueOf(rawMessage)
                 : paymentMessage(event.type(), payload);
         if (message == null) {
-            // Ví/điểm thưởng đổi mà không cần báo (cộng điểm, trả tiền…): chỉ nhắc app của chủ tài khoản tải lại.
+            // Điểm thưởng đổi mà không cần báo (cộng điểm…): chỉ nhắc app của chủ tài khoản tải lại.
             if (isUserSyncEvent(event.type())) {
                 Map<String, Object> wsMsg = new HashMap<>();
                 wsMsg.put("type", event.type());
@@ -347,17 +356,13 @@ public class NotificationService {
             log.debug("{} event has no message, realtime update only", event.type());
             return;
         }
-        boolean topUp = isTopUp(event.type(), payload);
-        if (topUp) {
-            referenceId = asLong(payload.get("paymentId"));
-        }
         String title = switch (event.type()) {
             case DomainEventNames.ORDER_CREATED -> "Đơn hàng mới";
             case DomainEventNames.ORDER_STATUS_CHANGED -> "Trạng thái đơn hàng thay đổi";
             case DomainEventNames.ORDER_BOX_RELOCATED -> "Đơn hàng được chuyển sang ô mới";
             case DomainEventNames.DELIVERY_STATUS_CHANGED -> "Trạng thái giao hàng thay đổi";
-            case DomainEventNames.PAYMENT_COMPLETED -> topUp ? "Nạp ví thành công" : "Thanh toán thành công";
-            case DomainEventNames.PAYMENT_FAILED -> topUp ? "Nạp ví không thành công" : "Thanh toán thất bại";
+            case DomainEventNames.PAYMENT_COMPLETED -> "Thanh toán thành công";
+            case DomainEventNames.PAYMENT_FAILED -> "Thanh toán thất bại";
             case DomainEventNames.LOCKER_REPORT_CLAIMED -> "Báo cáo đang được xử lý";
             case DomainEventNames.LOCKER_REPORT_RESOLVED -> "Báo cáo đã được xử lý xong";
             case DomainEventNames.LOCKER_REPORT_ROUTED -> "Phiếu sự cố mới cần xử lý";
@@ -379,40 +384,26 @@ public class NotificationService {
             case "drone.schedule.due" -> "Lịch kiểm tra drone tới hạn";
             case DomainEventNames.LOCKER_INSTALLATION_ASSIGNED -> "Bạn được giao lắp đặt tủ";
             case DomainEventNames.LOCKER_INSTALLATION_REVIEWED -> titleOr(payload, "Kết quả nghiệm thu lắp đặt tủ");
-            case DomainEventNames.WALLET_UPDATED -> titleOr(payload, "Ví của bạn có thay đổi");
             case DomainEventNames.LOYALTY_POINTS_CHANGED -> titleOr(payload, "Điểm thưởng thay đổi");
             default -> "Thông báo";
         };
-        String referenceType = String.valueOf(payload.getOrDefault("referenceType", topUp ? "WALLET" : "ORDER"));
+        String referenceType = String.valueOf(payload.getOrDefault("referenceType", "ORDER"));
         create(new NotificationRequest(userId, title, message, event.type(), referenceId, referenceType));
     }
 
-    /// Nạp ví = giao dịch không gắn đơn (orderId 0 hoặc thiếu).
-    private boolean isTopUp(String type, Map<String, Object> payload) {
-        if (!DomainEventNames.PAYMENT_COMPLETED.equals(type) && !DomainEventNames.PAYMENT_FAILED.equals(type)) {
-            return false;
-        }
-        Long orderId = asLong(payload.get("orderId"));
-        return orderId == null || orderId <= 0;
-    }
-
-    /// Nội dung cho các sự kiện thanh toán mà không service nào tự báo: nạp ví (thành công/lỗi) và
-    /// thanh toán đơn lỗi. Thanh toán đơn thành công do order-service báo kèm mã đơn ⇒ null.
+    /// Nội dung cho thanh toán đơn lỗi — không service nào tự báo. Thanh toán đơn thành công do order-service
+    /// báo kèm mã đơn ⇒ null. Giao dịch không gắn đơn (nạp ví cũ, đã gỡ) không báo gì.
     private String paymentMessage(String type, Map<String, Object> payload) {
         boolean completed = DomainEventNames.PAYMENT_COMPLETED.equals(type);
         if (!completed && !DomainEventNames.PAYMENT_FAILED.equals(type)) {
             return null;
         }
-        String amount = formatVnd(payload.get("amount"));
-        if (isTopUp(type, payload)) {
-            return completed
-                    ? "Đã cộng " + amount + " vào ví LockR."
-                    : "Giao dịch nạp " + amount + " vào ví chưa thành công. Vui lòng thử lại.";
-        }
-        if (completed) {
+        Long orderId = asLong(payload.get("orderId"));
+        if (completed || orderId == null || orderId <= 0) {
             return null;
         }
-        return "Thanh toán " + amount + " cho đơn #" + asLong(payload.get("orderId"))
+        String amount = formatVnd(payload.get("amount"));
+        return "Thanh toán " + amount + " cho đơn #" + orderId
                 + " chưa thành công. Vui lòng thử lại hoặc chọn phương thức khác.";
     }
 
@@ -438,8 +429,7 @@ public class NotificationService {
     }
 
     private static boolean isUserSyncEvent(String eventType) {
-        return DomainEventNames.WALLET_UPDATED.equals(eventType)
-                || DomainEventNames.LOYALTY_POINTS_CHANGED.equals(eventType);
+        return DomainEventNames.LOYALTY_POINTS_CHANGED.equals(eventType);
     }
 
     private static String titleOr(Map<String, Object> payload, String fallback) {
@@ -498,10 +488,7 @@ public class NotificationService {
     }
 
     private NotificationResponse toResponse(NotificationMessage notification) {
-        return new NotificationResponse(
-                notification.getId(), notification.getUserId(), notification.getTitle(), notification.getMessage(),
-                notification.getType(), notification.getIsRead(), notification.getReferenceId(), notification.getReferenceType(),
-                notification.getStatus(), notification.getReadAt(), notification.getCreatedAt());
+        return NotificationResponse.from(notification);
     }
 
     private void publishNotificationRequested(NotificationMessage notification) {

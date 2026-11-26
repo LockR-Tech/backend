@@ -34,10 +34,9 @@ public record PaymentStatsResponse(
             /// % completed/total, 2 chữ số; null khi không có giao dịch.
             BigDecimal successRate,
             KindStats orderPayments,
-            KindStats topups,
             long refundCount,
             BigDecimal refundAmount,
-            /// Tiền đơn đã thu (không gồm nạp ví) trừ hoàn tiền.
+            /// Tiền đơn đã thu trừ hoàn tiền.
             BigDecimal netCollectedAmount,
             List<Bucket> byStatus,
             List<Bucket> byMethod) {

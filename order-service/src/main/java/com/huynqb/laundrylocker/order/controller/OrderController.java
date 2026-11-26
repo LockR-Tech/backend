@@ -891,13 +891,13 @@ public class OrderController {
         return ApiResponse.ok(orderService.validatePromotion(code, lockerId, userId, orderTotal, true));
     }
 
-    // ---- Ví voucher của user (lưu mã -> dùng khi đặt đơn) ----
+    // ---- Mã giảm giá khách đã lưu (lưu mã -> dùng khi đặt đơn) ----
 
     @PostMapping("/api/promotions/{promotionId}/claim")
     public ApiResponse<Map<String, Object>> claimPromotion(
             @PathVariable Long promotionId, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(
-                "PROMOTION_CLAIMED", "Promotion saved to wallet",
+                "PROMOTION_CLAIMED", "Promotion saved",
                 orderService.claimPromotion(promotionId, userId));
     }
 

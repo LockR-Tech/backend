@@ -37,22 +37,22 @@ public class DocumentRepository {
 
     public boolean existsByChecksum(String checksum) {
         Boolean exists = jdbc.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM kb_documents WHERE checksum = ?)", Boolean.class, checksum);
+                "SELECT EXISTS (SELECT 1 FROM kb_documents WHERE checksum = ? AND deleted_at IS NULL)", Boolean.class, checksum);
         return Boolean.TRUE.equals(exists);
     }
 
     public List<KnowledgeDocument> findAll() {
-        return jdbc.query("SELECT " + COLUMNS + " FROM kb_documents ORDER BY id DESC", ROW_MAPPER);
+        return jdbc.query("SELECT " + COLUMNS + " FROM kb_documents WHERE deleted_at IS NULL ORDER BY id DESC", ROW_MAPPER);
     }
 
     public Optional<KnowledgeDocument> findById(long id) {
-        return jdbc.query("SELECT " + COLUMNS + " FROM kb_documents WHERE id = ?", ROW_MAPPER, id)
+        return jdbc.query("SELECT " + COLUMNS + " FROM kb_documents WHERE id = ? AND deleted_at IS NULL", ROW_MAPPER, id)
                 .stream().findFirst();
     }
 
     public Optional<KnowledgeDocument.Content> findContent(long id) {
         return jdbc.query(
-                "SELECT id, title, file_name, mime_type, content FROM kb_documents WHERE id = ?",
+                "SELECT id, title, file_name, mime_type, content FROM kb_documents WHERE id = ? AND deleted_at IS NULL",
                 (rs, i) -> new KnowledgeDocument.Content(
                         rs.getLong("id"), rs.getString("title"), rs.getString("file_name"),
                         rs.getString("mime_type"), rs.getBytes("content")),
@@ -63,7 +63,7 @@ public class DocumentRepository {
     public Optional<Long> claimNextPending() {
         return jdbc.queryForList(
                 "UPDATE kb_documents SET status = 'INDEXING', error = NULL, updated_at = now() "
-                        + "WHERE id = (SELECT id FROM kb_documents WHERE status = 'PENDING' ORDER BY id "
+                        + "WHERE id = (SELECT id FROM kb_documents WHERE status = 'PENDING' AND deleted_at IS NULL ORDER BY id "
                         + "LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id",
                 Long.class).stream().findFirst();
     }
@@ -89,21 +89,33 @@ public class DocumentRepository {
 
     public boolean requeue(long id) {
         return jdbc.update(
-                "UPDATE kb_documents SET status = 'PENDING', error = NULL, updated_at = now() WHERE id = ?", id) > 0;
+                "UPDATE kb_documents SET status = 'PENDING', error = NULL, updated_at = now() "
+                        + "WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
     public boolean updateRoles(long id, List<String> allowedRoles) {
         return jdbc.update(
-                "UPDATE kb_documents SET allowed_roles = CAST(? AS text[]), updated_at = now() WHERE id = ?",
+                "UPDATE kb_documents SET allowed_roles = CAST(? AS text[]), updated_at = now() "
+                        + "WHERE id = ? AND deleted_at IS NULL",
                 RoleSet.toArrayLiteral(allowedRoles), id) > 0;
     }
 
     public boolean updateTitle(long id, String title) {
-        return jdbc.update("UPDATE kb_documents SET title = ?, updated_at = now() WHERE id = ?", title, id) > 0;
+        return jdbc.update("UPDATE kb_documents SET title = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+                title, id) > 0;
     }
 
-    public boolean delete(long id) {
-        return jdbc.update("DELETE FROM kb_documents WHERE id = ?", id) > 0;
+    /// Xoá mềm: giữ bản ghi + nội dung gốc kèm người xoá và lý do; xoá các đoạn đã nhúng để trợ lý không còn
+    /// truy xuất tài liệu này. Trả `false` khi không có tài liệu (hoặc đã xoá trước đó).
+    public boolean softDelete(long id, Long deletedBy, String reason) {
+        boolean updated = jdbc.update(
+                "UPDATE kb_documents SET deleted_at = now(), deleted_by = ?, deleted_reason = ?, updated_at = now() "
+                        + "WHERE id = ? AND deleted_at IS NULL",
+                deletedBy, reason, id) > 0;
+        if (updated) {
+            jdbc.update("DELETE FROM kb_chunks WHERE document_id = ?", id);
+        }
+        return updated;
     }
 
     private static final RowMapper<KnowledgeDocument> ROW_MAPPER = (rs, rowNum) -> new KnowledgeDocument(

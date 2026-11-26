@@ -72,7 +72,9 @@ public class PaymentStatsService {
     }
 
     private PeriodStats period(DateRange range, List<PaymentRecord> allPayments, List<RefundRecord> allRefunds) {
+        // Chỉ khoản thu theo đơn: giao dịch nạp ví cũ (tính năng đã gỡ) không tính vào thống kê.
         List<PaymentRecord> payments = allPayments.stream()
+                .filter(p -> !PaymentReportRules.isTopup(p))
                 .filter(p -> within(range, time.businessDate(p.getCreatedAt())))
                 .toList();
         List<RefundRecord> refunds = allRefunds.stream()
@@ -82,8 +84,7 @@ public class PaymentStatsService {
         long completedCount = count(payments, PaymentReportRules::isCompleted);
         long total = payments.size();
         BigDecimal refundAmount = sum(refunds.stream().map(RefundRecord::getAmount).toList());
-        KindStats orders = kind(payments, p -> !PaymentReportRules.isTopup(p));
-        KindStats topups = kind(payments, PaymentReportRules::isTopup);
+        KindStats orders = kind(payments, p -> true);
         return new PeriodStats(
                 range.from(),
                 range.to(),
@@ -99,7 +100,6 @@ public class PaymentStatsService {
                 sumPayments(payments, other()),
                 total == 0 ? null : BigDecimal.valueOf(completedCount * 100.0 / total).setScale(2, RoundingMode.HALF_UP),
                 orders,
-                topups,
                 refunds.size(),
                 refundAmount,
                 orders.completedAmount().subtract(refundAmount),

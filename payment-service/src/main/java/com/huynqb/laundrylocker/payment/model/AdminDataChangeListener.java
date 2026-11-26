@@ -8,8 +8,8 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
-/// Báo web quản trị khi thanh toán, yêu cầu hoàn tiền hay yêu cầu rút tiền đổi — khách tạo, webhook SePay
-/// ghi nhận, admin khác duyệt — để trang Thanh toán/Hoàn tiền/Ví tải lại ngay. Số dư ví đã có `wallet.updated`.
+/// Báo web quản trị khi thanh toán hay yêu cầu hoàn tiền đổi — khách tạo, webhook SePay ghi nhận, admin khác
+/// duyệt — để trang Thanh toán/Hoàn tiền tải lại ngay.
 @Component
 public class AdminDataChangeListener {
 
@@ -26,7 +26,6 @@ public class AdminDataChangeListener {
         switch (entity) {
             case PaymentRecord payment -> publish(AdminChangeEvents.PAYMENT, payment.getId());
             case RefundRecord refund -> publish(AdminChangeEvents.REFUND, refund.getId());
-            case WithdrawalRecord withdrawal -> publish(AdminChangeEvents.WITHDRAWAL, withdrawal.getId());
             default -> {
             }
         }

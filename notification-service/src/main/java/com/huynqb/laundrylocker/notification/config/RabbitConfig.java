@@ -103,11 +103,6 @@ public class RabbitConfig {
     }
 
     @Bean
-    Binding walletUpdatedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
-        return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.WALLET_UPDATED);
-    }
-
-    @Bean
     Binding loyaltyPointsChangedBinding(Queue notificationEventsQueue, TopicExchange laundryEventsExchange) {
         return BindingBuilder.bind(notificationEventsQueue).to(laundryEventsExchange).with(DomainEventNames.LOYALTY_POINTS_CHANGED);
     }

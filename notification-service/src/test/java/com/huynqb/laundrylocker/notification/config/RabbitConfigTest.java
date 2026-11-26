@@ -61,7 +61,6 @@ class RabbitConfigTest {
         Queue queue = config.notificationEventsQueue();
         TopicExchange exchange = config.laundryEventsExchange();
 
-        assertEquals(DomainEventNames.WALLET_UPDATED, config.walletUpdatedBinding(queue, exchange).getRoutingKey());
         assertEquals(DomainEventNames.LOYALTY_POINTS_CHANGED,
                 config.loyaltyPointsChangedBinding(queue, exchange).getRoutingKey());
         assertEquals(DomainEventNames.CATALOG_CHANGED, config.catalogChangedBinding(queue, exchange).getRoutingKey());

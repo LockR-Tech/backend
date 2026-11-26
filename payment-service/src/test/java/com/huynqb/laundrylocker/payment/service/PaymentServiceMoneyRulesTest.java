@@ -55,7 +55,6 @@ class PaymentServiceMoneyRulesTest {
     @Mock private RefundRepository refundRepository;
     @Mock private UserBankAccountRepository userBankAccountRepository;
     @Mock private RabbitTemplate rabbitTemplate;
-    @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
     @Mock private NotificationClient notificationClient;
 
@@ -67,9 +66,9 @@ class PaymentServiceMoneyRulesTest {
         SepayService sepay = new SepayService();
         ReflectionTestUtils.setField(sepay, "apiKey", API_KEY);
         service = new PaymentService(
-                repository, refundRepository, userBankAccountRepository, rabbitTemplate, walletService,
+                repository, refundRepository, userBankAccountRepository, rabbitTemplate,
                 orderClient, notificationClient, sepay,
-                TestPaymentRules.of(Map.of(PaymentSettingsCatalog.ENABLED_METHODS, "CASH,WALLET,SEPAY")));
+                TestPaymentRules.of(Map.of(PaymentSettingsCatalog.ENABLED_METHODS, "CASH,SEPAY")));
         lenient().when(repository.findByOrderId(55L)).thenAnswer(invocation -> List.copyOf(payments));
         lenient().when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> {
             PaymentRecord saved = invocation.getArgument(0);
@@ -149,44 +148,24 @@ class PaymentServiceMoneyRulesTest {
         verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(Object.class));
     }
 
-    // ------------------------------------------------------------------ trả bằng ví
+    // ------------------------------------------------------------------ ví đã gỡ
 
-    /// Lần trả ví thứ hai cho cùng đơn (gia hạn / phí quá hạn) phải trừ tiền với mã chống trùng mới.
+    /// Ví Lock.R đã gỡ khỏi sản phẩm: trả bằng ví bị từ chối như các phương thức đã ngừng, không tạo giao dịch.
     @Test
-    void secondWalletPaymentForTheSameOrderIsDebitedToo() {
-        PaymentRecord first = new PaymentRecord();
-        first.setId(1L);
-        first.setOrderId(55L);
-        first.setMethod("WALLET");
-        first.setStatus("COMPLETED");
-        first.setAmount(BigDecimal.valueOf(10000));
-        payments.add(first);
-        when(walletService.debit(eq(44L), any(), any(), eq("ORDERPAY-55-2"), any()))
-                .thenReturn(new WalletTransaction());
-
-        service.checkout(44L, new CheckoutRequest(55L, "WALLET", null, null));
-
-        verify(walletService).debit(eq(44L), eq(BigDecimal.valueOf(5000)), eq(WalletService.SOURCE_ORDER_PAYMENT),
-                eq("ORDERPAY-55-2"), any());
-        assertEquals("COMPLETED", payments.get(1).getStatus());
-    }
-
-    /// Hai yêu cầu trả cùng lúc ra cùng mã: lần sau không được ghi là đã trả mà không trừ tiền.
-    @Test
-    void duplicateWalletDebitIsRejectedInsteadOfMarkedPaid() {
-        when(walletService.debit(eq(44L), any(), any(), eq("ORDERPAY-55"), any())).thenReturn(null);
-
+    void walletCheckoutIsRejectedAsRetiredMethod() {
         BusinessException error = assertThrows(BusinessException.class,
                 () -> service.checkout(44L, new CheckoutRequest(55L, "WALLET", null, null)));
 
-        assertEquals("PAYMENT_IN_PROGRESS", error.getCode());
+        assertEquals("PAYMENT_METHOD_UNSUPPORTED", error.getCode());
+        verify(repository, never()).save(any());
         verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(Object.class));
     }
 
+    /// Lịch sử giao dịch cũ của khách vẫn hiện đúng mã đơn cho các dòng trả bằng ví trước đây.
     @Test
     void walletTransactionRefsStillPointToTheOrder() {
         WalletTransaction tx = new WalletTransaction();
-        tx.setSource(WalletService.SOURCE_ORDER_PAYMENT);
+        tx.setSource(WalletTransactionRefs.SOURCE_ORDER_PAYMENT);
         tx.setReferenceId("ORDERPAY-55-3");
         assertEquals(55L, WalletTransactionRefs.relatedOrderId(tx));
         tx.setReferenceId("ORDERPAY-55");
@@ -380,10 +359,10 @@ class PaymentServiceMoneyRulesTest {
 
     private PaymentService withSimulation(String allowedUserIds) {
         return new PaymentService(
-                repository, refundRepository, userBankAccountRepository, rabbitTemplate, walletService,
+                repository, refundRepository, userBankAccountRepository, rabbitTemplate,
                 orderClient, notificationClient, new SepayService(),
                 TestPaymentRules.of(Map.of(
-                        PaymentSettingsCatalog.ENABLED_METHODS, "CASH,WALLET,SEPAY",
+                        PaymentSettingsCatalog.ENABLED_METHODS, "CASH,SEPAY",
                         PaymentSettingsCatalog.SIMULATION_ENABLED, true,
                         PaymentSettingsCatalog.SIMULATION_ALLOWED_USER_IDS, allowedUserIds)));
     }

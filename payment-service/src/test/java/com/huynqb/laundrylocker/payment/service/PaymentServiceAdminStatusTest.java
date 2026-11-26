@@ -40,7 +40,6 @@ class PaymentServiceAdminStatusTest {
     @Mock private RefundRepository refundRepository;
     @Mock private com.huynqb.laundrylocker.payment.repository.UserBankAccountRepository userBankAccountRepository;
     @Mock private RabbitTemplate rabbitTemplate;
-    @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
     @Mock private com.huynqb.laundrylocker.payment.client.NotificationClient notificationClient;
     @Mock private SepayService sepayService;
@@ -51,7 +50,7 @@ class PaymentServiceAdminStatusTest {
     void setUp() {
         paymentService = new PaymentService(
                 repository, refundRepository, userBankAccountRepository, rabbitTemplate,
-                walletService, orderClient, notificationClient, sepayService,
+                orderClient, notificationClient, sepayService,
                 TestPaymentRules.defaults());
         when(repository.save(any(PaymentRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
@@ -66,7 +65,7 @@ class PaymentServiceAdminStatusTest {
         assertEquals("PAYMENT_STATUS_LOCKED", ex.getCode());
         assertEquals(HttpStatus.CONFLICT, ex.getStatus());
         verify(repository, never()).save(any());
-        verifyNoInteractions(walletService, rabbitTemplate);
+        verifyNoInteractions(rabbitTemplate);
     }
 
     @Test

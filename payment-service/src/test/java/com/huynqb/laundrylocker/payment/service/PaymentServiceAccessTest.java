@@ -55,7 +55,6 @@ class PaymentServiceAccessTest {
     @Mock private RefundRepository refundRepository;
     @Mock private UserBankAccountRepository userBankAccountRepository;
     @Mock private RabbitTemplate rabbitTemplate;
-    @Mock private WalletService walletService;
     @Mock private OrderClient orderClient;
     @Mock private NotificationClient notificationClient;
     @Mock private SepayService sepayService;
@@ -66,7 +65,7 @@ class PaymentServiceAccessTest {
     void setUp() {
         paymentService = new PaymentService(
                 repository, refundRepository, userBankAccountRepository, rabbitTemplate,
-                walletService, orderClient, notificationClient, sepayService,
+                orderClient, notificationClient, sepayService,
                 TestPaymentRules.defaults());
         when(orderClient.getOrder(ORDER))
                 .thenReturn(ApiResponse.ok(new OrderSummary(ORDER, OWNER, "STORING", BigDecimal.valueOf(20000))));
@@ -85,7 +84,7 @@ class PaymentServiceAccessTest {
         assertFalse(status.paid());
         assertEquals("PENDING", topup.getStatus());
         verify(repository, never()).save(any());
-        verifyNoInteractions(walletService, rabbitTemplate);
+        verifyNoInteractions(rabbitTemplate);
     }
 
     @Test
@@ -116,19 +115,19 @@ class PaymentServiceAccessTest {
     }
 
     @Test
-    void verifiedWebhookStillCreditsTopup() {
-        PaymentRecord topup = payment("TOPUP_44_1700000000000", "SEPAY_TOPUP", "PENDING", 0L, OWNER);
-        Map<String, Object> body = Map.of("content", "TOPUP_44_1700000000000", "transferAmount", 50000);
+    void verifiedWebhookCompletesOrderPayment() {
+        PaymentRecord pending = payment("PAY-55-1", "SEPAY", "PENDING", ORDER, OWNER);
+        pending.setAmount(BigDecimal.valueOf(20000));
+        Map<String, Object> body = Map.of("content", "PAY-55-1", "transferAmount", 20000);
         when(sepayService.verifyWebhook(eq(body), anyString())).thenReturn(true);
-        when(sepayService.extractReferenceId(body)).thenReturn("TOPUP_44_1700000000000");
-        when(sepayService.extractAmount(body)).thenReturn(BigDecimal.valueOf(50000));
-        when(repository.findByReferenceId("TOPUP_44_1700000000000")).thenReturn(Optional.of(topup));
+        when(sepayService.extractReferenceId(body)).thenReturn("PAY-55-1");
+        when(sepayService.extractAmount(body)).thenReturn(BigDecimal.valueOf(20000));
+        when(repository.findByReferenceId("PAY-55-1")).thenReturn(Optional.of(pending));
 
         paymentService.handleSepayWebhook(body, "Apikey key");
 
-        assertEquals("COMPLETED", topup.getStatus());
-        verify(walletService).credit(eq(OWNER), eq(BigDecimal.valueOf(50000)), eq(WalletService.SOURCE_TOPUP),
-                eq("TOPUP_44_1700000000000"), anyString());
+        assertEquals("COMPLETED", pending.getStatus());
+        assertEquals(0, BigDecimal.valueOf(20000).compareTo(pending.getAmount()));
     }
 
     @Test

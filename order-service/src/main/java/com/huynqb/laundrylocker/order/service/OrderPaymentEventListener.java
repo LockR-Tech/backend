@@ -45,7 +45,7 @@ public class OrderPaymentEventListener {
             return;
         }
         if (orderId <= 0L) {
-            return; // 0 = wallet top-up sentinel, not a real order
+            return; // 0 = legacy top-up payment (wallet removed), not a real order
         }
         if (!DomainEventNames.PAYMENT_COMPLETED.equals(event.type())) {
             return; // only completed payments flip the order to PAID

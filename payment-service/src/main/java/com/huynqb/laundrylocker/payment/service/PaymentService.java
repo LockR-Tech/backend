@@ -45,11 +45,10 @@ public class PaymentService {
     private final RefundRepository refundRepository;
     private final UserBankAccountRepository userBankAccountRepository;
     private final RabbitTemplate rabbitTemplate;
-    private final WalletService walletService;
     private final OrderClient orderClient;
     private final NotificationClient notificationClient;
     private final SepayService sepayService;
-    /// Hạn mức nạp ví, phương thức đang bật, tự hoàn tất tiền mặt… admin cấu hình (ADR-0005).
+    /// Phương thức đang bật, tự hoàn tất tiền mặt, hoàn tiền… admin cấu hình (ADR-0005).
     private final PaymentRules rules;
     /// Báo kết quả chi bồi thường sự cố về order-service; null trong unit test không cần nó.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -84,12 +83,11 @@ public class PaymentService {
 
     /**
      * Pay for an existing order with the chosen method.
-     * WALLET settles immediately (status COMPLETED + event); CASH too unless admin turned off
-     * {@code app.payment.cash-auto-complete} (then it stays PENDING for staff confirmation);
-     * SEPAY returns a pay URL and settles later via the SePay webhook. The amount is taken from
-     * the order (authoritative), not the client. Retired methods (VNPAY, MOMO) are rejected with
-     * PAYMENT_METHOD_UNSUPPORTED; methods not in {@code app.payment.enabled-methods} are rejected
-     * with PAYMENT_METHOD_DISABLED.
+     * CASH settles immediately unless admin turned off {@code app.payment.cash-auto-complete} (then it
+     * stays PENDING for staff confirmation); SEPAY returns a pay URL and settles later via the SePay
+     * webhook. The amount is taken from the order (authoritative), not the client. Retired methods
+     * (VNPAY, MOMO, WALLET — the Lock.R wallet was removed) are rejected with PAYMENT_METHOD_UNSUPPORTED;
+     * methods not in {@code app.payment.enabled-methods} are rejected with PAYMENT_METHOD_DISABLED.
      */
     /// Mô tả để khách phân biệt nhiều lần trả trên cùng một đơn: thuê rồi gia hạn, hoặc
     /// bị tính thêm phí quá hạn. Trước đây mọi lần đều ghi "Thanh toán đơn #N" nên chi
@@ -166,26 +164,6 @@ public class PaymentService {
         payment.setAmount(amount);
 
         switch (method) {
-            case "WALLET" -> {
-                // Mỗi lần trả bằng ví (tiền thuê, gia hạn, phí quá hạn…) là một khoản trừ riêng. Mã chống
-                // trùng theo số thứ tự lần trả: bấm lặp cùng lúc ra cùng mã nên chỉ trừ một lần.
-                long walletPayments = repository.findByOrderId(request.orderId()).stream()
-                        .filter(p -> "WALLET".equalsIgnoreCase(p.getMethod()) && "COMPLETED".equals(p.getStatus()))
-                        .count();
-                var debited = walletService.debit(
-                        userId,
-                        amount,
-                        WalletService.SOURCE_ORDER_PAYMENT,
-                        WalletTransactionRefs.orderPaymentRef(request.orderId(), walletPayments + 1),
-                        "Thanh toán đơn #" + request.orderId());
-                if (debited == null) {
-                    throw new BusinessException(
-                            "PAYMENT_IN_PROGRESS",
-                            "Khoản thanh toán này vừa được xử lý, vui lòng tải lại đơn",
-                            HttpStatus.CONFLICT);
-                }
-                payment.setStatus("COMPLETED");
-            }
             case "CASH" -> {
                 if (rules.cashAutoComplete()) {
                     payment.setStatus("COMPLETED");
@@ -208,12 +186,11 @@ public class PaymentService {
 
     /// Trạng thái admin đặt tay được cho một giao dịch.
     static final java.util.Set<String> ADMIN_SETTABLE_PAYMENT_STATUSES = java.util.Set.of("PENDING", "COMPLETED", "FAILED");
-    /// Đã thu tiền/đã hoàn tiền: đổi tay sẽ lệch sổ (doanh thu, ví, hoàn tiền) nên khoá.
+    /// Đã thu tiền/đã hoàn tiền: đổi tay sẽ lệch sổ (doanh thu, hoàn tiền) nên khoá.
     static final java.util.Set<String> LOCKED_PAYMENT_STATUSES = java.util.Set.of("COMPLETED", "REFUNDED");
 
     /// Admin đổi trạng thái giao dịch bằng tay. Chặn (409 PAYMENT_STATUS_LOCKED):
-    /// - nạp ví (`*_TOPUP`): tiền chỉ được cộng vào ví trong callback cổng thanh toán, đánh dấu
-    ///   COMPLETED bằng tay không cộng ví ⇒ lệch tiền;
+    /// - giao dịch nạp cũ (`*_TOPUP`, tính năng đã gỡ): không còn luồng nào ghi nhận, giữ nguyên lịch sử;
     /// - giao dịch đã COMPLETED/REFUNDED: hoàn tiền đi qua luồng hoàn tiền, không sửa tay.
     /// Gửi lại đúng trạng thái hiện tại thì không làm gì (không phát lại sự kiện).
     @Transactional
@@ -232,7 +209,7 @@ public class PaymentService {
         if (payment.getMethod() != null && payment.getMethod().toUpperCase(java.util.Locale.ROOT).endsWith("_TOPUP")) {
             throw new BusinessException(
                     "PAYMENT_STATUS_LOCKED",
-                    "Không thể đổi tay trạng thái giao dịch nạp ví — ví chỉ được cộng khi cổng thanh toán xác nhận",
+                    "Giao dịch nạp tiền cũ không còn được hỗ trợ nên không đổi được trạng thái",
                     org.springframework.http.HttpStatus.CONFLICT);
         }
         if (LOCKED_PAYMENT_STATUSES.contains(current)) {
@@ -360,21 +337,12 @@ public class PaymentService {
         payment.setStatus("COMPLETED");
 
         PaymentRecord saved = repository.save(payment);
-        if ("SEPAY_TOPUP".equals(saved.getMethod())
-                || (saved.getOrderId() != null && saved.getOrderId() <= 0)) {
-            walletService.credit(
-                    saved.getUserId(),
-                    saved.getAmount(),
-                    WalletService.SOURCE_TOPUP,
-                    saved.getReferenceId(),
-                    "Nạp ví qua SePay");
-        }
         publish(DomainEventNames.PAYMENT_COMPLETED, saved);
         return toResponse(saved);
     }
 
     /// Nút "Giả lập thanh toán" (test): coi như SePay vừa báo đã nhận `amount` đồng (bỏ trống = đủ số của
-    /// giao dịch) cho giao dịch chuyển khoản đang chờ — thanh toán đơn hoặc nạp ví. Chỉ khi admin bật
+    /// giao dịch) cho giao dịch chuyển khoản đang chờ của một đơn. Chỉ khi admin bật
     /// `app.payment.simulation-enabled` và tài khoản nằm trong danh sách cho phép; chỉ người trả (hoặc ADMIN).
     @Transactional
     public PaymentResponse simulateTransfer(Long userId, String roles, Long paymentId, String referenceId, BigDecimal amount) {
@@ -579,33 +547,6 @@ public class PaymentService {
         PaymentRecord payment = repository.findByReferenceId(referenceId)
                 .orElseThrow(() -> new NotFoundException("Payment with ref: " + referenceId, -1L));
         return sepayService.generateAutoSubmitHtml(payment, null);
-    }
-
-    /// Nạp ví chỉ qua SePay (VietQR); không gửi `method` ⇒ SEPAY. VNPAY/MOMO đã ngừng hỗ trợ ⇒
-    /// 400 PAYMENT_METHOD_UNSUPPORTED; phương thức khác ⇒ 400 PAYMENT_METHOD_INVALID.
-    @Transactional
-    public TopupResponse createTopupUrl(Long userId, CreateTopupRequest request) {
-        String method = StringUtils.hasText(request.method())
-                ? request.method().trim().toUpperCase(Locale.ROOT)
-                : "SEPAY";
-        assertMethodNotRetired(method);
-        if (!"SEPAY".equals(method)) {
-            throw new BusinessException("PAYMENT_METHOD_INVALID", "Phương thức nạp ví không hợp lệ: " + method);
-        }
-        assertTopupAmount(request.amount());
-        String txnRef = "TOPUP_" + userId + "_" + System.currentTimeMillis();
-
-        String effectiveReturnUrl = StringUtils.hasText(request.returnUrl()) ? request.returnUrl() : null;
-        PaymentRecord payment = new PaymentRecord();
-        payment.setOrderId(0L);
-        payment.setUserId(userId);
-        payment.setAmount(request.amount());
-        payment.setMethod("SEPAY_TOPUP");
-        payment.setReferenceId(txnRef);
-        payment.setDescription("Nạp tiền ví qua SePay");
-        String paymentUrl = sepayService.createPayment(payment, effectiveReturnUrl);
-        repository.save(payment);
-        return new TopupResponse(paymentUrl, txnRef);
     }
 
     @Transactional(readOnly = true)
@@ -1091,7 +1032,7 @@ public class PaymentService {
                 .orElseThrow(() -> new NotFoundException("Refund", refundId));
     }
 
-    /// Phương thức đã ngừng hỗ trợ (VNPAY, MOMO, kể cả dạng `*_TOPUP`) ⇒ 400 PAYMENT_METHOD_UNSUPPORTED.
+    /// Phương thức đã ngừng hỗ trợ (VNPAY, MOMO, WALLET, kể cả dạng `*_TOPUP`) ⇒ 400 PAYMENT_METHOD_UNSUPPORTED.
     /// Chỉ chặn tạo giao dịch mới; giao dịch cũ mang các phương thức này vẫn đọc và hiển thị bình thường.
     private static void assertMethodNotRetired(String method) {
         if (PaymentRules.isRetiredMethod(method)) {
@@ -1106,17 +1047,6 @@ public class PaymentService {
         if (PaymentRules.SUPPORTED_METHODS.contains(method) && !rules.isMethodEnabled(method)) {
             throw new BusinessException(
                     "PAYMENT_METHOD_DISABLED", "Phương thức thanh toán đang tạm tắt: " + method);
-        }
-    }
-
-    /// Hạn mức nạp ví theo cấu hình admin (app.payment.topup-min-amount / topup-max-amount).
-    private void assertTopupAmount(BigDecimal amount) {
-        BigDecimal min = rules.topupMinAmount();
-        BigDecimal max = rules.topupMaxAmount();
-        if (amount == null || amount.compareTo(min) < 0 || amount.compareTo(max) > 0) {
-            throw new BusinessException(
-                    "TOPUP_AMOUNT_OUT_OF_RANGE",
-                    "Số tiền nạp phải từ " + min.toPlainString() + " đến " + max.toPlainString() + " VND");
         }
     }
 
