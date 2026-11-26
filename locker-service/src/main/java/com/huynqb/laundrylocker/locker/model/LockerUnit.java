@@ -9,11 +9,11 @@ import java.time.LocalDateTime;
 
 @Entity
 @SQLRestriction("deleted_at IS NULL")
-@EntityListeners(MaintenanceChangeListener.class)
+@EntityListeners({MaintenanceChangeListener.class, ActionAuditListener.class})
 @Table(name = "lockers")
 @Getter
 @Setter
-public class LockerUnit {
+public class LockerUnit implements AuditTracked {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -82,5 +82,39 @@ public class LockerUnit {
     @PreUpdate
     void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    /// Ảnh các trường lúc nạp từ DB — {@link ActionAuditListener} so để ghi nhật ký thao tác (F3-G16).
+    @Transient
+    private java.util.Map<String, String> auditBaseline;
+
+    @Override
+    public java.util.Map<String, String> auditFields() {
+        java.util.Map<String, String> fields = new java.util.HashMap<>();
+        put(fields,
+                "status", s(status),
+                "maintenanceSource", s(maintenanceSource),
+                "assignedTechnicianId", s(assignedTechnicianId),
+                "landingPadStatus", s(landingPadStatus),
+                "landingPad", s(landingPad),
+                "code", s(code),
+                "name", s(name),
+                "address", s(address),
+                "latitude", s(latitude),
+                "longitude", s(longitude),
+                "storeId", s(storeId),
+                "description", s(description),
+                "deletedAt", s(deletedAt));
+        return fields;
+    }
+
+    private static String s(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private static void put(java.util.Map<String, String> fields, String... pairs) {
+        for (int i = 0; i + 1 < pairs.length; i += 2) {
+            fields.put(pairs[i], pairs[i + 1]);
+        }
     }
 }

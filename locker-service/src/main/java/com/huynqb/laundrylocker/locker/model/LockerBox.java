@@ -11,10 +11,10 @@ import java.time.LocalDateTime;
 @Entity
 @SQLRestriction("deleted_at IS NULL")
 @Table(name = "locker_boxes")
-@EntityListeners(LockerBoxAvailabilityListener.class)
+@EntityListeners({LockerBoxAvailabilityListener.class, ActionAuditListener.class})
 @Getter
 @Setter
-public class LockerBox {
+public class LockerBox implements AuditTracked {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -117,5 +117,31 @@ public class LockerBox {
 
     String availabilityKey() {
         return status + "|" + cellType + "|" + Boolean.TRUE.equals(active);
+    }
+
+    /// Ảnh các trường lúc nạp từ DB — {@link ActionAuditListener} so để ghi nhật ký thao tác (F3-G16).
+    @Transient
+    private java.util.Map<String, String> auditBaseline;
+
+    @Override
+    public java.util.Map<String, String> auditFields() {
+        java.util.Map<String, String> fields = new java.util.HashMap<>();
+        put(fields,
+                "status", s(status),
+                "active", s(active),
+                "size", s(size),
+                "cellType", s(cellType),
+                "deletedAt", s(deletedAt));
+        return fields;
+    }
+
+    private static String s(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private static void put(java.util.Map<String, String> fields, String... pairs) {
+        for (int i = 0; i + 1 < pairs.length; i += 2) {
+            fields.put(pairs[i], pairs[i + 1]);
+        }
     }
 }

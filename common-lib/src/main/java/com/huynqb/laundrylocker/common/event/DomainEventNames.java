@@ -57,6 +57,9 @@ public final class DomainEventNames {
     /// toán, hoàn tiền (payment). Payload chỉ có `entity`, `id` — notification-service đẩy ra
     /// `/topic/admin/changes` (chỉ ADMIN nghe) cho trang admin tải lại ngay.
     public static final String ADMIN_DATA_CHANGED = "admin.data.changed";
+    /// Nhật ký thao tác (F3-G16): ai, lúc nào, làm gì với đối tượng nào (bật bảo trì, kích hoạt, gán KTV, xoá…).
+    /// Payload xem {@link com.huynqb.laundrylocker.common.audit.ActionLog}; user-service lưu và trả `/api/admin/audit-logs`.
+    public static final String ADMIN_ACTION_LOGGED = "admin.action.logged";
 
     private DomainEventNames() {
     }
