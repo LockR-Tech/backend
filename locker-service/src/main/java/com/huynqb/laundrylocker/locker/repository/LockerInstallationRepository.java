@@ -20,4 +20,6 @@ public interface LockerInstallationRepository extends JpaRepository<LockerInstal
 
     List<LockerInstallation> findByTechnicianIdAndStatusInOrderByScheduledAtAscIdAsc(
             Long technicianId, Collection<InstallationStatus> statuses);
+
+    List<LockerInstallation> findByTechnicianIdOrderByIdDesc(Long technicianId);
 }

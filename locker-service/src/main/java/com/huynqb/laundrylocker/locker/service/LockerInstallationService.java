@@ -173,6 +173,11 @@ public class LockerInstallationService {
         installation.setReviewedAt(now);
         installation.setApprovedAt(now);
         LockerInstallation saved = installations.save(installation);
+        if (saved.getTechnicianId() != null) {
+            lockers.findById(saved.getLockerId())
+                    .filter(locker -> locker.getAssignedTechnicianId() == null)
+                    .ifPresent(locker -> lockerService.assignLockerTechnician(saved.getLockerId(), saved.getTechnicianId()));
+        }
         lockerService.applyInstallationStatus(saved.getLockerId(), APPROVED.lockerStatus());
         notifyReviewed(saved, "Hồ sơ lắp đặt tủ " + lockerName(saved) + " đã được duyệt — tủ bắt đầu hoạt động.");
         return toResponse(saved, status, true);
@@ -239,9 +244,25 @@ public class LockerInstallationService {
 
     @Transactional(readOnly = true)
     public List<InstallationResponse> listForTechnician(Long technicianId) {
-        return installations.findByTechnicianIdAndStatusInOrderByScheduledAtAscIdAsc(technicianId, OPEN).stream()
+        return listForTechnician(technicianId, false);
+    }
+
+    @Transactional(readOnly = true)
+    public List<InstallationResponse> listForTechnician(Long technicianId, boolean includeClosed) {
+        List<LockerInstallation> rows = includeClosed
+                ? installations.findByTechnicianIdOrderByIdDesc(technicianId)
+                : installations.findByTechnicianIdAndStatusInOrderByScheduledAtAscIdAsc(technicianId, OPEN);
+        return rows.stream()
                 .map(row -> toResponse(row, null, true))
                 .toList();
+    }
+
+    /// Hồ sơ lắp đặt mới nhất của tủ để KTV Kiosk tra cứu thông số kỹ thuật sau khi đã nghiệm thu.
+    @Transactional
+    public InstallationResponse latestForLockerForTechnician(Long lockerId) {
+        return installations.findFirstByLockerIdOrderByIdDesc(lockerId)
+                .map(this::openView)
+                .orElse(null);
     }
 
     /// Chi tiết hồ sơ; đang lắp / chờ duyệt thì đọc lại dữ liệu tủ để cập nhật các bước tự động.

@@ -485,4 +485,26 @@ class LockerInstallationServiceTest {
         return new ReportAttachmentRequest(
                 publicId, version, signature, "jpg", 2048L, 1200, 900, null, "2026-11-10T08:30:00", 10.84, 106.8);
     }
+
+    @Test
+    void approveAssignsTechnicianWhenLockerUnassignedAndHistoryRemainsReadable() {
+        inProgress();
+        locker.setAssignedTechnicianId(null);
+        commissioning(readyStatus(boxAndLidOk()));
+        passManualSteps();
+        service.addPhotos(ID, new InstallationPhotosRequest(null, List.of(photo("s1"), photo("s2"))), TECH, false);
+        service.submit(ID, TECH, false);
+
+        InstallationResponse approved = service.approve(ID, ADMIN);
+
+        assertEquals("APPROVED", approved.status());
+        verify(lockerService, times(2)).assignLockerTechnician(LOCKER, TECH);
+        verify(lockerService).applyInstallationStatus(LOCKER, "ACTIVE");
+
+        when(installationRepository.findByTechnicianIdOrderByIdDesc(TECH)).thenReturn(List.of(installation));
+        assertEquals(1, service.listForTechnician(TECH, true).size());
+
+        when(installationRepository.findFirstByLockerIdOrderByIdDesc(LOCKER)).thenReturn(Optional.of(installation));
+        assertEquals("APPROVED", service.latestForLockerForTechnician(LOCKER).status());
+    }
 }

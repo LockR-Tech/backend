@@ -8,6 +8,7 @@ import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.OrderClient;
 import com.huynqb.laundrylocker.locker.client.UserClient;
+import com.huynqb.laundrylocker.locker.dto.CreateDroneIncidentReportRequest;
 import com.huynqb.laundrylocker.locker.dto.DroneMaintenanceLogResponse;
 import com.huynqb.laundrylocker.locker.dto.CreateIncidentTicketsRequest;
 import com.huynqb.laundrylocker.locker.dto.DroneUpdateRequest;
@@ -800,6 +801,78 @@ class LockerServiceDroneFleetTest {
         ArgumentCaptor<DroneMaintenanceLog> logCaptor = ArgumentCaptor.forClass(DroneMaintenanceLog.class);
         verify(droneMaintenanceLogRepository).save(logCaptor.capture());
         assertEquals(7L, logCaptor.getValue().getActorUserId());
+    }
+
+    @Test
+    void adminCreatingMaintenanceReportSetsDroneToMaintenanceWithMaintenanceTicket() {
+        stubReportSave();
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 84L, DroneStatus.IDLE, 80)));
+        TechnicianPresence onDuty = new TechnicianPresence();
+        onDuty.setUserId(84L);
+        onDuty.setOnDuty(true);
+        when(presenceRepository.findByUserId(84L)).thenReturn(Optional.of(onDuty));
+
+        LockerReportResponse response = service.createDroneIncidentReport(
+                1L,
+                new CreateDroneIncidentReportRequest(
+                        "Bảo trì Drone DRONE-01",
+                        "Kiểm tra motor và pin định kỳ",
+                        List.of(),
+                        LockerService.TICKET_TYPE_DRONE_MAINTENANCE),
+                7L);
+
+        assertEquals(LockerService.TICKET_TYPE_DRONE_MAINTENANCE, response.ticketType());
+        assertEquals("OPEN", response.status());
+        assertEquals(84L, response.routedToUserId());
+        ArgumentCaptor<DroneUnit> unitCaptor = ArgumentCaptor.forClass(DroneUnit.class);
+        verify(droneUnitRepository).save(unitCaptor.capture());
+        assertEquals(DroneStatus.MAINTENANCE, unitCaptor.getValue().getStatus());
+        assertNull(unitCaptor.getValue().getFaultReason());
+    }
+
+    @Test
+    void technicianSwitchingToMaintenanceCreatesSelfAssignedMaintenanceTicket() {
+        stubReportSave();
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+
+        DroneUnitResponse response = service.updateDroneStatus(1L, DroneStatus.MAINTENANCE, "Bảo trì cảm biến", 42L);
+
+        assertEquals(DroneStatus.MAINTENANCE, response.status());
+        ArgumentCaptor<LockerReport> reportCaptor = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository).save(reportCaptor.capture());
+        LockerReport saved = reportCaptor.getValue();
+        assertEquals(LockerService.TICKET_TYPE_DRONE_MAINTENANCE, saved.getTicketType());
+        assertEquals("IN_PROGRESS", saved.getStatus());
+        assertEquals(42L, saved.getAssignedToUserId());
+        assertEquals("Bảo trì cảm biến", saved.getDescription());
+    }
+
+    @Test
+    void technicianSwitchingToFaultCreatesSelfAssignedFaultTicket() {
+        stubReportSave();
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+
+        DroneUnitResponse response = service.updateDroneStatus(1L, DroneStatus.FAULT, "Cánh quạt nứt", 42L);
+
+        assertEquals(DroneStatus.FAULT, response.status());
+        ArgumentCaptor<LockerReport> reportCaptor = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository).save(reportCaptor.capture());
+        LockerReport saved = reportCaptor.getValue();
+        assertNull(saved.getTicketType());
+        assertEquals("IN_PROGRESS", saved.getStatus());
+        assertEquals(42L, saved.getAssignedToUserId());
+        assertEquals("Cánh quạt nứt", saved.getDescription());
+    }
+
+    @Test
+    void listInspectionLogsFiltersByDroneUnitId() {
+        when(inspectionLogRepository.findByDroneUnitIdOrderByCreatedAtDesc(1L)).thenReturn(List.of());
+
+        List<com.huynqb.laundrylocker.locker.dto.MaintenanceInspectionLogResponse> result =
+                service.listInspectionLogs(null, null, null, 1L);
+
+        assertTrue(result.isEmpty());
+        verify(inspectionLogRepository).findByDroneUnitIdOrderByCreatedAtDesc(1L);
     }
 
     private DroneUnit droneUnit(Long id, Long assignedTechnicianId, String status, int batteryPercent) {
