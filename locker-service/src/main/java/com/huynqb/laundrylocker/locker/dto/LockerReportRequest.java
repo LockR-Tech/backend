@@ -17,18 +17,31 @@ public record LockerReportRequest(
         Boolean blocking,
         Long boxId,
         Long orderId,
-        String orderCode) {
+        String orderCode,
+        String ticketType) {
 
     public LockerReportRequest(Long userId, String title, String description, List<ReportAttachmentRequest> attachments) {
-        this(userId, title, description, attachments, null, null, null, null);
+        this(userId, title, description, attachments, null, null, null, null, null);
     }
 
     public LockerReportRequest(Long userId, String title, String description, List<ReportAttachmentRequest> attachments, Boolean blocking) {
-        this(userId, title, description, attachments, blocking, null, null, null);
+        this(userId, title, description, attachments, blocking, null, null, null, null);
     }
 
     public LockerReportRequest(Long userId, String title, String description, List<ReportAttachmentRequest> attachments, Boolean blocking, Long boxId) {
-        this(userId, title, description, attachments, blocking, boxId, null, null);
+        this(userId, title, description, attachments, blocking, boxId, null, null, null);
+    }
+
+    public LockerReportRequest(
+            Long userId,
+            String title,
+            String description,
+            List<ReportAttachmentRequest> attachments,
+            Boolean blocking,
+            Long boxId,
+            Long orderId,
+            String orderCode) {
+        this(userId, title, description, attachments, blocking, boxId, orderId, orderCode, null);
     }
 }
 

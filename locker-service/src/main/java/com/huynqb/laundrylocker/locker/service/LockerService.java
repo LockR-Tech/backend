@@ -115,6 +115,9 @@ public class LockerService {
     private static final java.util.Set<String> LANDING_PAD_STATUSES =
             java.util.Set.of("OK", "FAULT", "MAINTENANCE");
 
+    public static final String TICKET_TYPE_DRONE_MAINTENANCE = "DRONE_MAINTENANCE";
+    public static final String TICKET_TYPE_LOCKER_MAINTENANCE = "LOCKER_MAINTENANCE";
+
     @Transactional
     public LockerResponse createLocker(LockerRequest request) {
         LockerUnit locker = new LockerUnit();
@@ -1241,6 +1244,14 @@ public class LockerService {
                     "BLOCKING_REPORT_FORBIDDEN", "Chỉ KTV tủ hoặc admin được báo sự cố ngưng cả tủ",
                     HttpStatus.FORBIDDEN);
         }
+        if (blocking && technician && !roles.contains("ADMIN")
+                && locker.getAssignedTechnicianId() != null
+                && !Objects.equals(locker.getAssignedTechnicianId(), userId)) {
+            throw new BusinessException(
+                    "WHOLE_LOCKER_TECHNICIAN_MISMATCH",
+                    "Tủ này đã giao cho KTV khác phụ trách — chỉ KTV phụ trách tủ hoặc Admin mới được ngưng cả tủ",
+                    HttpStatus.FORBIDDEN);
+        }
         boolean confirmed = isConfirmedReporter(userId, roles);
         if (request.boxId() != null) {
             // Ô đã có phiếu mở (khách báo qua đơn, báo ở màn tủ, KTV tự báo) ⇒ gộp vào phiếu đó như
@@ -1275,6 +1286,7 @@ public class LockerService {
         report.setCategory(request.boxId() != null ? ReportCategory.BOX : ReportCategory.LOCKER);
         report.setBoxId(request.boxId());
         report.setBlocksLocker(blocking);
+        report.setTicketType(normalizeText(request.ticketType()));
         report.setUserId(userId);
         report.setTitle(request.title());
         report.setDescription(request.description());
@@ -1534,6 +1546,31 @@ public class LockerService {
                 .toList();
     }
 
+    /**
+     * Danh sách sự cố Kiosk hiển thị cho KTV Kiosk theo đúng phân công và phụ trách:
+     * 1. Phiếu đã có người nhận: CHỈ hiển thị cho người đó.
+     * 2. Phiếu mới (OPEN) chưa ai nhận:
+     *    - Kiosk có KTV phụ trách đang trực: CHỈ KTV phụ trách đó thấy và nhận.
+     *    - Kiosk chưa gán KTV / KTV ngoài ca (routedToUserId == null): mở cho mọi KTV Kiosk thấy và nhận.
+     */
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> visibleKioskReportsForTechnician(Long userId) {
+        List<LockerReport> reports = reportRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(report -> !isDroneReport(report))
+                .toList();
+        return toReports(reports).stream()
+                .filter(report -> {
+                    if (report.assignedToUserId() != null) {
+                        return Objects.equals(report.assignedToUserId(), userId);
+                    }
+                    if (report.routedToUserId() != null) {
+                        return Objects.equals(report.routedToUserId(), userId);
+                    }
+                    return true;
+                })
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public LockerReportResponse getDroneReport(Long reportId) {
         return toReport(requireDroneReport(reportId));
@@ -1591,6 +1628,12 @@ public class LockerService {
         if (!"OPEN".equals(report.getStatus())) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "REPORT_NOT_CLAIMABLE", "Phiếu không còn ở trạng thái chờ tiếp nhận");
+        }
+        if (report.getRoutedToUserId() != null && !Objects.equals(report.getRoutedToUserId(), userId)) {
+            throw new BusinessException(
+                    "REPORT_ROUTED_TO_OTHER",
+                    "Phiếu này đang được định tuyến riêng cho KTV phụ trách thiết bị",
+                    HttpStatus.FORBIDDEN);
         }
         if (userId == null || !onDuty(userId)) {
             throw new BusinessException(
@@ -2484,9 +2527,22 @@ public class LockerService {
     @Transactional(readOnly = true)
     public List<MaintenanceInspectionLogResponse> listInspectionLogs(
             Long scheduleId, Long lockerId, Long technicianId) {
+        return listInspectionLogs(scheduleId, lockerId, technicianId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<MaintenanceInspectionLogResponse> listInspectionLogs(
+            Long scheduleId, Long lockerId, Long technicianId, Long droneUnitId) {
         List<MaintenanceInspectionLog> logs;
         if (scheduleId != null) {
             logs = inspectionLogRepository.findByScheduleIdOrderByCreatedAtDesc(scheduleId);
+        } else if (droneUnitId != null) {
+            logs = inspectionLogRepository.findByDroneUnitIdOrderByCreatedAtDesc(droneUnitId);
+            if (technicianId != null) {
+                logs = logs.stream()
+                        .filter(log -> technicianId.equals(log.getTechnicianId()))
+                        .toList();
+            }
         } else if (lockerId != null && technicianId != null) {
             logs = inspectionLogRepository.findByLockerIdAndTechnicianIdOrderByCreatedAtDesc(lockerId, technicianId);
         } else if (lockerId != null) {
@@ -2701,8 +2757,9 @@ public class LockerService {
         String targetStatus;
         String reason = null;
         if (openReport != null) {
-            targetStatus = DroneStatus.FAULT;
-            reason = normalizeText(openReport.getDescription());
+            boolean maintenanceTicket = TICKET_TYPE_DRONE_MAINTENANCE.equalsIgnoreCase(openReport.getTicketType());
+            targetStatus = maintenanceTicket ? DroneStatus.MAINTENANCE : DroneStatus.FAULT;
+            reason = maintenanceTicket ? null : normalizeText(openReport.getDescription());
         } else if (scheduleRepository.existsByDroneUnitIdAndActiveTrueAndLastDoneAtIsNull(droneUnitId)) {
             targetStatus = DroneStatus.MAINTENANCE;
         } else {
@@ -2826,17 +2883,17 @@ public class LockerService {
         DroneUnit unit = findDroneUnit(id);
         requireDroneOwnership(unit, actorUserId);
         validateManualDroneStatusChange(unit, status);
-        return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, false, true, true, true);
     }
 
     @Transactional
     public DroneUnitResponse updateDroneStatusAsAdmin(Long id, String status, String reason, Long actorUserId) {
         DroneUnit unit = findDroneUnit(id);
         validateManualDroneStatusChange(unit, status);
-        return updateDroneStatusInternal(unit, status, reason, actorUserId, false);
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, false, true, true, false);
     }
 
-    /// Admin chủ động mở một phiếu mới cho drone. Mỗi lần gửi là một sự cố độc lập,
+    /// Admin chủ động mở một phiếu mới cho drone. Mỗi lần gửi là một sự cố/bảo trì độc lập,
     /// kể cả khi drone đã có phiếu OPEN/IN_PROGRESS trước đó.
     @Transactional
     public LockerReportResponse createDroneIncidentReport(
@@ -2844,25 +2901,42 @@ public class LockerService {
         DroneUnit unit = findDroneUnit(droneId);
         String title = normalizeText(request.title());
         String description = normalizeText(request.description());
+        boolean maintenance = TICKET_TYPE_DRONE_MAINTENANCE.equalsIgnoreCase(request.ticketType());
+        if (maintenance && (DroneStatus.RESERVED.equals(unit.getStatus()) || DroneStatus.IN_FLIGHT.equals(unit.getStatus()))) {
+            throw new BusinessException(
+                    "DRONE_ACTIVE_MISSION",
+                    "Drone đang thực hiện đơn giao hàng. Vui lòng hoàn tất đơn hiện tại trước khi chuyển sang bảo trì");
+        }
 
         String previousStatus = unit.getStatus();
-        unit.setStatus(DroneStatus.FAULT);
-        unit.setFaultReason(description);
+        String targetStatus = maintenance ? DroneStatus.MAINTENANCE : DroneStatus.FAULT;
+        unit.setStatus(targetStatus);
+        unit.setFaultReason(maintenance ? null : description);
         DroneUnit savedUnit = droneUnitRepository.save(unit);
-        if (!DroneStatus.FAULT.equals(previousStatus)) {
-            appendDroneLog(savedUnit.getId(), "Admin mở phiếu sự cố: " + title, actorUserId);
+        if (!targetStatus.equals(previousStatus)) {
+            appendDroneLog(
+                    savedUnit.getId(),
+                    (maintenance ? "Admin mở phiếu bảo trì: " : "Admin mở phiếu sự cố: ") + title,
+                    actorUserId);
         }
 
         LockerReport report = new LockerReport();
         report.setLockerId(savedUnit.getLockerId());
         report.setDroneUnitId(savedUnit.getId());
         report.setCategory(ReportCategory.DRONE);
+        if (maintenance) {
+            report.setTicketType(TICKET_TYPE_DRONE_MAINTENANCE);
+        }
         report.setUserId(actorUserId == null ? 0L : actorUserId);
         report.setTitle(title);
         report.setDescription(description);
         // Snapshot tuyến xử lý tại thời điểm tạo. Đổi KTV phụ trách Drone về sau không được
         // phép kéo các phiếu cũ sang KTV mới.
-        report.setRoutedToUserId(savedUnit.getAssignedTechnicianId());
+        Long routedTechId = savedUnit.getAssignedTechnicianId();
+        if (routedTechId != null && !onDuty(routedTechId)) {
+            routedTechId = null;
+        }
+        report.setRoutedToUserId(routedTechId);
         LockerReport savedReport = reportRepository.save(report);
         attachmentService.attach(
                 savedReport,
@@ -3156,10 +3230,19 @@ public class LockerService {
     private DroneUnitResponse updateDroneStatusInternal(
             DroneUnit unit, String status, String reason, Long actorUserId,
             boolean requireOwnership, boolean createFaultReport) {
+        return updateDroneStatusInternal(
+                unit, status, reason, actorUserId, requireOwnership, createFaultReport, false, false);
+    }
+
+    private DroneUnitResponse updateDroneStatusInternal(
+            DroneUnit unit, String status, String reason, Long actorUserId,
+            boolean requireOwnership, boolean createFaultReport,
+            boolean createMaintenanceReport, boolean selfAssignReport) {
         if (!DroneStatus.ALL.contains(status)) {
             throw new BusinessException("DRONE_STATUS_INVALID", "Unknown drone status: " + status);
         }
         boolean fault = DroneStatus.FAULT.equals(status);
+        boolean maintenance = DroneStatus.MAINTENANCE.equals(status);
         String normalizedReason = normalizeText(reason);
         if (fault && !StringUtils.hasText(normalizedReason)) {
             throw new BusinessException("DRONE_FAULT_REASON_REQUIRED", "A reason is required to mark a drone as FAULT");
@@ -3187,12 +3270,17 @@ public class LockerService {
         }
         DroneUnit saved = droneUnitRepository.save(unit);
         String note = "Chuyển trạng thái %s → %s%s"
-                .formatted(previousStatus, status, fault && StringUtils.hasText(normalizedReason) ? ": " + normalizedReason : "");
+                .formatted(
+                        previousStatus,
+                        status,
+                        (fault || maintenance) && StringUtils.hasText(normalizedReason) ? ": " + normalizedReason : "");
         appendDroneLog(saved.getId(), note, actorUserId);
-        // #2 FAULT mở phiếu cho đội drone. Phiếu chỉ đóng qua luồng hoàn tất phiếu (nhật ký, ảnh nghiệm
-        // thu); đóng phiếu cuối cùng tự đưa drone về hoạt động (restoreAssetsAfterClose).
+        // #2 FAULT hoặc MAINTENANCE thủ công mở phiếu cho đội drone. Phiếu chỉ đóng qua luồng hoàn tất
+        // phiếu (nhật ký, ảnh nghiệm thu); đóng phiếu cuối cùng tự đưa drone về hoạt động (restoreAssetsAfterClose).
         if (fault && !DroneStatus.FAULT.equals(previousStatus) && createFaultReport) {
-            openDroneFaultReport(saved, normalizedReason, actorUserId);
+            openDroneReport(saved, DroneStatus.FAULT, normalizedReason, actorUserId, selfAssignReport);
+        } else if (maintenance && !DroneStatus.MAINTENANCE.equals(previousStatus) && createMaintenanceReport) {
+            openDroneReport(saved, DroneStatus.MAINTENANCE, normalizedReason, actorUserId, selfAssignReport);
         }
         return toDroneUnit(saved);
     }
@@ -3268,9 +3356,14 @@ public class LockerService {
         appendDroneLog(id, "Xóa drone: " + deleteReason, actorUserId);
     }
 
-    /// #2 Mo 1 phieu su co gan voi drone (box_id NULL) de no vao chung hang doi
-    /// SLA/qua han nhu phieu o tu.
     private void openDroneFaultReport(DroneUnit unit, String reason, Long actorUserId) {
+        openDroneReport(unit, DroneStatus.FAULT, reason, actorUserId, false);
+    }
+
+    /// #2 Mo 1 phieu gan voi drone (box_id NULL) de no vao chung hang doi
+    /// SLA/qua han nhu phieu o tu. `selfAssign`: true khi KTV phụ trách tự báo trên app.
+    private void openDroneReport(
+            DroneUnit unit, String targetStatus, String reason, Long actorUserId, boolean selfAssign) {
         boolean alreadyOpen =
                 reportRepository
                         .findFirstByDroneUnitIdAndStatusInOrderByCreatedAtDesc(unit.getId(), OPEN_REPORT_STATUSES)
@@ -3278,18 +3371,30 @@ public class LockerService {
         if (alreadyOpen) {
             return;
         }
+        boolean maintenance = DroneStatus.MAINTENANCE.equals(targetStatus);
         LockerReport report = new LockerReport();
         report.setLockerId(unit.getLockerId());
         report.setDroneUnitId(unit.getId());
         report.setCategory(ReportCategory.DRONE);
-        report.setUserId(actorUserId == null ? 0L : actorUserId);
-        report.setTitle("Drone " + unit.getCode() + " lỗi");
-        report.setDescription(StringUtils.hasText(reason) ? reason : "Drone reported faulty");
-        Long routedTechId = unit.getAssignedTechnicianId();
-        if (routedTechId != null && !onDuty(routedTechId)) {
-            routedTechId = null;
+        if (maintenance) {
+            report.setTicketType(TICKET_TYPE_DRONE_MAINTENANCE);
         }
-        report.setRoutedToUserId(routedTechId);
+        report.setUserId(actorUserId == null ? 0L : actorUserId);
+        report.setTitle(maintenance ? "Bảo trì Drone " + unit.getCode() : "Drone " + unit.getCode() + " lỗi");
+        report.setDescription(StringUtils.hasText(reason)
+                ? reason
+                : (maintenance ? "Đưa drone vào bảo trì" : "Drone reported faulty"));
+        if (selfAssign && actorUserId != null) {
+            report.setAssignedToUserId(actorUserId);
+            report.setAssignedAt(LocalDateTime.now());
+            report.setStatus("IN_PROGRESS");
+        } else {
+            Long routedTechId = unit.getAssignedTechnicianId();
+            if (routedTechId != null && !onDuty(routedTechId)) {
+                routedTechId = null;
+            }
+            report.setRoutedToUserId(routedTechId);
+        }
         notifyDroneRouted(reportRepository.save(report), actorUserId);
     }
 

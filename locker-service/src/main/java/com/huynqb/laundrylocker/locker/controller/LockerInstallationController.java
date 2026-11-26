@@ -112,8 +112,15 @@ public class LockerInstallationController {
     // ─── KTV lắp đặt ───────────────────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/api/locker-technician/installations")
-    public ApiResponse<List<InstallationResponse>> listForTechnician(@RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok(installationService.listForTechnician(userId));
+    public ApiResponse<List<InstallationResponse>> listForTechnician(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestParam(required = false, defaultValue = "false") boolean includeClosed) {
+        return ApiResponse.ok(installationService.listForTechnician(userId, includeClosed));
+    }
+
+    @GetMapping("/api/locker-technician/lockers/{lockerId}/installation")
+    public ApiResponse<InstallationResponse> latestForLockerTechnician(@PathVariable Long lockerId) {
+        return ApiResponse.ok(installationService.latestForLockerForTechnician(lockerId));
     }
 
     @GetMapping("/api/locker-technician/installations/{id}")

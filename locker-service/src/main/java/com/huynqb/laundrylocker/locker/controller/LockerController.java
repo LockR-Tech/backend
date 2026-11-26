@@ -191,7 +191,8 @@ public class LockerController {
             @RequestParam(required = false, defaultValue = "false") boolean mine,
             @RequestParam(required = false, defaultValue = "false") boolean routed,
             @RequestParam(required = false, defaultValue = "false") boolean all,
-            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         if (mine && userId != null) {
             return ApiResponse.ok(lockerService.assignedReports(userId));
         }
@@ -199,7 +200,9 @@ public class LockerController {
             return ApiResponse.ok(lockerService.routedReports(userId));
         }
         if (all) {
-            return ApiResponse.ok(lockerService.allReports());
+            return ApiResponse.ok(!UserRoles.isAdmin(roles) && userId != null
+                    ? lockerService.visibleKioskReportsForTechnician(userId)
+                    : lockerService.allReports());
         }
         return ApiResponse.ok(lockerService.openReports());
     }
@@ -445,8 +448,9 @@ public class LockerController {
     @GetMapping("/api/maintenance/inspection-logs")
     public ApiResponse<List<MaintenanceInspectionLogResponse>> allInspectionLogs(
             @RequestParam(required = false) Long lockerId,
-            @RequestParam(required = false) Long technicianId) {
-        return ApiResponse.ok(lockerService.listInspectionLogs(null, lockerId, technicianId));
+            @RequestParam(required = false) Long technicianId,
+            @RequestParam(required = false) Long droneUnitId) {
+        return ApiResponse.ok(lockerService.listInspectionLogs(null, lockerId, technicianId, droneUnitId));
     }
 
     @GetMapping("/api/admin/drones/{id}/maintenance-history")

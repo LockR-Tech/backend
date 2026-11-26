@@ -9,5 +9,11 @@ import java.util.List;
 public record CreateDroneIncidentReportRequest(
         @NotBlank String title,
         @NotBlank String description,
-        List<@Valid ReportAttachmentRequest> attachments) {
+        List<@Valid ReportAttachmentRequest> attachments,
+        String ticketType) {
+
+    public CreateDroneIncidentReportRequest(
+            String title, String description, List<ReportAttachmentRequest> attachments) {
+        this(title, description, attachments, null);
+    }
 }

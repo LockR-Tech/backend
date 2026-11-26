@@ -758,6 +758,61 @@ class LockerServiceTicketRoutingTest {
                 BusinessException.class, () -> service.addRepairLog(56L, "Sửa xong", TECH)).getCode());
     }
 
+    @Test
+    void kioskVisibleReportsIsolatesAssignedAndRoutedTicketsLikeDrone() {
+        LockerReport mine = report(101L, "IN_PROGRESS", TECH);
+        LockerReport othersInProgress = report(102L, "IN_PROGRESS", OTHER_TECH);
+        LockerReport routedToMe = report(103L, "OPEN", null);
+        routedToMe.setRoutedToUserId(TECH);
+        LockerReport routedToOther = report(104L, "OPEN", null);
+        routedToOther.setRoutedToUserId(OTHER_TECH);
+        LockerReport sharedUnassigned = report(105L, "OPEN", null);
+        LockerReport droneReport = report(106L, "OPEN", null);
+        droneReport.setCategory(ReportCategory.DRONE);
+        droneReport.setDroneUnitId(88L);
+        when(reportRepository.findAllByOrderByCreatedAtDesc())
+                .thenReturn(List.of(mine, othersInProgress, routedToMe, routedToOther, sharedUnassigned, droneReport));
+
+        List<Long> visibleToTech = service.visibleKioskReportsForTechnician(TECH).stream()
+                .map(r -> r.id())
+                .toList();
+
+        assertEquals(List.of(101L, 103L, 105L), visibleToTech);
+    }
+
+    @Test
+    void claimReportRejectsTicketRoutedToAnotherTechnician() {
+        LockerReport routedToTech = report(103L, "OPEN", null);
+        routedToTech.setRoutedToUserId(TECH);
+        when(reportRepository.findById(103L)).thenReturn(Optional.of(routedToTech));
+
+        BusinessException ex = assertThrows(
+                BusinessException.class, () -> service.claimReport(103L, OTHER_TECH));
+
+        assertEquals("REPORT_ROUTED_TO_OTHER", ex.getCode());
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatus());
+        assertNull(routedToTech.getAssignedToUserId());
+    }
+
+    @Test
+    void onlyAssignedTechnicianOrAdminCanTakeAssignedLockerOutOfService() {
+        locker.setAssignedTechnicianId(TECH);
+        LockerReportRequest blocking = new LockerReportRequest(
+                null, "Bảo trì tủ", "Kiểm tra nguồn", List.of(), true);
+
+        BusinessException ex = assertThrows(
+                BusinessException.class,
+                () -> service.report(LOCKER_ID, blocking, OTHER_TECH, "LOCKER_TECHNICIAN"));
+
+        assertEquals("WHOLE_LOCKER_TECHNICIAN_MISMATCH", ex.getCode());
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatus());
+        assertEquals("ACTIVE", locker.getStatus());
+
+        assertEquals("IN_PROGRESS",
+                service.report(LOCKER_ID, blocking, TECH, "LOCKER_TECHNICIAN").status());
+        assertEquals("MAINTENANCE", locker.getStatus());
+    }
+
     private static TechnicianPresence presence(Long userId, boolean onDuty) {
         TechnicianPresence presence = new TechnicianPresence();
         presence.setUserId(userId);
