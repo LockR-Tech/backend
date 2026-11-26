@@ -60,6 +60,37 @@ class ServerTextTest {
     }
 
     @Test
+    void composedDroneReasonsTranslateEveryPart() {
+        // Thông báo "Đơn drone đang gặp sự cố": lý do ghép nhiều câu bằng " — " và ": " (F3-G14).
+        assertEquals("Order ORD-1: Unsafe weather on the flight route — The weather does not allow flying: rain or thunderstorms"
+                        + " on the route in the next 30 minutes.. Change the plan or confirm the delivery as not completed.",
+                ServerText.toEnglish("Đơn ORD-1: Thời tiết tuyến bay không an toàn — Thời tiết không cho phép bay: có mưa hoặc dông"
+                        + " trên tuyến trong 30 phút tới.. Đổi phương án hoặc xác nhận giao không hoàn tất."));
+        assertEquals("Order ORD-1: The flight station is paused — Receiving locker has paused flights (Weather at the station):"
+                        + " Automatic from the forecast: The weather does not allow flying: wind 7 km/h on the route in the next"
+                        + " 30 minutes.. Change the plan or confirm the delivery as not completed.",
+                ServerText.toEnglish("Đơn ORD-1: Trạm bay đang tạm dừng — Tủ nhận đang tạm dừng bay (Thời tiết tại trạm):"
+                        + " Tự động theo dự báo: Thời tiết không cho phép bay: gió 7 km/h trên tuyến trong 30 phút tới.."
+                        + " Đổi phương án hoặc xác nhận giao không hoàn tất."));
+        assertEquals("Order ORD-1: The landing pad at the receiving locker is not ready — The sending locker has no usable drone"
+                        + " left (ticket #57). Change the plan or confirm the delivery as not completed.",
+                ServerText.toEnglish("Đơn ORD-1: Bãi đáp ở tủ nhận không sẵn sàng — Tủ gửi không còn drone nào dùng được"
+                        + " (phiếu #57). Đổi phương án hoặc xác nhận giao không hoàn tất."));
+        // Nhắc lịch bảo trì: "tại drone LR-DRN-09 sắp tới hạn" không bị cắt thành nơi "drone" + "LR-DRN-09 sắp tới hạn".
+        assertEquals("Schedule \"Bảo dưỡng\" at drone LR-DRN-09 is coming due for inspection.",
+                ServerText.toEnglish("Lịch \"Bảo dưỡng\" tại drone LR-DRN-09 sắp tới hạn kiểm tra."));
+        assertEquals("Schedule \"Vệ sinh\" at locker Tủ A is due for inspection.",
+                ServerText.toEnglish("Lịch \"Vệ sinh\" tại tủ Tủ A đã tới hạn kiểm tra."));
+    }
+
+    @Test
+    void reorderedPlaceholdersKeepTheirValues() {
+        // Câu tiếng Anh đổi thứ tự chỗ ghép bằng {1} {0}: số sao và mã phiếu không bị tráo ("RPT-5 53★").
+        assertTrue(ServerText.toEnglish("Khách hàng đã đánh giá 5★ cho phiếu RPT-53 (tủ Tủ A): \"Tốt\"")
+                .startsWith("The customer rated ticket RPT-53 5★ (locker Tủ A)"));
+    }
+
+    @Test
     void everyCatalogSentenceTranslatesWithSampleValues() throws Exception {
         Pattern vietnamese = Pattern.compile("[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹ"
                 + "ÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]");
