@@ -135,7 +135,8 @@ public class UserProfileService {
                 hasPassword,
                 user.isTermsAccepted(),
                 user.getTermsAcceptedAt(),
-                user.getTermsVersion());
+                user.getTermsVersion(),
+                user.getLanguage());
     }
 
     /// Người dùng bấm "Đồng ý" Điều khoản dịch vụ trên app. Gọi lại với cùng phiên bản không đổi mốc đồng ý.
