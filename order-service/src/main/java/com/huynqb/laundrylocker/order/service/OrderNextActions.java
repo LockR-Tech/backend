@@ -2,6 +2,9 @@ package com.huynqb.laundrylocker.order.service;
 
 import com.huynqb.laundrylocker.order.model.LockerOrder;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
 /// Bước tiếp theo của đơn (nextAction/nextActionMessage/paymentRequired) — tách khỏi
 /// OrderService để OrderResponse của mobile và AdminOrderResponse dùng chung một quy tắc.
 public final class OrderNextActions {
@@ -72,6 +75,17 @@ public final class OrderNextActions {
             case "CONTACT_STAFF" -> "Items moved to storage; contact staff to retrieve them.";
             default -> order.getStatus();
         };
+    }
+
+    /// Đơn "quá hạn": còn mở (chưa hoàn tất/huỷ) mà đã qua hạn lấy hàng / hết giờ thuê, hoặc đã kết thúc
+    /// và thực sự bị thu phí quá hạn (`extraFee` > 0). Đơn đã lấy hàng đúng hạn thì không bao giờ quá hạn,
+    /// dù bây giờ đã qua mốc hạn.
+    public static boolean overdue(LockerOrder order, LocalDateTime now) {
+        String status = order.getStatus();
+        if ("COMPLETED".equals(status) || "CANCELED".equals(status)) {
+            return order.getExtraFee() != null && order.getExtraFee().compareTo(BigDecimal.ZERO) > 0;
+        }
+        return order.getPickupDeadline() != null && now.isAfter(order.getPickupDeadline());
     }
 
     public static boolean paymentRequired(LockerOrder order) {

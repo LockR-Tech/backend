@@ -321,7 +321,7 @@ public class AdminOrderQueryService {
                 OrderNextActions.nextActionMessage(o),
                 OrderNextActions.paymentRequired(o),
                 o.getPaymentStatus(),
-                o.getPickupDeadline() != null && now.isAfter(o.getPickupDeadline()),
+                OrderNextActions.overdue(o, now),
                 o.getPickupDeadline(),
                 o.getReturnedAt(),
                 o.getCompletedAt(),

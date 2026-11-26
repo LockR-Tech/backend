@@ -2904,7 +2904,7 @@ public class OrderService {
                 nextActionMessage(order),
                 paymentRequired(order),
                 order.getPaymentStatus(),
-                order.getPickupDeadline() != null && LocalDateTime.now().isAfter(order.getPickupDeadline()),
+                OrderNextActions.overdue(order, LocalDateTime.now()),
                 order.getPickupDeadline(),
                 order.getReturnedAt(),
                 order.getCompletedAt(),
