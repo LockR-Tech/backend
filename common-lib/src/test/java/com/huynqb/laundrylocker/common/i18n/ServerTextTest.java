@@ -21,6 +21,24 @@ class ServerTextTest {
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{\\d*}");
 
+    /// Nhật ký bộ điều khiển tủ, lỗi phần cứng Pi và mô tả phiếu kiểm tra drone hiện ở trang chi tiết tủ /
+    /// bảo trì của web admin tiếng Anh (F3-G14), kể cả dòng cũ thiếu "· lúc …".
+    @Test
+    void lockerControllerLogsAndIncidentTicketsAreTranslated() {
+        assertEquals("Controller disconnected (unplugged / offline) · GPIO · last seen at 09:08:46 13/11",
+                ServerText.toEnglish("Bộ điều khiển mất kết nối (Rút nguồn điện / Ngoại tuyến) · GPIO · thấy lần cuối lúc 09:08:46 13/11"));
+        assertEquals("Controller connected (powered on / started) · GPIO · 7 hardware boxes · firmware v1.0.0",
+                ServerText.toEnglish("Bộ điều khiển kết nối thành công (Cấp nguồn điện / Khởi động) · GPIO · 7 ô phần cứng · firmware v1.0.0"));
+        assertEquals("Controller reconnected (power restored / signal back) · GPIO · 7 hardware boxes · firmware v1.0.0 · at 10:00:00 26/11",
+                ServerText.toEnglish("Bộ điều khiển kết nối lại thành công (Cấp điện / Bắt được tín hiệu) · GPIO · 7 ô phần cứng · firmware v1.0.0 · lúc 10:00:00 26/11"));
+        assertEquals("The relay ran but the sensor still sees the door closed (door jammed or sensor not wired)",
+                ServerText.toEnglish("Relay chạy nhưng cảm biến vẫn thấy cửa đóng (kẹt cửa hoặc cảm biến chưa nối)"));
+        String ticket = ServerText.toEnglish("Kiểm tra hook/gripper, servo/actuator, dây điện và cơ cấu giữ hàng. "
+                + "Sự cố DPI-192-1, đơn ORD-20261124-N2DH35. Vị trí báo rơi: 10.8, 106.7");
+        assertTrue(ticket.startsWith("Check the hook/gripper, servo/actuator, wiring and the parcel holding mechanism. "
+                + "Incident DPI-192-1, order ORD-20261124-N2DH35."), ticket);
+    }
+
     @Test
     void exactSentence() {
         assertEquals("Payment successful", ServerText.toEnglish("Thanh toán thành công"));

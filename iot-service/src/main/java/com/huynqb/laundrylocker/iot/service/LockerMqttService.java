@@ -222,7 +222,11 @@ public class LockerMqttService {
                                 ? "Nắp trượt ô tủ đã mở thành công đón kiện hàng từ Drone"
                                 : "Nắp trượt ô tủ đã đóng và khoá an toàn sau khi Drone giao hàng";
                     } else {
-                        desc = "Lệnh " + action + " ô tủ thất bại: " + (errMsg != null ? errMsg : status);
+                        String verb = "open".equalsIgnoreCase(action) ? "mở" : "đóng";
+                        // Pi ghi "Hardware error: <MÃ>" bằng tiếng Anh ⇒ đổi phần đầu sang tiếng Việt, giữ mã.
+                        String reason = errMsg == null ? status
+                                : errMsg.replaceFirst("(?i)^Hardware error:\\s*", "lỗi phần cứng ");
+                        desc = "Lệnh " + verb + " nắp ô tủ thất bại: " + reason;
                     }
 
                     applicationContext.getBean(IotService.class).logExternalAccess(

@@ -230,7 +230,7 @@ public class DroneParcelIncidentService {
 
         DroneReturnCommandGateway.CommandResult rtl = canRequestReturn(telemetry, telemetryLive)
                 ? returnCommandGateway.requestReturnToLaunch(mission.getDroneCode(), incident.getIncidentCode())
-                : new DroneReturnCommandGateway.CommandResult(false, "Telemetry is stale or flight safety is unknown");
+                : new DroneReturnCommandGateway.CommandResult(false, "Dữ liệu bay đã cũ hoặc chưa xác định được an toàn bay");
         incident.setReturnFlightStatus(rtl.requested()
                 ? "RETURN_REQUESTED" : "MANUAL_INTERVENTION_REQUIRED");
         // Drone không nhận lệnh quay về chỉ là việc của bước "drone quay về" (đội bay đưa về rồi admin xác nhận tay);
