@@ -1884,5 +1884,6 @@
   "Id người dùng vẫn thấy điểm gửi demo khi đã ẩn (mặc định: các tài khoản *@demo.lockr.test). 0 = chỉ admin.": "User ids that still see demo drop-off points while hidden (default: the *@demo.lockr.test accounts). 0 = admins only.",
   "Chế độ thử mở ô qua Bluetooth đang tắt": "Bluetooth test-opening is turned off",
   "Tủ này hiện không nhận đơn mới": "This locker is not taking new orders right now",
-  "Lệnh nắp lỗi (mở: {}; đóng: {})": "Lid command failed (open: {}; close: {})"
+  "Lệnh nắp lỗi (mở: {}; đóng: {})": "Lid command failed (open: {}; close: {})",
+  "Cập nhật ảnh tiến độ sửa chữa": "Repair progress photo update"
 }
