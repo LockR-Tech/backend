@@ -40,6 +40,8 @@ public final class ServerText {
     /// Giờ in kiểu `HH:mm 'ngày' dd/MM/yyyy` nằm trong phần ghép động.
     private static final Pattern DATE_TIME = Pattern.compile("(\\d{1,2}:\\d{2}) ngày (\\d{1,2}/\\d{1,2}/\\d{4})");
     private static final Pattern SENTENCE_BREAK = Pattern.compile("(?<=[.!?;:])\\s+|\\s+—\\s+|\\s+-\\s+|\\s*\\|\\s*");
+    private static final Pattern CLAUSE_BREAK = Pattern.compile("\\s+—\\s+|\\s*\\|\\s*");
+    private static final Pattern LEADING_PUNCTUATION = Pattern.compile("\\s*[:;,.]\\s+");
     /// Mẫu chỉ có vài chữ cố định ("Tủ {}") dễ khớp nhầm tên do admin đặt ⇒ không dùng làm mẫu, trừ khi
     /// có từ hai chỗ ghép trở lên ("Mã {}: {}").
     private static final int MIN_TEMPLATE_LITERAL = 6;
@@ -179,9 +181,26 @@ public final class ServerText {
         if (whole != null) {
             return whole;
         }
-        // "Nhãn: giá trị" (thư chữ trơn): nhãn có trong bảng thì dịch phần sau như một câu trọn.
-        int colon = text.indexOf(": ");
-        if (colon > 0) {
+        // Phần ghép bắt đầu bằng dấu câu (": Tự động theo dự báo: …" sau "({})") — dịch phần sau dấu.
+        Matcher lead = LEADING_PUNCTUATION.matcher(text);
+        if (lead.lookingAt() && lead.end() < text.length()) {
+            return lead.group() + translatePart(text.substring(lead.end()), depth);
+        }
+        // Lý do ghép nhiều vế bằng " — " / " | " ("Thời tiết tuyến bay không an toàn — Thời tiết không cho phép
+        // bay: …"): mỗi vế là một câu server soạn, dịch riêng như một dòng để mẫu có ": " bên trong vẫn khớp.
+        Matcher clauses = CLAUSE_BREAK.matcher(text);
+        if (clauses.find()) {
+            StringBuilder out = new StringBuilder();
+            int last = 0;
+            do {
+                out.append(translatePart(text.substring(last, clauses.start()), depth)).append(clauses.group());
+                last = clauses.end();
+            } while (clauses.find());
+            return out.append(translatePart(text.substring(last), depth)).toString();
+        }
+        // "Nhãn: giá trị" (thư chữ trơn): nhãn có trong bảng thì dịch phần sau như một câu trọn — thử từng dấu
+        // ": " từ trái sang ("Tự động theo dự báo: Thời tiết không cho phép bay: …").
+        for (int colon = text.indexOf(": "); colon > 0; colon = text.indexOf(": ", colon + 2)) {
             String label = translateWhole(text.substring(0, colon + 1), depth);
             if (label != null) {
                 return label + " " + translatePart(text.substring(colon + 2), depth);
@@ -229,6 +248,14 @@ public final class ServerText {
         String translated = applyFirst(templates, text, key, nested);
         if (translated == null && depth > 0) {
             translated = applyFirst(shortTemplates, text, key, nested);
+        }
+        if (translated == null && depth > 0 && !key.endsWith(".")) {
+            // Mẫu ngoài kết thúc bằng "{}." đã lấy mất dấu chấm của câu lồng bên trong
+            // ("{} đang tạm dừng bay ({}){}." chứa "…: Thời tiết không cho phép bay: … phút tới").
+            String dotted = translateWhole(key + ".", depth);
+            if (dotted != null && dotted.endsWith(".")) {
+                translated = keepPadding(text, dotted.substring(0, dotted.length() - 1));
+            }
         }
         return translated;
     }
