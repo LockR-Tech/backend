@@ -224,8 +224,13 @@ public class DroneOrderBookingService {
                                     : " đã được tạo. Thanh toán để kỹ thuật viên tới lấy hàng."),
                     saved.getId());
             if (receiverUserId != null && !receiverUserId.equals(userId)) {
-                notifyQuietly(receiverUserId, "Bạn sắp nhận được một đơn drone",
-                        "Đơn " + saved.getOrderCode() + " đã được tạo và đang chờ người gửi thanh toán.",
+                // Người nhận có tài khoản Lock.R (khớp email / SĐT): đơn hiện ngay ở "Hàng chờ nhận" của họ.
+                String senderName = StringUtils.hasText(sender.name()) ? sender.name().trim() : sender.phone();
+                String lockerName = route.destination().name();
+                notifyQuietly(receiverUserId, "Bạn có đơn hàng gửi từ " + senderName,
+                        "Đơn drone " + saved.getOrderCode() + " giao tới tủ " + lockerName
+                                + (free ? " đã được tạo." : " đang chờ người gửi thanh toán.")
+                                + " Xem trong mục Hàng chờ nhận.",
                         saved.getId());
             }
             return queryService.get(saved.getId(), userId);
