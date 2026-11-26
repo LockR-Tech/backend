@@ -642,6 +642,19 @@ class LockerServiceTicketRoutingTest {
     }
 
     @Test
+    void inactiveAvailableCellShowsOutOfServiceAndCanBeReturnedToService() {
+        box.setActive(false);
+        when(boxRepository.save(any(LockerBox.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertEquals("OUT_OF_SERVICE", LockerService.displayStatus(box));
+        var cell = service.returnToService(BOX_ID);
+
+        assertEquals("AVAILABLE", cell.status());
+        assertEquals(Boolean.TRUE, box.getActive());
+        assertEquals("AVAILABLE", LockerService.displayStatus(box));
+    }
+
+    @Test
     void sweepExpiredReservationsSkipsDroneCells() {
         when(boxRepository.findByStatusAndReservedUntilBeforeAndCellTypeNot(
                 eq("RESERVED"), any(), eq(CellType.DRONE)))

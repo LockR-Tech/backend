@@ -84,17 +84,6 @@ public interface LockerOrderRepository extends JpaRepository<LockerOrder, Long>,
             @Param("statuses") Collection<String> statuses,
             Pageable pageable);
 
-    /// Đơn được ủy quyền lấy hộ cho số điện thoại trong `phones` (cùng cách so như trên).
-    @Query("select o from LockerOrder o where o.delegatePhone is not null"
-            + " and replace(replace(replace(replace(replace(o.delegatePhone, ' ', ''), '-', ''), '.', ''), '(', ''), ')', '')"
-            + " in :phones"
-            + " and (:allStatuses = true or o.status in :statuses)"
-            + " order by o.delegatedAt desc, o.id desc")
-    List<LockerOrder> findDelegatedTo(
-            @Param("phones") Collection<String> phones,
-            @Param("allStatuses") boolean allStatuses,
-            @Param("statuses") Collection<String> statuses,
-            Pageable pageable);
 
     /// Thời điểm tạo đơn trong [start, end) — dashboard gom theo giờ (giờ cao điểm).
     @Query("select o.createdAt from LockerOrder o where o.createdAt >= :start and o.createdAt < :end")

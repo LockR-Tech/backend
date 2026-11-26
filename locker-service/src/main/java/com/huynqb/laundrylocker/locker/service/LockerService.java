@@ -964,12 +964,15 @@ public class LockerService {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "BOX_IN_FAULT", "Ô đang hỏng — dùng clear-fault để khôi phục");
         }
-        if (!"OUT_OF_SERVICE".equalsIgnoreCase(status) && !"CLEANING".equalsIgnoreCase(status)) {
+        boolean inactive = !Boolean.TRUE.equals(box.getActive());
+        if (!"OUT_OF_SERVICE".equalsIgnoreCase(status) && !"CLEANING".equalsIgnoreCase(status)
+                && !(inactive && "AVAILABLE".equalsIgnoreCase(status))) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "BOX_NOT_OUT_OF_SERVICE", "Ô không ở trạng thái ngưng dùng/vệ sinh");
         }
         box.setStatus("AVAILABLE");
         box.setFaultReason(null);
+        box.setActive(true);
         return toCell(boxRepository.save(box));
     }
 
@@ -2065,6 +2068,8 @@ public class LockerService {
         box.setStatus(target);
         box.setPreFaultStatus(null);
         box.setFaultReason(null);
+        // Hết sự cố = ô dùng lại được: bật lại cờ hoạt động, nếu không ô hiện "trống" mà không đặt được (F3-G15).
+        box.setActive(true);
         LockerBox saved = boxRepository.save(box);
         syncBoxStateQuietly(saved, target);
     }
@@ -4126,7 +4131,7 @@ public class LockerService {
                 box.getCellType(),
                 box.getRowIndex(),
                 box.getColIndex(),
-                box.getStatus(),
+                displayStatus(box),
                 box.getFaultReason(),
                 doorOpen,
                 hwState,
@@ -4137,6 +4142,16 @@ public class LockerService {
                 box.getArucoAssignedAt(),
                 box.getArucoAssignedBy(),
                 box.getActive());
+    }
+
+    /// Ô tắt cờ hoạt động thì reserveBox luôn từ chối ⇒ không báo "AVAILABLE" cho app/kiosk/admin nữa mà báo
+    /// "OUT_OF_SERVICE" (ngưng dùng): khách không thấy ô "trống" rồi bấm vào lại bị báo "ô vừa được đặt",
+    /// KTV/admin thấy ô cần "Đưa vào hoạt động lại" (F3-G15).
+    static String displayStatus(LockerBox box) {
+        if (!Boolean.TRUE.equals(box.getActive()) && "AVAILABLE".equalsIgnoreCase(box.getStatus())) {
+            return "OUT_OF_SERVICE";
+        }
+        return box.getStatus();
     }
 
     private void publishBoxFault(LockerBox box, String reason) {

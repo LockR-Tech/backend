@@ -276,14 +276,6 @@ public class OrderController {
         return ApiResponse.ok("ORDER_PIN_RESET", "Order PIN reset", orderService.resetPin(orderId, userId));
     }
 
-    @PostMapping("/api/orders/{orderId}/delegate")
-    public ApiResponse<OrderResponse> delegate(
-            @PathVariable Long orderId,
-            @Valid @RequestBody DelegateOrderRequest request,
-            @RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok("ORDER_DELEGATED", "Order pickup delegated", orderService.delegate(orderId, userId, request));
-    }
-
     @PostMapping("/api/orders/{orderId}/pickup-storage")
     public ApiResponse<OrderResponse> pickupStorage(
             @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
@@ -668,27 +660,18 @@ public class OrderController {
         return ApiResponse.ok(receiverOrderQueryService.incoming(userId, activeOnly, limit));
     }
 
-    /// Đơn người khác ủy quyền cho tôi lấy hộ (khớp theo SĐT tài khoản), kèm mã mở ô khi sẵn sàng.
-    @GetMapping("/api/orders/delegated-to-me")
-    public ApiResponse<List<ReceiverOrderResponse>> delegatedToMe(
-            @RequestHeader("X-User-Id") Long userId,
-            @RequestParam(defaultValue = "false") boolean activeOnly,
-            @RequestParam(required = false) Integer limit) {
-        return ApiResponse.ok(receiverOrderQueryService.delegatedToMe(userId, activeOnly, limit));
-    }
-
-    /// Chi tiết một đơn gửi tới tôi hoặc ủy quyền cho tôi lấy hộ: liên hệ người gửi, kiện hàng,
-    /// tủ/ô, mốc thời gian, hành trình drone. Đơn không thuộc hai danh sách trên của tôi ⇒ 404.
-    /// Hai đường cùng một quy tắc quyền; `viewerRole` trong kết quả cho biết vai của người xem.
-    @GetMapping({"/api/orders/incoming/{orderId}", "/api/orders/delegated-to-me/{orderId}"})
+    /// Chi tiết một đơn gửi tới tôi: liên hệ người gửi, kiện hàng, tủ/ô, mốc thời gian, hành trình drone.
+    /// Đơn không thuộc danh sách của tôi ⇒ 404. `viewerRole` = DELEGATE chỉ còn ở đơn đã ủy quyền lấy hộ trước
+    /// khi gỡ tính năng (F3-G15).
+    @GetMapping("/api/orders/incoming/{orderId}")
     public ApiResponse<ReceiverOrderDetailResponse> receiverOrderDetail(
             @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok(receiverOrderQueryService.detail(userId, orderId));
     }
 
-    /// Người nhận / người lấy hộ gửi lại thông tin đơn (kèm mã mở tủ khi hàng đã vào tủ) tới email tài khoản của
-    /// mình. Cùng quy tắc quyền với chi tiết đơn nhận; mỗi đơn một lần mỗi phút.
-    @PostMapping({"/api/orders/incoming/{orderId}/email", "/api/orders/delegated-to-me/{orderId}/email"})
+    /// Người nhận gửi lại thông tin đơn (kèm mã mở tủ khi hàng đã vào tủ) tới email tài khoản của mình. Cùng
+    /// quy tắc quyền với chi tiết đơn nhận; mỗi đơn một lần mỗi phút.
+    @PostMapping("/api/orders/incoming/{orderId}/email")
     public ApiResponse<ReceiverOrderEmailResponse> resendReceiverEmail(
             @PathVariable Long orderId, @RequestHeader("X-User-Id") Long userId) {
         return ApiResponse.ok("RECEIVER_EMAIL_SENT", "Đã gửi thông tin đơn qua email",

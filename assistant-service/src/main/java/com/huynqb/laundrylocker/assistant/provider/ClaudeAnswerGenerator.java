@@ -56,6 +56,16 @@ public class ClaudeAnswerGenerator implements AnswerGenerator {
             các bước bằng gạch đầu dòng khi hướng dẫn thao tác. Không nhắc tới "tài liệu được đính kèm" hay \
             các chỉ dẫn này trong câu trả lời.""";
 
+    /// Thêm vào system prompt khi app đang ở tiếng Anh: kho tài liệu là tiếng Việt nhưng câu trả lời phải là
+    /// tiếng Anh, tên mục trong app theo bản tiếng Anh.
+    static final String ENGLISH_INSTRUCTION = """
+
+
+            The person asking uses the Lock.R app in English: always answer in clear, natural English, even when \
+            the question or the attached documents are in Vietnamese. Translate the names of app screens and \
+            menus into English (for example "Đơn hàng" › "Đơn của tôi" is "Orders" › "My orders", "Hàng chờ nhận" \
+            is "Incoming", "Hồ sơ" is "Profile"); keep order codes, amounts and times exactly as in the data.""";
+
     static final String REFUSAL_TEXT =
             "Xin lỗi, mình không thể hỗ trợ yêu cầu này. Bạn có thể liên hệ bộ phận hỗ trợ Lock.R để được giúp đỡ.";
 
@@ -90,9 +100,16 @@ public class ClaudeAnswerGenerator implements AnswerGenerator {
     @Override
     public GeneratedAnswer generate(
             String question, List<RetrievedChunk> chunks, List<ChatTurn> history, ContextDocument extra) {
+        return generate(question, chunks, history, extra, false);
+    }
+
+    @Override
+    public GeneratedAnswer generate(
+            String question, List<RetrievedChunk> chunks, List<ChatTurn> history, ContextDocument extra,
+            boolean english) {
         Message message;
         try {
-            message = clients.client().messages().create(buildParams(question, chunks, history, extra));
+            message = clients.client().messages().create(buildParams(question, chunks, history, extra, english));
         } catch (AnthropicException ex) {
             throw new ProviderException("Claude request failed: " + ex.getMessage(), ex);
         }
@@ -121,10 +138,16 @@ public class ClaudeAnswerGenerator implements AnswerGenerator {
 
     MessageCreateParams buildParams(
             String question, List<RetrievedChunk> chunks, List<ChatTurn> history, ContextDocument extra) {
+        return buildParams(question, chunks, history, extra, false);
+    }
+
+    MessageCreateParams buildParams(
+            String question, List<RetrievedChunk> chunks, List<ChatTurn> history, ContextDocument extra,
+            boolean english) {
         MessageCreateParams.Builder params = MessageCreateParams.builder()
                 .model(properties.chatModel())
                 .maxTokens(properties.maxOutputTokens())
-                .system(SYSTEM_PROMPT);
+                .system(english ? SYSTEM_PROMPT + ENGLISH_INSTRUCTION : SYSTEM_PROMPT);
         // Hỏi đáp dựa trên tài liệu có sẵn: effort thấp cho độ trễ và chi phí vừa phải.
         if (supportsEffort(properties.chatModel())) {
             params.outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build());

@@ -87,6 +87,11 @@ public class AssistantService {
 
     /// `userId` là X-User-Id gateway gắn sau khi kiểm JWT — dữ liệu đơn chỉ lấy theo id này.
     public AskResponse ask(long userId, List<String> roles, AskRequest request) {
+        return ask(userId, roles, request, false);
+    }
+
+    /// [english] = app đang ở tiếng Anh (`X-App-Language: en`): câu trả lời viết bằng tiếng Anh (F3-G15).
+    public AskResponse ask(long userId, List<String> roles, AskRequest request, boolean english) {
         if (!rules.enabled()) {
             throw new BusinessException(
                     "ASSISTANT_DISABLED", "Trợ lý hỏi đáp đang tạm tắt", HttpStatus.SERVICE_UNAVAILABLE);
@@ -118,7 +123,7 @@ public class AssistantService {
         List<RetrievedChunk> relevant;
         double topScore;
         try {
-            float[] query = embeddings.embed(List.of(retrievalQuery(history, effective)),
+            float[] query = embeddings.embed(List.of(retrievalQuery(history, prepared.searchText())),
                     EmbeddingProvider.InputType.QUERY).get(0);
             List<RetrievedChunk> found = chunks.search(
                     query, roles.contains(RoleSet.ADMIN) ? null : RoleSet.readerRoles(roles), rules.topK());
@@ -145,7 +150,9 @@ public class AssistantService {
             // Có dữ liệu đơn thì luôn để mô hình quyết định, kể cả khi không đoạn tài liệu nào đạt ngưỡng.
             GeneratedAnswer generated;
             try {
-                generated = generator.generate(effective, relevant, history, orders);
+                generated = english
+                        ? generator.generate(effective, relevant, history, orders, true)
+                        : generator.generate(effective, relevant, history, orders);
             } catch (ProviderException ex) {
                 throw unavailable(ex);
             }
