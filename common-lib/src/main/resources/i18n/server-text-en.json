@@ -1918,5 +1918,15 @@
   "lấy hàng": "pickup",
   "Dữ liệu bay đã cũ hoặc chưa xác định được an toàn bay": "Flight data is stale or flight safety is unknown",
   "lỗi phần cứng": "hardware error",
-  "Người dùng": "User"
+  "Người dùng": "User",
+  "Chỉ người báo sự cố mới xem được phiếu này": "Only the reporting customer can view this report",
+  "Kỹ thuật viên đang ngoài ca trực. Vui lòng bật Vào ca trước khi nhận việc.": "You are currently off shift. Please start your shift before claiming a ticket.",
+  "Phiếu chưa được tiếp nhận xử lý": "This ticket has not been claimed yet",
+  "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi ghi nhật ký": "This ticket has not been claimed yet — please claim it before adding repair logs",
+  "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi hoàn tất": "This ticket has not been claimed yet — please claim it before resolving",
+  "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi mở khẩn cấp theo phiếu": "This ticket has not been claimed yet — please claim it before force-opening",
+  "Chỉ KTV đang được giao phiếu mới gắn nhật ký mở khẩn cấp vào phiếu này": "Only the assigned technician can attach a force-open log to this ticket",
+  "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi xử lý sự cố ô": "This ticket has not been claimed yet — please claim it before resolving the box incident",
+  "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi từ chối": "This ticket has not been claimed yet — please claim it before rejecting",
+  "Phiếu đã được đóng": "This ticket is already closed"
 }

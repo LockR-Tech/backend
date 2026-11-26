@@ -1,9 +1,11 @@
 package com.huynqb.laundrylocker.locker.service;
 
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.dto.UserSummary;
 import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.locker.client.IotClient;
 import com.huynqb.laundrylocker.locker.client.OrderClient;
+import com.huynqb.laundrylocker.locker.client.UserClient;
 import com.huynqb.laundrylocker.locker.dto.DroneUnitRequest;
 import com.huynqb.laundrylocker.locker.dto.UpdateBoxRequest;
 import com.huynqb.laundrylocker.locker.model.DroneUnit;
@@ -24,6 +26,7 @@ import org.springframework.http.HttpStatus;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -44,6 +47,7 @@ class LockerServiceAdminGuardsTest {
     @Mock private IotClient iotClient;
     // Không có đơn nào trong ô (mock trả null); thiếu mock thì tra đơn lỗi và ô bị coi là chưa kiểm được.
     @Mock private OrderClient orderClient;
+    @Mock private UserClient userClient;
     @Mock private RabbitTemplate rabbitTemplate;
 
     @InjectMocks private LockerService service;
@@ -182,8 +186,20 @@ class LockerServiceAdminGuardsTest {
     void droneIsCreatedAtLockerWithLandingPad() {
         when(lockerRepository.findById(1L)).thenReturn(Optional.of(locker(1L, true)));
         when(droneUnitRepository.save(any(DroneUnit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userClient.getUser(84L)).thenReturn(ApiResponse.ok(
+                new UserSummary(84L, null, null, "KTV Drone", "ACTIVE", Set.of("DRONE_TECHNICIAN"))));
+        when(userClient.getUser(42L)).thenReturn(ApiResponse.ok(
+                new UserSummary(42L, null, null, "KTV Tủ", "ACTIVE", Set.of("LOCKER_TECHNICIAN"))));
 
         assertEquals("DR-01", service.createDroneUnit(new DroneUnitRequest(1L, "DR-01")).code());
+
+        var withTech = service.createDroneUnit(new DroneUnitRequest(1L, "DR-02", 84L));
+        assertEquals("DR-02", withTech.code());
+        assertEquals(84L, withTech.assignedTechnicianId());
+
+        BusinessException wrongRole = assertThrows(BusinessException.class,
+                () -> service.createDroneUnit(new DroneUnitRequest(1L, "DR-03", 42L)));
+        assertEquals("TECHNICIAN_ROLE_REQUIRED", wrongRole.getCode());
     }
 
     @Test

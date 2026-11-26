@@ -497,6 +497,10 @@ class LockerServiceDroneFleetTest {
     void faultReportNotifiesRoutedDroneTechnicianWithDroneType() {
         stubReportSave();
         when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 84L, DroneStatus.IDLE, 80)));
+        TechnicianPresence onDuty = new TechnicianPresence();
+        onDuty.setUserId(84L);
+        onDuty.setOnDuty(true);
+        when(presenceRepository.findByUserId(84L)).thenReturn(Optional.of(onDuty));
 
         service.updateDroneStatusAsAdmin(1L, DroneStatus.FAULT, "Cánh quạt nứt", 7L);
 
@@ -509,6 +513,32 @@ class LockerServiceDroneFleetTest {
     }
 
     @Test
+    void offDutyDroneTechnicianIsNotRoutedOrNotifiedOnFault() {
+        stubReportSave();
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 84L, DroneStatus.IDLE, 80)));
+        when(userClient.listByRole("DRONE_TECHNICIAN")).thenReturn(ApiResponse.ok(List.of(
+                new UserSummary(84L, "a@test", "0901", "A", "ACTIVE"),
+                new UserSummary(85L, "b@test", "0902", "B", "ACTIVE"))));
+        TechnicianPresence offDuty = new TechnicianPresence();
+        offDuty.setUserId(84L);
+        offDuty.setOnDuty(false);
+        TechnicianPresence onDuty = new TechnicianPresence();
+        onDuty.setUserId(85L);
+        onDuty.setOnDuty(true);
+        when(presenceRepository.findByUserId(84L)).thenReturn(Optional.of(offDuty));
+        when(presenceRepository.findByUserId(85L)).thenReturn(Optional.of(onDuty));
+
+        service.updateDroneStatusAsAdmin(1L, DroneStatus.FAULT, "Hỏng cảm biến", 7L);
+
+        ArgumentCaptor<LockerReport> saved = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository).save(saved.capture());
+        assertNull(saved.getValue().getRoutedToUserId());
+        assertEquals(List.of(85L), staffEvents(DomainEventNames.LOCKER_REPORT_ROUTED).stream()
+                .map(event -> event.payload().get("userId")).toList());
+        assertTrue(service.routedDroneReports(84L).isEmpty());
+    }
+
+    @Test
     void unroutedFaultReportNotifiesEveryDroneTechnicianExceptTheReporter() {
         stubReportSave();
         when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, null, DroneStatus.IDLE, 80)));
@@ -516,6 +546,12 @@ class LockerServiceDroneFleetTest {
                 new UserSummary(84L, "a@test", "0901", "A", "ACTIVE"),
                 new UserSummary(85L, "b@test", "0902", "B", "ACTIVE"),
                 new UserSummary(7L, "admin@test", "0903", "Admin", "ACTIVE"))));
+        for (long id : List.of(84L, 85L, 7L)) {
+            TechnicianPresence onDuty = new TechnicianPresence();
+            onDuty.setUserId(id);
+            onDuty.setOnDuty(true);
+            when(presenceRepository.findByUserId(id)).thenReturn(Optional.of(onDuty));
+        }
 
         service.updateDroneStatusAsAdmin(1L, DroneStatus.FAULT, "Pin phồng", 7L);
 

@@ -163,8 +163,8 @@ public class ReportAttachmentService {
     public List<ReportAttachmentResponse> addByReporter(Long reportId, Long userId, List<ReportAttachmentRequest> requests) {
         LockerReport report = findReport(reportId);
         assertReporter(report, userId);
-        if ("RESOLVED".equalsIgnoreCase(report.getStatus())) {
-            throw new BusinessException("REPORT_ALREADY_RESOLVED", "Phiếu đã được hoàn tất");
+        if (isClosedReport(report.getStatus())) {
+            throw new BusinessException("REPORT_ALREADY_RESOLVED", "Phiếu đã được đóng", HttpStatus.CONFLICT);
         }
         return attach(report, AttachmentStage.REPORT, requests, userId, null, rules.reportPhotosPerRequestReporter());
     }
@@ -206,7 +206,7 @@ public class ReportAttachmentService {
                 .orElseThrow(() -> new NotFoundException("ReportAttachment", attachmentId));
         boolean ownOpenReport = actorUserId != null
                 && actorUserId.equals(attachment.getUploadedByUserId())
-                && !"RESOLVED".equalsIgnoreCase(report.getStatus());
+                && !isClosedReport(report.getStatus());
         if (!admin && !ownOpenReport) {
             throw new BusinessException(
                     "ATTACHMENT_DELETE_FORBIDDEN",
@@ -215,6 +215,10 @@ public class ReportAttachmentService {
         }
         attachmentRepository.delete(attachment);
         mediaStorage.deleteAfterCommit(attachment.getPublicId());
+    }
+
+    private static boolean isClosedReport(String status) {
+        return "RESOLVED".equalsIgnoreCase(status) || "REJECTED".equalsIgnoreCase(status);
     }
 
     /// Xóa toàn bộ ảnh đính kèm của một phiếu khi phiếu bị xóa

@@ -291,13 +291,17 @@ public class LockerService {
                 .stream()
                 .filter(report -> !ReportCategory.DRONE.equals(report.getCategory()))
                 .toList();
-        waiting.forEach(report -> report.setRoutedToUserId(technicianId));
+        Long routeTarget = technicianId != null && onDuty(technicianId) ? technicianId : null;
+        waiting.forEach(report -> report.setRoutedToUserId(routeTarget));
         reportRepository.saveAll(waiting);
         if (technicianId != null) {
             String message = "Bạn được giao phụ trách tủ " + locker.getName()
-                    + (waiting.isEmpty() ? "." : " — có " + waiting.size() + " phiếu sự cố đang chờ nhận.");
+                    + (routeTarget == null || waiting.isEmpty() ? "." : " — có " + waiting.size() + " phiếu sự cố đang chờ nhận.");
             publishStaffNotification(
                     DomainEventNames.LOCKER_REPORT_ASSIGNED, technicianId, lockerId, "LOCKER", message);
+            if (routeTarget == null) {
+                waiting.forEach(report -> notifyRouted(report, saved));
+            }
         } else {
             // Bỏ người phụ trách ⇒ phiếu đang chờ chuyển sang "mọi KTV tủ", báo lại để không ai bỏ sót.
             waiting.forEach(report -> notifyRouted(report, saved));
@@ -1498,6 +1502,9 @@ public class LockerService {
     /** OPEN được định tuyến riêng cho KTV Drone hoặc broadcast cho toàn bộ đội Drone. */
     @Transactional(readOnly = true)
     public List<LockerReportResponse> routedDroneReports(Long userId) {
+        if (userId != null && !onDuty(userId)) {
+            return List.of();
+        }
         List<LockerReport> reports = reportRepository.findByStatusInOrderByCreatedAtDesc(List.of("OPEN")).stream()
                 .filter(this::isDroneReport)
                 .filter(report -> report.getRoutedToUserId() == null || Objects.equals(report.getRoutedToUserId(), userId))
@@ -1568,8 +1575,12 @@ public class LockerService {
     }
 
     /// Phiếu OPEN đang được định tuyến cho KTV (tủ người đó phụ trách), chờ nhận.
+    /// KTV ngoài ca không nhận phiếu định tuyến riêng.
     @Transactional(readOnly = true)
     public List<LockerReportResponse> routedReports(Long userId) {
+        if (userId != null && !onDuty(userId)) {
+            return List.of();
+        }
         return toReports(reportRepository.findByRoutedToUserIdAndStatusOrderByCreatedAtDesc(userId, "OPEN"));
     }
 
@@ -1580,6 +1591,12 @@ public class LockerService {
         if (!"OPEN".equals(report.getStatus())) {
             throw new com.huynqb.laundrylocker.common.exception.BusinessException(
                     "REPORT_NOT_CLAIMABLE", "Phiếu không còn ở trạng thái chờ tiếp nhận");
+        }
+        if (userId == null || !onDuty(userId)) {
+            throw new BusinessException(
+                    "TECHNICIAN_OFF_DUTY",
+                    "Kỹ thuật viên đang ngoài ca trực. Vui lòng bật Vào ca trước khi nhận việc.",
+                    HttpStatus.CONFLICT);
         }
         // Kiểm tra chế tài vi phạm SLA: KTV đang giữ từ N phiếu trễ hạn trở lên (admin cấu hình) thì chặn nhận việc mới
         int slaHours = rules.slaHours();
@@ -1641,6 +1658,9 @@ public class LockerService {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         assertNotResolved(report);
+        if (!"IN_PROGRESS".equalsIgnoreCase(report.getStatus()) || report.getAssignedToUserId() == null) {
+            throw new BusinessException("REPORT_NOT_CLAIMED", "Phiếu đang ở hàng chờ, chưa có KTV nhận", HttpStatus.CONFLICT);
+        }
         report.setStatus("OPEN");
         report.setAssignedToUserId(null);
         report.setAssignedAt(null);
@@ -1673,6 +1693,9 @@ public class LockerService {
                 ? (report.getDroneUnitId() == null ? null : droneUnitRepository.findById(report.getDroneUnitId())
                         .map(DroneUnit::getAssignedTechnicianId).orElse(null))
                 : (locker == null ? null : locker.getAssignedTechnicianId());
+        if (routeTo != null && !onDuty(routeTo)) {
+            routeTo = null;
+        }
         report.setStatus("OPEN");
         report.setAssignedToUserId(null);
         report.setAssignedAt(null);
@@ -1717,6 +1740,7 @@ public class LockerService {
         LockerReport report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         assertNotResolved(report);
+        assertInProgress(report, "Phiếu chưa được tiếp nhận xử lý");
         if (actorUserId == null || !actorUserId.equals(report.getAssignedToUserId())) {
             throw new BusinessException(
                     "SLA_EXTENSION_NOT_ASSIGNEE", "Chỉ KTV đang được giao phiếu mới gia hạn được SLA",
@@ -1869,10 +1893,13 @@ public class LockerService {
     private LockerReport closeReport(
             LockerReport report, Long userId, ResolveReportRequest request, boolean admin) {
         assertNotResolved(report);
-        if (!admin && (userId == null || !userId.equals(report.getAssignedToUserId()))) {
-            throw new BusinessException(
-                    "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới hoàn tất được phiếu",
-                    HttpStatus.FORBIDDEN);
+        if (!admin) {
+            assertInProgress(report, "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi hoàn tất");
+            if (userId == null || !userId.equals(report.getAssignedToUserId())) {
+                throw new BusinessException(
+                        "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới hoàn tất được phiếu",
+                        HttpStatus.FORBIDDEN);
+            }
         }
         attachResolutionEvidence(report, userId, admin, request);
         if (rules.requireResolutionPhoto() && !admin && !attachmentService.hasStage(report.getId(), AttachmentStage.RESOLUTION)) {
@@ -1924,6 +1951,12 @@ public class LockerService {
     private void assertNotResolved(LockerReport report) {
         if (isClosedReport(report.getStatus())) {
             throw new BusinessException("REPORT_ALREADY_RESOLVED", "Phiếu đã được hoàn tất", HttpStatus.CONFLICT);
+        }
+    }
+
+    private static void assertInProgress(LockerReport report, String message) {
+        if (!"IN_PROGRESS".equalsIgnoreCase(report.getStatus())) {
+            throw new BusinessException("REPORT_NOT_IN_PROGRESS", message, HttpStatus.CONFLICT);
         }
     }
 
@@ -2005,6 +2038,8 @@ public class LockerService {
             Long reportId, String note, Long actorUserId, List<ReportAttachmentRequest> attachments, boolean admin) {
         LockerReport report =
                 reportRepository.findById(reportId).orElseThrow(() -> new NotFoundException("Report", reportId));
+        assertNotResolved(report);
+        assertInProgress(report, "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi ghi nhật ký");
         if (!StringUtils.hasText(note)) {
             throw new BusinessException("REPAIR_LOG_NOTE_REQUIRED", "note is required");
         }
@@ -2058,6 +2093,7 @@ public class LockerService {
     public LockerReportResponse getReportForUser(Long reportId, Long userId) {
         LockerReport report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        assertReporter(report, userId);
         return toReport(report);
     }
 
@@ -2065,7 +2101,15 @@ public class LockerService {
     public List<RepairLogResponse> repairLogsForUser(Long reportId, Long userId) {
         LockerReport report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        assertReporter(report, userId);
         return repairLogs(reportId);
+    }
+
+    private static void assertReporter(LockerReport report, Long userId) {
+        if (userId == null || !userId.equals(report.getUserId())) {
+            throw new BusinessException(
+                    "REPORT_NOT_OWNED", "Chỉ người báo sự cố mới xem được phiếu này", HttpStatus.FORBIDDEN);
+        }
     }
 
     /// Ghi chú + ảnh nghiệm thu gửi kèm lúc hoàn tất. Không gửi gì ⇒ giữ hành vi cũ.
@@ -2515,6 +2559,9 @@ public class LockerService {
         MaintenanceSchedule schedule = scheduleRepository
                 .findById(id)
                 .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        if (!Boolean.TRUE.equals(schedule.getActive())) {
+            throw new BusinessException("SCHEDULE_INACTIVE", "Lịch kiểm tra đã ngưng", HttpStatus.CONFLICT);
+        }
         if (technicianId != null) {
             requireTechnician(technicianId, scheduleTechnicianRole(schedule));
         }
@@ -2532,6 +2579,9 @@ public class LockerService {
         MaintenanceSchedule schedule = scheduleRepository
                 .findById(id)
                 .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        if (!Boolean.TRUE.equals(schedule.getActive())) {
+            throw new BusinessException("SCHEDULE_INACTIVE", "Lịch kiểm tra đã ngưng", HttpStatus.CONFLICT);
+        }
         if (request.title() != null) {
             schedule.setTitle(request.title());
         }
@@ -2574,6 +2624,9 @@ public class LockerService {
                 scheduleRepository
                         .findById(id)
                         .orElseThrow(() -> new NotFoundException("MaintenanceSchedule", id));
+        if (!Boolean.TRUE.equals(schedule.getActive())) {
+            throw new BusinessException("SCHEDULE_INACTIVE", "Lịch kiểm tra đã ngưng", HttpStatus.CONFLICT);
+        }
         schedule.setActive(false);
         schedule.setDeletedAt(LocalDateTime.now());
         schedule.setDeletedBy(actorUserId);
@@ -2698,9 +2751,13 @@ public class LockerService {
         if (droneUnitRepository.existsByCodeAndActiveTrue(request.code())) {
             throw new BusinessException("DRONE_CODE_DUPLICATE", "Drone code already exists: " + request.code());
         }
+        if (request.assignedTechnicianId() != null) {
+            requireTechnician(request.assignedTechnicianId(), DRONE_TECHNICIAN);
+        }
         DroneUnit unit = new DroneUnit();
         unit.setLockerId(request.lockerId());
         unit.setCode(request.code());
+        unit.setAssignedTechnicianId(request.assignedTechnicianId());
         return toDroneUnit(droneUnitRepository.save(unit));
     }
 
@@ -3228,7 +3285,11 @@ public class LockerService {
         report.setUserId(actorUserId == null ? 0L : actorUserId);
         report.setTitle("Drone " + unit.getCode() + " lỗi");
         report.setDescription(StringUtils.hasText(reason) ? reason : "Drone reported faulty");
-        report.setRoutedToUserId(unit.getAssignedTechnicianId());
+        Long routedTechId = unit.getAssignedTechnicianId();
+        if (routedTechId != null && !onDuty(routedTechId)) {
+            routedTechId = null;
+        }
+        report.setRoutedToUserId(routedTechId);
         notifyDroneRouted(reportRepository.save(report), actorUserId);
     }
 
@@ -4087,7 +4148,11 @@ public class LockerService {
             report.setStatus("IN_PROGRESS");
             return;
         }
-        report.setRoutedToUserId(locker == null ? null : locker.getAssignedTechnicianId());
+        Long routedTechnicianId = locker == null ? null : locker.getAssignedTechnicianId();
+        if (routedTechnicianId != null && !onDuty(routedTechnicianId)) {
+            routedTechnicianId = null;
+        }
+        report.setRoutedToUserId(routedTechnicianId);
     }
 
     /// Báo phiếu mới cho KTV phụ trách tủ, hoặc mọi KTV tủ khi tủ chưa có người phụ trách.
@@ -4097,6 +4162,7 @@ public class LockerService {
     }
 
     /// `excludeUserId`: người vừa trả phiếu về hàng chờ — không báo lại cho chính họ.
+    /// Không gửi thông báo định tuyến cho KTV đang ngoài ca (`onDuty=false`).
     private void notifyRouted(LockerReport report, LockerUnit locker, Long excludeUserId) {
         if (report.getAssignedToUserId() != null) {
             return;
@@ -4107,7 +4173,7 @@ public class LockerService {
                 ? List.of(report.getRoutedToUserId())
                 : lockerTechnicianIds();
         for (Long technicianId : recipients) {
-            if (Objects.equals(technicianId, excludeUserId)) {
+            if (Objects.equals(technicianId, excludeUserId) || !onDuty(technicianId)) {
                 continue;
             }
             publishStaffNotification(
@@ -4127,7 +4193,7 @@ public class LockerService {
                 ? List.of(report.getRoutedToUserId())
                 : technicianIds(DRONE_TECHNICIAN);
         for (Long technicianId : recipients) {
-            if (Objects.equals(technicianId, excludeUserId)) {
+            if (Objects.equals(technicianId, excludeUserId) || !onDuty(technicianId)) {
                 continue;
             }
             publishStaffNotification(DRONE_REPORT_ROUTED, technicianId, report.getId(), DRONE_REPORT_REFERENCE, message);
@@ -4313,9 +4379,15 @@ public class LockerService {
         LockerReport report = reportRepository.findById(request.reportId())
                 .orElseThrow(() -> new NotFoundException("LockerReport", request.reportId()));
         assertNotResolved(report);
+        assertInProgress(report, "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi mở khẩn cấp theo phiếu");
         if (!Objects.equals(report.getLockerId(), box.getLockerId())) {
             throw new BusinessException(
                     "FORCE_OPEN_REPORT_MISMATCH", "Phiếu RPT-" + report.getId() + " không thuộc tủ của ô đang mở");
+        }
+        if (!admin && (actorUserId == null || !actorUserId.equals(report.getAssignedToUserId()))) {
+            throw new BusinessException(
+                    "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới gắn nhật ký mở khẩn cấp vào phiếu này",
+                    HttpStatus.FORBIDDEN);
         }
         if (hasAttachments) {
             attachmentService.assertCanAttachAsStaff(report, actorUserId, admin);
@@ -4650,6 +4722,7 @@ public class LockerService {
         LockerReport report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         assertNotResolved(report);
+        assertInProgress(report, "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi xử lý sự cố ô");
         if (!UserRoles.isAdmin(rolesHeader) && (userId == null || !userId.equals(report.getAssignedToUserId()))) {
             throw new BusinessException(
                     "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới xử lý được sự cố ô",
@@ -4946,10 +5019,13 @@ public class LockerService {
                 .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
         assertNotResolved(report);
         boolean admin = UserRoles.isAdmin(rolesHeader);
-        if (!admin && (userId == null || !userId.equals(report.getAssignedToUserId()))) {
-            throw new BusinessException(
-                    "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới từ chối được phiếu",
-                    HttpStatus.FORBIDDEN);
+        if (!admin) {
+            assertInProgress(report, "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi từ chối");
+            if (userId == null || !userId.equals(report.getAssignedToUserId())) {
+                throw new BusinessException(
+                        "REPORT_NOT_ASSIGNED", "Chỉ KTV đang được giao phiếu mới từ chối được phiếu",
+                        HttpStatus.FORBIDDEN);
+            }
         }
         if (!StringUtils.hasText(feedback)) {
             throw new BusinessException("REJECT_FEEDBACK_REQUIRED", "Cần ghi phản hồi cho người báo (vì sao không xác nhận sự cố)");

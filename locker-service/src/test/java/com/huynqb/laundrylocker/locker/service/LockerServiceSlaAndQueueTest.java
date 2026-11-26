@@ -18,6 +18,7 @@ import com.huynqb.laundrylocker.locker.model.LockerReport;
 import com.huynqb.laundrylocker.locker.model.LockerUnit;
 import com.huynqb.laundrylocker.locker.model.RepairLog;
 import com.huynqb.laundrylocker.locker.model.ReportCategory;
+import com.huynqb.laundrylocker.locker.model.TechnicianPresence;
 import com.huynqb.laundrylocker.locker.repository.*;
 import com.huynqb.laundrylocker.locker.settings.LockerRules;
 import com.huynqb.laundrylocker.locker.settings.LockerSettingsCatalog;
@@ -110,6 +111,10 @@ class LockerServiceSlaAndQueueTest {
         when(userClient.getUser(TECH)).thenReturn(ApiResponse.ok(user(TECH, "Nguyễn Văn KTV")));
         when(userClient.getUser(OTHER_TECH)).thenReturn(ApiResponse.ok(user(OTHER_TECH, "Trần Thị KTV")));
         when(userClient.getUser(7L)).thenReturn(ApiResponse.ok(user(7L, "Khách A")));
+        TechnicianPresence onDuty = new TechnicianPresence();
+        onDuty.setUserId(OTHER_TECH);
+        onDuty.setOnDuty(true);
+        when(presenceRepository.findByUserId(OTHER_TECH)).thenReturn(Optional.of(onDuty));
     }
 
     // ─── Gia hạn SLA ───
