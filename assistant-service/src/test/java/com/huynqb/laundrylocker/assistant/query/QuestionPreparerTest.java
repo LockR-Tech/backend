@@ -2,6 +2,7 @@ package com.huynqb.laundrylocker.assistant.query;
 
 import com.huynqb.laundrylocker.assistant.provider.DiacriticsRestorer;
 import com.huynqb.laundrylocker.assistant.provider.ProviderException;
+import com.huynqb.laundrylocker.assistant.provider.QueryTranslator;
 import com.huynqb.laundrylocker.assistant.query.QuestionPreparer.PreparedQuestion;
 import com.huynqb.laundrylocker.assistant.settings.AssistantRules;
 import com.huynqb.laundrylocker.assistant.settings.AssistantSettingsCatalog;
@@ -101,5 +102,53 @@ class QuestionPreparerTest {
                 "assistant", new AssistantSettingsCatalog(),
                 Map.of(AssistantSettingsCatalog.RESTORE_DIACRITICS, restore)));
         return new QuestionPreparer(restorer, rules);
+    }
+
+    // ---- Câu hỏi tiếng Anh (F3-G15): dịch sang tiếng Việt chỉ để tìm tài liệu ----
+
+    private static final String ENGLISH = "How do I send a parcel to someone through a locker?";
+    private static final String ENGLISH_VI = "Làm sao để gửi kiện hàng cho người khác qua tủ?";
+
+    @Test
+    void englishQuestionIsTranslatedForSearchOnly() {
+        QueryTranslator translator = mock(QueryTranslator.class);
+        when(translator.configured()).thenReturn(true);
+        when(translator.toVietnamese(ENGLISH)).thenReturn(ENGLISH_VI);
+
+        PreparedQuestion prepared = preparer(true, translator).prepare(ENGLISH);
+
+        assertEquals(ENGLISH, prepared.text(), "mô hình vẫn nhận câu gốc để trả lời đúng ngôn ngữ");
+        assertEquals(ENGLISH_VI, prepared.searchText());
+        assertTrue(prepared.translated());
+        verify(restorer, never()).restore(anyString());
+    }
+
+    @Test
+    void vietnameseAndCodeOnlyQuestionsAreNotTranslated() {
+        QueryTranslator translator = mock(QueryTranslator.class);
+        when(translator.configured()).thenReturn(true);
+
+        assertFalse(preparer(true, translator).prepare(RESTORED).translated());
+        assertFalse(preparer(false, translator).prepare(UNACCENTED).translated());
+        assertFalse(preparer(true, translator).prepare("ORD-20261125-MRWBDD").translated());
+        verify(translator, never()).toVietnamese(anyString());
+    }
+
+    @Test
+    void translationFailureOrNonVietnameseResultFallsBackToTheOriginal() {
+        QueryTranslator translator = mock(QueryTranslator.class);
+        when(translator.configured()).thenReturn(true);
+        when(translator.toVietnamese(ENGLISH)).thenThrow(new ProviderException("timeout"));
+        assertEquals(ENGLISH, preparer(true, translator).prepare(ENGLISH).searchText());
+
+        doReturn("Sure! Here is the translation").when(translator).toVietnamese(ENGLISH);
+        assertEquals(ENGLISH, preparer(true, translator).prepare(ENGLISH).searchText());
+    }
+
+    private QuestionPreparer preparer(boolean restore, QueryTranslator translator) {
+        AssistantRules rules = new AssistantRules(BusinessSettings.inMemory(
+                "assistant", new AssistantSettingsCatalog(),
+                Map.of(AssistantSettingsCatalog.RESTORE_DIACRITICS, restore)));
+        return new QuestionPreparer(restorer, rules, translator);
     }
 }

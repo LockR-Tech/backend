@@ -1928,5 +1928,6 @@
   "Chỉ KTV đang được giao phiếu mới gắn nhật ký mở khẩn cấp vào phiếu này": "Only the assigned technician can attach a force-open log to this ticket",
   "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi xử lý sự cố ô": "This ticket has not been claimed yet — please claim it before resolving the box incident",
   "Phiếu chưa được tiếp nhận xử lý — vui lòng nhận việc trước khi từ chối": "This ticket has not been claimed yet — please claim it before rejecting",
-  "Phiếu đã được đóng": "This ticket is already closed"
+  "Phiếu đã được đóng": "This ticket is already closed",
+  "Xin lỗi, mình không thể hỗ trợ yêu cầu này. Bạn có thể liên hệ bộ phận hỗ trợ Lock.R để được giúp đỡ.": "Sorry, I can't help with this request. You can contact Lock.R support for help."
 }
