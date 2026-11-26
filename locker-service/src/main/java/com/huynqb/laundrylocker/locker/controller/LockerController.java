@@ -29,14 +29,29 @@ public class LockerController {
     }
 
     @GetMapping("/api/lockers")
-    public ApiResponse<List<LockerResponse>> listLockers(@RequestParam(required = false) Long storeId) {
-        return ApiResponse.ok(lockerService.listLockers(storeId));
+    public ApiResponse<List<LockerResponse>> listLockers(
+            @RequestParam(required = false) Long storeId,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(lockerService.listLockers(storeId, userId, roles));
     }
 
     // Public endpoint for Kiosk to list lockers without token
     @GetMapping("/api/iot/lockers")
-    public ApiResponse<List<LockerResponse>> listLockersForKiosk(@RequestParam(required = false) Long storeId) {
-        return ApiResponse.ok(lockerService.listLockers(storeId));
+    public ApiResponse<List<LockerResponse>> listLockersForKiosk(
+            @RequestParam(required = false) Long storeId,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(lockerService.listLockers(storeId, userId, roles));
+    }
+
+    /// Tủ có nhận đơn mới của người này không (tủ demo đã ẩn ⇒ không) — order-service gọi khi tạo đơn (F3-G14).
+    @GetMapping("/internal/lockers/{id}/customer-visible")
+    public ApiResponse<Map<String, Object>> customerVisible(
+            @PathVariable Long id,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String roles) {
+        return ApiResponse.ok(Map.of("lockerId", id, "visible", lockerService.lockerOpenToCustomer(id, userId, roles)));
     }
 
     @GetMapping("/api/lockers/{id}")

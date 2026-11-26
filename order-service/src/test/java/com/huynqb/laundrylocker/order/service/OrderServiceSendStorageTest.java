@@ -108,6 +108,15 @@ class OrderServiceSendStorageTest {
         assertEquals(72, stored.get().getRentalDurationHours());
     }
 
+    /// Cụm "Giả lập & demo" (F3-G14): tủ demo đã ẩn với khách thì không tạo được đơn gửi mới.
+    @Test
+    void hiddenDemoLockerRejectsNewSendOrder() {
+        when(lockerLookupClient.customerVisible(5L, 44L))
+                .thenReturn(ApiResponse.ok(java.util.Map.of("lockerId", 5L, "visible", false)));
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createSend(send(null), 44L));
+        assertEquals("LOCKER_NOT_AVAILABLE", ex.getCode());
+    }
+
     @Test
     void appWithoutHoursKeepsTheIncluded48AndFlatFee() {
         OrderResponse response = orderService.createSend(send(null), 44L);

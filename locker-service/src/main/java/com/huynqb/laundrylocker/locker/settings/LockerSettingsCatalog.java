@@ -8,6 +8,7 @@ import java.util.List;
 
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.bool;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integer;
+import static com.huynqb.laundrylocker.common.settings.SettingDefinition.integerList;
 import static com.huynqb.laundrylocker.common.settings.SettingDefinition.string;
 
 /// Quy tắc nghiệp vụ của locker-service admin chỉnh được (ADR-0005).
@@ -34,10 +35,20 @@ public class LockerSettingsCatalog implements SettingsCatalog {
     public static final String CELL_DIMENSIONS_XL = "app.locker.cell-dimensions-xl";
     public static final String DRONE_LOW_BATTERY_PERCENT = "app.locker.drone-low-battery-percent";
     public static final String TECHNICIAN_LOCATION_MAX_AGE_MINUTES = "app.locker.technician-location-max-age-minutes";
+    public static final String DEMO_VISIBLE = "app.locker.demo.visible";
+    public static final String DEMO_LOCKER_IDS = "app.locker.demo.locker-ids";
+    public static final String DEMO_ALLOWED_USER_IDS = "app.locker.demo.allowed-user-ids";
 
     private static final String MAINTENANCE = "Bảo trì & SLA";
     private static final String CELLS = "Ô tủ";
     private static final String DRONE = "Drone";
+    private static final String DEMO = "Giả lập & demo";
+
+    /// Tủ demo của bộ seed `private/seed-demo` (HCM-…, id 800001–800013): bộ giả lập trên VM trả lời thay tủ thật.
+    static final String SEED_DEMO_LOCKER_IDS =
+            "800001,800002,800003,800004,800005,800006,800007,800008,800009,800010,800011,800012,800013";
+    /// Tài khoản demo đăng nhập được (`*@demo.lockr.test`): 4 KTV tủ, 4 KTV drone, khách demo.
+    static final String SEED_DEMO_USER_IDS = "800011,800012,800013,800014,800021,800022,800023,800024,800101";
 
     @Override
     public List<SettingDefinition> definitions() {
@@ -99,6 +110,16 @@ public class LockerSettingsCatalog implements SettingsCatalog {
                         "Drone có pin ≤ ngưỡng này không được chuyển sang IN_FLIGHT.", 20, 0, 100, "%").asPublic(),
                 integer(TECHNICIAN_LOCATION_MAX_AGE_MINUTES, MAINTENANCE, "Vị trí KTV còn hiệu lực khi phân công kiện rơi",
                         "Khi drone báo rơi kiện, hệ thống giao việc cho KTV trong ca ở gần nhất; vị trí KTV cũ hơn mức này "
-                                + "thì không được xét.", 60, 1, 1440, "phút"));
+                                + "thì không được xét.", 60, 1, 1440, "phút"),
+                // Cụm "Giả lập & demo" trên web admin tắt/bật cờ này cùng các cờ giả lập khác (F3-G14).
+                bool(DEMO_VISIBLE, DEMO, "Hiện tủ demo cho khách",
+                        "Tắt khi vận hành chính thức: tủ trong danh sách tủ demo biến khỏi app, kiosk và không nhận "
+                                + "đơn mới của khách; admin và tài khoản trong danh sách được phép vẫn thấy để demo.", true),
+                integerList(DEMO_LOCKER_IDS, DEMO, "Danh sách tủ demo",
+                        "Id tủ demo (giả lập, không có tủ thật), cách nhau bởi dấu phẩy. 0 = không có.",
+                        SEED_DEMO_LOCKER_IDS, 0, null, null),
+                integerList(DEMO_ALLOWED_USER_IDS, DEMO, "Tài khoản vẫn thấy tủ demo khi đã ẩn",
+                        "Id người dùng vẫn thấy và đặt được tủ demo khi đã ẩn (mặc định: các tài khoản *@demo.lockr.test). "
+                                + "0 = chỉ admin.", SEED_DEMO_USER_IDS, 0, null, null));
     }
 }

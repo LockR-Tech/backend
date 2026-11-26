@@ -79,6 +79,10 @@ public class BleTestService {
 
     public List<BleTestLockerResponse> lockersOf(Long userId) {
         requireUser(userId);
+        // Cờ tắt ⇒ coi như chưa ai được cấp: app ẩn mục thử, quyền đã cấp giữ nguyên để bật lại.
+        if (!rules.bleTestEnabled()) {
+            return List.of();
+        }
         List<Long> ids = grants.findByUserIdOrderByLockerIdAsc(userId).stream().map(BleTestGrant::getLockerId).toList();
         if (ids.isEmpty()) {
             return List.of();
@@ -104,6 +108,10 @@ public class BleTestService {
     /// app hỏi lại người dùng khi `boxStatus` là OCCUPIED. Mỗi lần cấp đều ghi nhật ký điều khiển tủ.
     public BleOpenTokenResponse issueToken(Long lockerId, Integer boxNumber, Long userId) {
         requireUser(userId);
+        if (!rules.bleTestEnabled()) {
+            throw new BusinessException("BLE_TEST_DISABLED",
+                    "Chế độ thử mở ô qua Bluetooth đang tắt", HttpStatus.FORBIDDEN);
+        }
         if (lockerId == null || !grants.existsByLockerIdAndUserId(lockerId, userId)) {
             throw new BusinessException("BLE_TEST_NOT_GRANTED",
                     "Tài khoản này chưa được admin cho thử mở ô qua Bluetooth ở tủ này", HttpStatus.FORBIDDEN);

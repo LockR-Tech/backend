@@ -46,6 +46,10 @@ public class IotRules {
         return lockerId != null && lockerId > 0 && settings.getIntList(TEST_OPEN_LOCKER_IDS).contains(lockerId.intValue());
     }
 
+    public boolean bleTestEnabled() {
+        return settings.getBoolean(BLE_TEST_ENABLED);
+    }
+
     public long bleTokenTtlSeconds() {
         return settings.getLong(BLE_TOKEN_TTL_SECONDS);
     }
