@@ -214,7 +214,7 @@ public class NotificationController {
 
     @GetMapping("/api/admin/notifications")
     public ApiResponse<List<NotificationResponse>> adminByUser(@RequestParam(required = false) Long userId) {
-        return ApiResponse.ok(userId == null ? notificationService.all() : notificationService.getByUser(userId));
+        return ApiResponse.ok(notificationService.adminList(userId));
     }
 
     @PostMapping("/api/admin/notifications/send")

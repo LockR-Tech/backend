@@ -255,16 +255,14 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("nạp ví thành công: thông báo tiếng Việt kèm số tiền, tham chiếu giao dịch ví")
-    void topUpCompletedIsNotifiedInVietnamese() {
+    @DisplayName("giao dịch không gắn đơn (nạp ví cũ, đã gỡ): không tạo thông báo nào")
+    void paymentWithoutOrderIsNotNotified() {
         service.consumeDomainEvent(DomainEvent.of(DomainEventNames.PAYMENT_COMPLETED, "payment-service",
                 Map.of("paymentId", 55L, "orderId", 0L, "userId", 7L, "amount", 100000)));
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.PAYMENT_FAILED, "payment-service",
+                Map.of("paymentId", 56L, "orderId", 0L, "userId", 7L, "amount", 100000)));
 
-        NotificationMessage saved = savedNotification();
-        assertThat(saved.getTitle()).isEqualTo("Nạp ví thành công");
-        assertThat(saved.getMessage()).isEqualTo("Đã cộng 100.000đ vào ví LockR.");
-        assertThat(saved.getReferenceType()).isEqualTo("WALLET");
-        assertThat(saved.getReferenceId()).isEqualTo(55L);
+        verify(notificationRepository, never()).save(any(NotificationMessage.class));
     }
 
     @Test
@@ -308,32 +306,31 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("ví/điểm đổi không kèm message: chỉ nhắc app chủ tài khoản tải lại, không tạo thông báo")
-    void silentWalletAndLoyaltyChangesOnlyPushUserEvent() {
-        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.WALLET_UPDATED, "payment-service",
-                Map.of("userId", 7L, "referenceType", "WALLET")));
+    @DisplayName("điểm thưởng đổi không kèm message: chỉ nhắc app chủ tài khoản tải lại, không tạo thông báo")
+    void silentLoyaltyChangeOnlyPushesUserEvent() {
         service.consumeDomainEvent(DomainEvent.of(DomainEventNames.LOYALTY_POINTS_CHANGED, "loyalty-service",
                 Map.of("userId", 7L, "referenceType", "LOYALTY")));
 
         org.mockito.ArgumentCaptor<Object> payload = org.mockito.ArgumentCaptor.forClass(Object.class);
-        verify(webSocketNotificationService, times(2)).sendUserEvent(eq(7L), payload.capture());
-        @SuppressWarnings("unchecked") Map<String, Object> first = (Map<String, Object>) payload.getAllValues().get(0);
-        assertThat(first).containsEntry("type", DomainEventNames.WALLET_UPDATED).containsEntry("referenceType", "WALLET");
+        verify(webSocketNotificationService).sendUserEvent(eq(7L), payload.capture());
+        @SuppressWarnings("unchecked") Map<String, Object> sent = (Map<String, Object>) payload.getValue();
+        assertThat(sent).containsEntry("type", DomainEventNames.LOYALTY_POINTS_CHANGED)
+                .containsEntry("referenceType", "LOYALTY");
         verify(notificationRepository, never()).save(any());
         verify(webSocketNotificationService, never()).sendOrderUpdate(anyLong(), any());
     }
 
     @Test
-    @DisplayName("admin duyệt rút tiền: thông báo theo tiêu đề gửi kèm, tham chiếu ví (không vào kênh đơn)")
-    void walletEventWithMessageIsNotifiedWithItsTitle() {
-        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.WALLET_UPDATED, "payment-service",
-                Map.of("userId", 7L, "referenceType", "WALLET", "referenceId", 55L,
-                        "title", "Rút tiền thành công", "message", "Yêu cầu rút 50000 đ đã được chuyển khoản.")));
+    @DisplayName("điểm thưởng đổi kèm message: thông báo theo tiêu đề gửi kèm (không vào kênh đơn)")
+    void loyaltyEventWithMessageIsNotifiedWithItsTitle() {
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.LOYALTY_POINTS_CHANGED, "loyalty-service",
+                Map.of("userId", 7L, "referenceType", "LOYALTY", "referenceId", 55L,
+                        "title", "Bạn được cộng điểm", "message", "Bạn vừa nhận 100 điểm từ đơn ORD-1.")));
 
         NotificationMessage saved = savedNotification();
-        assertThat(saved.getTitle()).isEqualTo("Rút tiền thành công");
-        assertThat(saved.getType()).isEqualTo(DomainEventNames.WALLET_UPDATED);
-        assertThat(saved.getReferenceType()).isEqualTo("WALLET");
+        assertThat(saved.getTitle()).isEqualTo("Bạn được cộng điểm");
+        assertThat(saved.getType()).isEqualTo(DomainEventNames.LOYALTY_POINTS_CHANGED);
+        assertThat(saved.getReferenceType()).isEqualTo("LOYALTY");
         assertThat(saved.getReferenceId()).isEqualTo(55L);
         verify(webSocketNotificationService).sendToUser(eq(7L), any());
         verify(webSocketNotificationService, never()).sendOrderUpdate(anyLong(), any());
@@ -374,12 +371,12 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("dữ liệu admin đổi (người dùng, hoàn tiền…) và ví/điểm: đẩy loại + mã lên topic admin")
+    @DisplayName("dữ liệu admin đổi (người dùng, hoàn tiền…) và điểm thưởng: đẩy loại + mã lên topic admin")
     void adminDataAndAccountChangesAreRelayedToAdminTopic() {
         service.consumeDomainEvent(DomainEvent.of(DomainEventNames.ADMIN_DATA_CHANGED, "payment-service",
                 Map.of("entity", "REFUND", "id", 9L)));
-        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.WALLET_UPDATED, "payment-service",
-                Map.of("userId", 7L, "referenceType", "WALLET")));
+        service.consumeDomainEvent(DomainEvent.of(DomainEventNames.LOYALTY_POINTS_CHANGED, "loyalty-service",
+                Map.of("userId", 7L, "referenceType", "LOYALTY")));
 
         org.mockito.ArgumentCaptor<Object> payload = org.mockito.ArgumentCaptor.forClass(Object.class);
         verify(webSocketNotificationService, times(2))
@@ -387,9 +384,9 @@ class NotificationServiceTest {
         @SuppressWarnings("unchecked") Map<String, Object> refund = (Map<String, Object>) payload.getAllValues().get(0);
         assertThat(refund).containsEntry("entity", "REFUND").containsEntry("id", 9L)
                 .containsOnlyKeys("entity", "id", "timestamp");
-        @SuppressWarnings("unchecked") Map<String, Object> wallet = (Map<String, Object>) payload.getAllValues().get(1);
-        assertThat(wallet).containsEntry("entity", "WALLET").containsEntry("id", 7L);
-        // Ví vẫn nhắc app của chủ ví như trước; tin admin không tạo thông báo.
+        @SuppressWarnings("unchecked") Map<String, Object> loyalty = (Map<String, Object>) payload.getAllValues().get(1);
+        assertThat(loyalty).containsEntry("entity", "LOYALTY").containsEntry("id", 7L);
+        // Điểm thưởng vẫn nhắc app của chủ tài khoản như trước; tin admin không tạo thông báo.
         verify(webSocketNotificationService).sendUserEvent(eq(7L), any());
         verify(notificationRepository, never()).save(any());
     }
