@@ -1,5 +1,6 @@
 package com.huynqb.laundrylocker.locker.service;
 
+import com.huynqb.laundrylocker.common.exception.BusinessException;
 import com.huynqb.laundrylocker.common.exception.NotFoundException;
 import com.huynqb.laundrylocker.locker.dto.BatchDeleteReportsRequest;
 import com.huynqb.laundrylocker.locker.model.LockerReport;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,11 +42,18 @@ class LockerServiceDeleteReportTest {
     void deleteReportThrowsNotFoundWhenReportDoesNotExist() {
         when(reportRepository.findById(999L)).thenReturn(Optional.empty());
 
-        assertThrows(NotFoundException.class, () -> service.deleteReport(999L));
+        assertThrows(NotFoundException.class, () -> service.deleteReport(999L, 1L, "Phiếu tạo nhầm"));
     }
 
     @Test
-    void deleteReportSuccessCleansUpDependencies() {
+    void deleteReportRequiresReason() {
+        BusinessException error = assertThrows(BusinessException.class, () -> service.deleteReport(100L, 1L, "  "));
+        assertEquals("DELETE_REASON_REQUIRED", error.getCode());
+        verify(reportRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteReportHidesReportButKeepsPhotosLogsAndRatings() {
         Long reportId = 100L;
         LockerReport report = new LockerReport();
         report.setId(reportId);
@@ -69,7 +78,7 @@ class LockerServiceDeleteReportTest {
         when(repairLogRepository.findByReportIdOrderByCreatedAtAsc(reportId)).thenReturn(List.of(repairLog));
         when(ratingRepository.findByReportId(reportId)).thenReturn(Optional.empty());
 
-        service.deleteReport(reportId);
+        service.deleteReport(reportId, 7L, "Phiếu tạo nhầm");
 
         assertNull(log.getCreatedReportId());
         verify(inspectionLogRepository).save(log);
@@ -77,9 +86,15 @@ class LockerServiceDeleteReportTest {
         assertNull(schedule.getPendingReportId());
         verify(scheduleRepository).save(schedule);
 
-        verify(attachmentService).deleteByReportId(reportId);
-        verify(repairLogRepository).deleteAll(List.of(repairLog));
-        verify(reportRepository).delete(report);
+        // Xoá mềm: ghi người xoá, lý do; không xoá ảnh, nhật ký sửa chữa, đánh giá hay bản ghi phiếu.
+        assertNotNull(report.getDeletedAt());
+        assertEquals(7L, report.getDeletedBy());
+        assertEquals("Phiếu tạo nhầm", report.getDeletedReason());
+        verify(reportRepository).save(report);
+        verify(attachmentService, never()).deleteByReportId(any());
+        verify(repairLogRepository, never()).deleteAll(any());
+        verify(ratingRepository, never()).delete(any());
+        verify(reportRepository, never()).delete(any());
     }
 
     @Test
@@ -96,11 +111,14 @@ class LockerServiceDeleteReportTest {
 
         when(reportRepository.findAllById(List.of(1L, 2L))).thenReturn(List.of(r1, r2));
 
-        int count = service.deleteReportsBatch(new BatchDeleteReportsRequest(List.of(1L, 2L)));
+        int count = service.deleteReportsBatch(new BatchDeleteReportsRequest(List.of(1L, 2L), "Dọn phiếu thử"), 7L);
 
         assertEquals(2, count);
-        verify(reportRepository).delete(r1);
-        verify(reportRepository).delete(r2);
+        assertEquals("Dọn phiếu thử", r1.getDeletedReason());
+        assertEquals("Dọn phiếu thử", r2.getDeletedReason());
+        verify(reportRepository).save(r1);
+        verify(reportRepository).save(r2);
+        verify(reportRepository, never()).delete(any());
     }
 
     @Test
@@ -117,10 +135,21 @@ class LockerServiceDeleteReportTest {
 
         when(reportRepository.findAllById(List.of(1L, 2L))).thenReturn(List.of(r1, r2));
 
-        int count = service.deleteReportsBatch(new BatchDeleteReportsRequest(List.of(1L, 2L), false, "KIOSK"));
+        int count = service.deleteReportsBatch(
+                new BatchDeleteReportsRequest(List.of(1L, 2L), false, "KIOSK", "Dọn phiếu thử"), 7L);
 
         assertEquals(1, count);
-        verify(reportRepository).delete(r1);
-        verify(reportRepository, never()).delete(r2);
+        assertNotNull(r1.getDeletedAt());
+        assertNull(r2.getDeletedAt());
+        verify(reportRepository).save(r1);
+        verify(reportRepository, never()).save(r2);
+    }
+
+    @Test
+    void deleteReportsBatchRequiresReason() {
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.deleteReportsBatch(new BatchDeleteReportsRequest(List.of(1L), null), 7L));
+        assertEquals("DELETE_REASON_REQUIRED", error.getCode());
+        verify(reportRepository, never()).findAllById(any());
     }
 }

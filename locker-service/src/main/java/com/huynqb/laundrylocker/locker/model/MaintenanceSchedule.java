@@ -59,6 +59,16 @@ public class MaintenanceSchedule {
     @Column(nullable = false)
     private Boolean active = true;
 
+    /// Admin xoá lịch: `active = false` kèm thời điểm, người xoá và lý do (ADR-0009).
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_reason", length = 500)
+    private String deletedReason;
+
     /// Phiếu sinh từ lần kiểm tra KHÔNG ĐẠT; hạn kế tiếp chỉ dời khi phiếu này đóng.
     @Column(name = "pending_report_id")
     private Long pendingReportId;

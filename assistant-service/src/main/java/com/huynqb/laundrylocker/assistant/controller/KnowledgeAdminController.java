@@ -102,9 +102,13 @@ public class KnowledgeAdminController {
         return ApiResponse.ok("KNOWLEDGE_DOCUMENT_REQUEUED", "Document queued for indexing", knowledgeService.reindex(id));
     }
 
+    /// Xoá mềm tài liệu: bắt buộc lý do (`DELETE_REASON_REQUIRED`).
     @DeleteMapping("/documents/{id}")
-    public ApiResponse<Void> delete(@PathVariable long id) {
-        knowledgeService.delete(id);
+    public ApiResponse<Void> delete(
+            @PathVariable long id,
+            @RequestParam(required = false) String reason,
+            @RequestHeader(value = "X-User-Id", required = false) Long userId) {
+        knowledgeService.delete(id, userId, reason);
         return ApiResponse.ok("KNOWLEDGE_DOCUMENT_DELETED", "Document deleted");
     }
 

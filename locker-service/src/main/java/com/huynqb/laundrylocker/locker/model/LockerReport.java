@@ -3,12 +3,15 @@ package com.huynqb.laundrylocker.locker.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.time.LocalDateTime;
 
 @Entity
 @EntityListeners(MaintenanceChangeListener.class)
 @Table(name = "locker_reports")
+// Phiếu admin đã xoá (xoá mềm, ADR-0009) không hiện ở bất kỳ truy vấn nào.
+@SQLRestriction("deleted_at IS NULL")
 @Getter
 @Setter
 public class LockerReport {
@@ -102,6 +105,15 @@ public class LockerReport {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_reason", length = 500)
+    private String deletedReason;
 
     @PrePersist
     void onCreate() {
