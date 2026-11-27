@@ -30,5 +30,13 @@
   {"question": "gia vang hom nay bao nhieu?", "roles": ["CUSTOMER"], "mustRefuse": true},
   {"question": "Viết giúp tôi một bài thơ về mùa thu.", "roles": ["CUSTOMER"], "mustRefuse": true},
   {"question": "Kỹ thuật viên giữ bao nhiêu phiếu trễ hạn SLA thì bị đình chỉ?", "roles": ["CUSTOMER"], "mustRefuse": true},
-  {"question": "Kỹ thuật viên ghi kết quả kiểm tra định kỳ từng mục thế nào?", "roles": ["CUSTOMER"], "mustRefuse": true}
+  {"question": "Kỹ thuật viên ghi kết quả kiểm tra định kỳ từng mục thế nào?", "roles": ["CUSTOMER"], "mustRefuse": true},
+  {"question": "Những trường hợp nào đơn hàng được hoàn tiền và quy trình nhận tiền hoàn ra sao?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Quy trình và điều kiện hoàn tiền Lock.R", "mustRefuse": false},
+  {"question": "Đơn hàng thanh toán hoàn toàn bằng voucher 0đ hoặc gửi yêu cầu quá 7 ngày có được hoàn tiền không?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Quy trình và điều kiện hoàn tiền Lock.R", "mustRefuse": false},
+  {"question": "Tôi có thể thuê tủ trực tiếp tại màn hình kiosk không cần app không, và gia hạn lúc đang quá giờ được tính thế nào?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Chi tiết chức năng thuê tủ và gửi hàng Lock.R", "mustRefuse": false},
+  {"question": "Nếu tôi báo ô hỏng khi đồ đang nằm trong tủ thì phí quá giờ có tiếp tục tăng không?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Chi tiết chức năng thuê tủ và gửi hàng Lock.R", "mustRefuse": false},
+  {"question": "Uỷ quyền cho người khác lấy hộ đồ trong tủ cần làm những gì?", "roles": ["CUSTOMER"], "expectedDocumentTitle": "Chi tiết chức năng thuê tủ và gửi hàng Lock.R", "mustRefuse": false},
+  {"question": "Khi Admin hoặc KTV bấm Bảo trì cho Kiosk hoặc Drone thì hệ thống tạo phiếu bảo trì hay phiếu sự cố?", "roles": ["DRONE_TECHNICIAN"], "expectedDocumentTitle": "Quy trình bảo trì, sửa chữa Kiosk/Drone và xử lý sự cố vận hành", "mustRefuse": false},
+  {"question": "Khi drone gặp sự cố rơi kiện thì KTV Drone xử lý thu hồi và bàn giao như thế nào?", "roles": ["DRONE_TECHNICIAN"], "expectedDocumentTitle": "Quy trình bảo trì, sửa chữa Kiosk/Drone và xử lý sự cố vận hành", "mustRefuse": false},
+  {"question": "Quy trình 4 bước xét duyệt hoàn tiền và trao trả đồ lưu kho EXPIRED của Admin gồm những bước nào?", "roles": ["ADMIN"], "expectedDocumentTitle": "Quy trình duyệt hoàn tiền, bồi thường và đối soát cho Quản trị viên", "mustRefuse": false}
 ]

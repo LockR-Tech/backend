@@ -47,6 +47,8 @@ TECH_ROLES=(LOCKER_TECHNICIAN DRONE_TECHNICIAN ADMIN)
 
 # Dành cho mọi người dùng.
 upload "$SCRIPT_DIR/knowledge/huong-dan-khach-hang.md" "Hướng dẫn sử dụng Lock.R cho khách hàng" ALL
+upload "$SCRIPT_DIR/knowledge/quy-trinh-hoan-tien-va-huy-don.md" "Quy trình và điều kiện hoàn tiền Lock.R" ALL
+upload "$SCRIPT_DIR/knowledge/huong-dan-thue-tu-va-gui-hang.md" "Chi tiết chức năng thuê tủ và gửi hàng Lock.R" ALL
 upload "$KNOWLEDGE_ROOT/legal/privacy-policy.html" "Chính sách quyền riêng tư" ALL
 upload "$KNOWLEDGE_ROOT/legal/data-deletion.html" "Hướng dẫn xóa dữ liệu người dùng" ALL
 upload "$KNOWLEDGE_ROOT/mobile/assets/markdown/terms_of_service.md" "Điều khoản dịch vụ" ALL
@@ -54,11 +56,13 @@ upload "$KNOWLEDGE_ROOT/mobile/assets/markdown/terms_of_service.md" "Điều kho
 # Nội bộ: kỹ thuật viên và admin.
 upload "$SCRIPT_DIR/knowledge/huong-dan-ktv-tu.md" "Quy trình vận hành và bảo trì tủ cho kỹ thuật viên" \
   LOCKER_TECHNICIAN ADMIN
+upload "$SCRIPT_DIR/knowledge/quy-trinh-bao-tri-sua-chua-va-drone.md" "Quy trình bảo trì, sửa chữa Kiosk/Drone và xử lý sự cố vận hành" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/01-overview/tom-tat-luong-nghiep-vu.md" "Tóm tắt các luồng nghiệp vụ Lock.R" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/02-flows/flow-1-drone-delivery.md" "Luồng giao hàng bằng drone" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/02-flows/flow-2-locker-send.md" "Luồng gửi hàng và thuê ô" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/02-flows/flow-3-roles-maintenance.md" "Luồng vai trò, vận hành và bảo trì" "${TECH_ROLES[@]}"
 upload "$KNOWLEDGE_ROOT/docs/02-flows/flow-4-rag-assistant.md" "Luồng trợ lý hỏi đáp" "${TECH_ROLES[@]}"
+upload "$SCRIPT_DIR/knowledge/quy-trinh-duyet-hoan-tien-va-doi-soat-admin.md" "Quy trình duyệt hoàn tiền, bồi thường và đối soát cho Quản trị viên" ADMIN
 upload "$KNOWLEDGE_ROOT/docs/04-engineering/release-deploy.md" "Quy trình phát hành và triển khai" ADMIN
 
 if [ "${SEED_EVAL:-1}" != "0" ]; then
