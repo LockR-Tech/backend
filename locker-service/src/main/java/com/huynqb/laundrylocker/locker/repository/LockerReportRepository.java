@@ -51,5 +51,7 @@ public interface LockerReportRepository extends JpaRepository<LockerReport, Long
     boolean existsByLockerIdAndCategoryAndStatusInAndIdNot(
             Long lockerId, String category, List<String> statuses, Long id);
 
+    boolean existsByLockerIdAndBlocksLockerTrueAndStatusIn(Long lockerId, List<String> statuses);
+
     boolean existsByLockerIdAndBlocksLockerTrueAndStatusInAndIdNot(Long lockerId, List<String> statuses, Long id);
 }

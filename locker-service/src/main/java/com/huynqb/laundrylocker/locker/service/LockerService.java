@@ -71,6 +71,7 @@ public class LockerService {
     public static final Set<String> INSTALLATION_LOCKER_STATUSES = Set.of("PLANNED", "INSTALLING", "COMMISSIONING");
     private static final String MAINTENANCE_SOURCE_ADMIN = "ADMIN";
     private static final String MAINTENANCE_SOURCE_TICKET = "TICKET";
+    private static final String MAINTENANCE_SOURCE_SCHEDULE = "SCHEDULE";
     /// Trạng thái ô được nhớ lại khi báo hỏng — đơn vẫn đang giữ ô.
     private static final Set<String> ORDER_HELD_BOX_STATUSES = Set.of("RESERVED", "OCCUPIED");
     /// Loại thông báo cho KTV drone (app mở màn phiếu/lịch drone theo `type`, `referenceId` = id phiếu/lịch).
@@ -405,6 +406,9 @@ public class LockerService {
         // Admin bật bảo trì là ý định rõ ràng ⇒ nguồn ADMIN kể cả khi tủ đang bị phiếu chặn.
         locker.setStatus(maintenance ? "MAINTENANCE" : "ACTIVE");
         locker.setMaintenanceSource(maintenance ? MAINTENANCE_SOURCE_ADMIN : null);
+        if (!maintenance) {
+            closePendingAdHocLockerSchedules(id);
+        }
         publishLockerCatalogChanged(id);
         publishLockerAvailabilityChanged(id);
         return toStaffResponse(lockerRepository.save(locker), new HashMap<>());
@@ -2036,7 +2040,10 @@ public class LockerService {
                         report.getLockerId(), OPEN_REPORT_STATUSES, report.getId())) {
             lockerRepository.findById(report.getLockerId())
                     .filter(locker -> "MAINTENANCE".equalsIgnoreCase(locker.getStatus())
-                            && MAINTENANCE_SOURCE_TICKET.equals(locker.getMaintenanceSource()))
+                            && (MAINTENANCE_SOURCE_TICKET.equals(locker.getMaintenanceSource())
+                                    || MAINTENANCE_SOURCE_SCHEDULE.equals(locker.getMaintenanceSource())))
+                    .filter(locker -> !scheduleRepository
+                            .existsByLockerIdAndActiveTrueAndIntervalDaysAndLastDoneAtIsNull(locker.getId(), 0))
                     .ifPresent(locker -> {
                         locker.setStatus("ACTIVE");
                         locker.setMaintenanceSource(null);
@@ -2048,8 +2055,12 @@ public class LockerService {
         // Tra theo lịch (không theo report.scheduleId): kiểm tra KHÔNG ĐẠT có thể gộp vào phiếu ô đã mở sẵn.
         for (MaintenanceSchedule schedule : scheduleRepository.findByPendingReportId(report.getId())) {
             schedule.setPendingReportId(null);
-            schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
-            schedule.setLastDueNotifiedAt(null);
+            if (isOneTimeSchedule(schedule)) {
+                schedule.setActive(false);
+            } else {
+                schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+                schedule.setLastDueNotifiedAt(null);
+            }
             scheduleRepository.save(schedule);
         }
     }
@@ -2186,43 +2197,97 @@ public class LockerService {
 
     @Transactional
     public MaintenanceScheduleResponse createSchedule(MaintenanceScheduleRequest request) {
+        return createSchedule(request, null, "ADMIN");
+    }
+
+    @Transactional
+    public MaintenanceScheduleResponse createSchedule(
+            MaintenanceScheduleRequest request, Long actorUserId, String rolesHeader) {
         // Lich nham vao 1 tu HOAC 1 drone — bat buoc dung 1 trong 2.
         if ((request.lockerId() == null) == (request.droneUnitId() == null)) {
             throw new BusinessException(
                     "SCHEDULE_TARGET_INVALID", "Provide exactly one of lockerId or droneUnitId");
         }
+        boolean admin = actorUserId == null || UserRoles.isAdmin(rolesHeader);
         MaintenanceSchedule schedule = new MaintenanceSchedule();
+        LockerUnit targetLocker = null;
+        DroneUnit targetDrone = null;
+        Long resolvedAssigneeId = request.assignedTechnicianId();
+
         if (request.lockerId() != null) {
-            lockerRepository
+            targetLocker = lockerRepository
                     .findById(request.lockerId())
                     .orElseThrow(() -> new NotFoundException("Locker", request.lockerId()));
+            if (!admin) {
+                List<String> roles = actorRoles(actorUserId, rolesHeader);
+                if (!roles.contains(LOCKER_TECHNICIAN)) {
+                    throw new BusinessException(
+                            "TECHNICIAN_ROLE_REQUIRED",
+                            "Cần vai trò KTV tủ để tạo phiếu bảo trì Kiosk",
+                            HttpStatus.FORBIDDEN);
+                }
+                if (targetLocker.getAssignedTechnicianId() != null
+                        && !Objects.equals(targetLocker.getAssignedTechnicianId(), actorUserId)) {
+                    throw new BusinessException(
+                            "WHOLE_LOCKER_TECHNICIAN_MISMATCH",
+                            "Tủ này đã giao cho KTV khác phụ trách — chỉ KTV phụ trách tủ hoặc Admin mới được bảo trì tủ",
+                            HttpStatus.FORBIDDEN);
+                }
+                resolvedAssigneeId = actorUserId;
+            }
             schedule.setLockerId(request.lockerId());
         } else {
-            findDroneUnit(request.droneUnitId());
+            targetDrone = findDroneUnit(request.droneUnitId());
+            if (!admin) {
+                List<String> roles = actorRoles(actorUserId, rolesHeader);
+                if (!roles.contains(DRONE_TECHNICIAN)) {
+                    throw new BusinessException(
+                            "TECHNICIAN_ROLE_REQUIRED",
+                            "Cần vai trò KTV Drone để tạo phiếu bảo trì Drone",
+                            HttpStatus.FORBIDDEN);
+                }
+                requireDroneOwnership(targetDrone, actorUserId);
+                resolvedAssigneeId = actorUserId;
+            }
             schedule.setDroneUnitId(request.droneUnitId());
         }
-        if (request.assignedTechnicianId() != null) {
-            requireTechnician(request.assignedTechnicianId(), scheduleTechnicianRole(schedule));
+
+        if (resolvedAssigneeId != null) {
+            requireTechnician(resolvedAssigneeId, scheduleTechnicianRole(schedule));
         }
+        int intervalDays = request.intervalDays() == null ? 0 : request.intervalDays();
         schedule.setTitle(request.title());
-        schedule.setIntervalDays(request.intervalDays());
-        schedule.setAssignedTechnicianId(request.assignedTechnicianId());
+        schedule.setIntervalDays(intervalDays);
+        schedule.setAssignedTechnicianId(resolvedAssigneeId);
         schedule.setPriority(StringUtils.hasText(request.priority()) ? request.priority() : "NORMAL");
         schedule.setDescription(request.description());
         schedule.setLocationNote(request.locationNote());
         schedule.setScheduledTimeSlot(request.scheduledTimeSlot());
         schedule.setChecklist(request.checklist());
+        LocalDateTime now = LocalDateTime.now();
         LocalDateTime dueAt = request.firstDueDate() != null
                 ? request.firstDueDate()
-                : LocalDateTime.now().plusDays(request.intervalDays());
+                : (intervalDays <= 0 ? now : now.plusDays(intervalDays));
         schedule.setNextDueAt(dueAt);
         schedule.setActive(true);
         MaintenanceSchedule saved = scheduleRepository.save(schedule);
+
+        if (targetLocker != null && Boolean.TRUE.equals(request.putInMaintenance())) {
+            assertNotInInstallation(targetLocker);
+            if ("ACTIVE".equalsIgnoreCase(targetLocker.getStatus())) {
+                targetLocker.setStatus("MAINTENANCE");
+                targetLocker.setMaintenanceSource(MAINTENANCE_SOURCE_SCHEDULE);
+                lockerRepository.save(targetLocker);
+                publishLockerAvailabilityChanged(targetLocker.getId());
+                publishLockerCatalogChanged(targetLocker.getId());
+            }
+        }
         // Lịch Drone mới được xem là đang chờ nghiệm thu lần đầu, nên phải tạm dừng nhận chuyến bay.
         if (saved.getDroneUnitId() != null) {
-            markDroneMaintenancePending(saved.getDroneUnitId(), null, saved.getTitle());
+            markDroneMaintenancePending(saved.getDroneUnitId(), admin ? null : actorUserId, saved.getTitle());
         }
-        if (saved.getAssignedTechnicianId() != null) {
+        if (saved.getAssignedTechnicianId() != null
+                && (admin || !Objects.equals(saved.getAssignedTechnicianId(), actorUserId))) {
             notifyScheduleAssignment(saved);
         }
         return toSchedule(saved);
@@ -2304,9 +2369,14 @@ public class LockerService {
         schedule.setLastDoneAt(now);
         schedule.setLastResult(outcome.failed() ? "FAILED" : "PASSED");
         schedule.setPendingReportId(null);
+        boolean oneTime = isOneTimeSchedule(schedule);
         if (!opensReport) {
-            schedule.setNextDueAt(now.plusDays(schedule.getIntervalDays()));
-            schedule.setLastDueNotifiedAt(null);
+            if (oneTime) {
+                schedule.setActive(false);
+            } else {
+                schedule.setNextDueAt(now.plusDays(schedule.getIntervalDays()));
+                schedule.setLastDueNotifiedAt(null);
+            }
         }
 
         MaintenanceInspectionLog inspectionLog = new MaintenanceInspectionLog();
@@ -2342,6 +2412,9 @@ public class LockerService {
         }
         MaintenanceSchedule saved = scheduleRepository.save(schedule);
         inspectionLogRepository.save(inspectionLog);
+        if (saved.getLockerId() != null && !outcome.failed()) {
+            restoreLockerFromScheduleIfEligible(saved.getLockerId());
+        }
         if (saved.getDroneUnitId() != null) {
             if (outcome.failed()) {
                 markDroneMaintenanceFailure(saved.getDroneUnitId(), req, outcome, techId, saved.getTitle());
@@ -2460,6 +2533,10 @@ public class LockerService {
                                 : "Phát hiện lỗi trong ca kiểm tra định kỳ";
         String title = "Kiểm tra định kỳ không đạt: " + schedule.getTitle();
         LockerReport report;
+        LockerUnit locker = lockerRepository.findById(schedule.getLockerId()).orElse(null);
+        boolean holdBySchedule = locker != null
+                && "MAINTENANCE".equalsIgnoreCase(locker.getStatus())
+                && MAINTENANCE_SOURCE_SCHEDULE.equals(locker.getMaintenanceSource());
         if (req != null && req.faultBoxId() != null) {
             LockerBox box = findBox(req.faultBoxId());
             if (!schedule.getLockerId().equals(box.getLockerId())) {
@@ -2467,16 +2544,22 @@ public class LockerService {
             }
             report = reportBoxFault(box, description, reporterId, List.of(), assigneeId, title);
         } else {
-            LockerUnit locker = lockerRepository.findById(schedule.getLockerId()).orElse(null);
             LockerReport created = new LockerReport();
             created.setLockerId(schedule.getLockerId());
             created.setCategory(ReportCategory.LOCKER);
             created.setUserId(reporterId == null ? 0L : reporterId);
             created.setTitle(title);
             created.setDescription(description);
+            if (holdBySchedule) {
+                created.setBlocksLocker(true);
+            }
             applyRouting(created, locker, assigneeId);
             report = reportRepository.save(created);
             notifyRouted(report, locker);
+        }
+        if (holdBySchedule && !Boolean.TRUE.equals(report.getBlocksLocker())) {
+            report.setBlocksLocker(true);
+            report = reportRepository.save(report);
         }
         if (report.getScheduleId() == null) {
             report.setScheduleId(schedule.getId());
@@ -2641,7 +2724,7 @@ public class LockerService {
         if (request.title() != null) {
             schedule.setTitle(request.title());
         }
-        if (request.intervalDays() != null && request.intervalDays() > 0) {
+        if (request.intervalDays() != null && request.intervalDays() >= 0) {
             schedule.setIntervalDays(request.intervalDays());
         }
         if (request.assignedTechnicianId() != null
@@ -2688,8 +2771,55 @@ public class LockerService {
         schedule.setDeletedBy(actorUserId);
         schedule.setDeletedReason(why);
         scheduleRepository.save(schedule);
+        if (schedule.getLockerId() != null) {
+            restoreLockerFromScheduleIfEligible(schedule.getLockerId());
+        }
         if (schedule.getDroneUnitId() != null) {
             synchronizeDroneOperationalStatus(schedule.getDroneUnitId(), null);
+        }
+    }
+
+    private static boolean isOneTimeSchedule(MaintenanceSchedule schedule) {
+        return schedule.getIntervalDays() == null || schedule.getIntervalDays() <= 0;
+    }
+
+    private void restoreLockerFromScheduleIfEligible(Long lockerId) {
+        if (lockerId == null
+                || reportRepository.existsByLockerIdAndBlocksLockerTrueAndStatusIn(lockerId, OPEN_REPORT_STATUSES)
+                || scheduleRepository.existsByLockerIdAndActiveTrueAndIntervalDaysAndLastDoneAtIsNull(lockerId, 0)) {
+            return;
+        }
+        lockerRepository.findById(lockerId)
+                .filter(locker -> "MAINTENANCE".equalsIgnoreCase(locker.getStatus())
+                        && MAINTENANCE_SOURCE_SCHEDULE.equals(locker.getMaintenanceSource()))
+                .ifPresent(locker -> {
+                    locker.setStatus("ACTIVE");
+                    locker.setMaintenanceSource(null);
+                    lockerRepository.save(locker);
+                    publishLockerAvailabilityChanged(locker.getId());
+                    publishLockerCatalogChanged(locker.getId());
+                });
+    }
+
+    private void closePendingAdHocLockerSchedules(Long lockerId) {
+        if (lockerId == null) {
+            return;
+        }
+        for (MaintenanceSchedule pending : scheduleRepository
+                .findByLockerIdAndActiveTrueAndIntervalDaysAndLastDoneAtIsNull(lockerId, 0)) {
+            pending.setActive(false);
+            scheduleRepository.save(pending);
+        }
+    }
+
+    private void closePendingAdHocDroneSchedules(Long droneUnitId) {
+        if (droneUnitId == null) {
+            return;
+        }
+        for (MaintenanceSchedule pending : scheduleRepository
+                .findByDroneUnitIdAndActiveTrueAndIntervalDaysAndLastDoneAtIsNull(droneUnitId, 0)) {
+            pending.setActive(false);
+            scheduleRepository.save(pending);
         }
     }
 
@@ -2883,14 +3013,14 @@ public class LockerService {
         DroneUnit unit = findDroneUnit(id);
         requireDroneOwnership(unit, actorUserId);
         validateManualDroneStatusChange(unit, status);
-        return updateDroneStatusInternal(unit, status, reason, actorUserId, false, true, true, true);
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, false, true, false, true);
     }
 
     @Transactional
     public DroneUnitResponse updateDroneStatusAsAdmin(Long id, String status, String reason, Long actorUserId) {
         DroneUnit unit = findDroneUnit(id);
         validateManualDroneStatusChange(unit, status);
-        return updateDroneStatusInternal(unit, status, reason, actorUserId, false, true, true, false);
+        return updateDroneStatusInternal(unit, status, reason, actorUserId, false, true, false, false);
     }
 
     /// Admin chủ động mở một phiếu mới cho drone. Mỗi lần gửi là một sự cố/bảo trì độc lập,
@@ -3269,18 +3399,18 @@ public class LockerService {
             unit.setLastChargedAt(LocalDateTime.now());
         }
         DroneUnit saved = droneUnitRepository.save(unit);
+        if (DRONE_OPERATIONAL_STATUSES.contains(status)) {
+            closePendingAdHocDroneSchedules(saved.getId());
+        }
         String note = "Chuyển trạng thái %s → %s%s"
                 .formatted(
                         previousStatus,
                         status,
                         (fault || maintenance) && StringUtils.hasText(normalizedReason) ? ": " + normalizedReason : "");
         appendDroneLog(saved.getId(), note, actorUserId);
-        // #2 FAULT hoặc MAINTENANCE thủ công mở phiếu cho đội drone. Phiếu chỉ đóng qua luồng hoàn tất
-        // phiếu (nhật ký, ảnh nghiệm thu); đóng phiếu cuối cùng tự đưa drone về hoạt động (restoreAssetsAfterClose).
+        // #2 FAULT thu cong mo phieu su co cho doi drone; con bao tri dung MaintenanceSchedule rieng.
         if (fault && !DroneStatus.FAULT.equals(previousStatus) && createFaultReport) {
             openDroneReport(saved, DroneStatus.FAULT, normalizedReason, actorUserId, selfAssignReport);
-        } else if (maintenance && !DroneStatus.MAINTENANCE.equals(previousStatus) && createMaintenanceReport) {
-            openDroneReport(saved, DroneStatus.MAINTENANCE, normalizedReason, actorUserId, selfAssignReport);
         }
         return toDroneUnit(saved);
     }

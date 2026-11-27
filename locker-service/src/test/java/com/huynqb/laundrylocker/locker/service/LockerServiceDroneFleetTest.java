@@ -831,20 +831,57 @@ class LockerServiceDroneFleetTest {
     }
 
     @Test
-    void technicianSwitchingToMaintenanceCreatesSelfAssignedMaintenanceTicket() {
-        stubReportSave();
+    void technicianSwitchingToMaintenanceDoesNotCreateIncidentReport() {
         when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
 
         DroneUnitResponse response = service.updateDroneStatus(1L, DroneStatus.MAINTENANCE, "Bảo trì cảm biến", 42L);
 
         assertEquals(DroneStatus.MAINTENANCE, response.status());
-        ArgumentCaptor<LockerReport> reportCaptor = ArgumentCaptor.forClass(LockerReport.class);
-        verify(reportRepository).save(reportCaptor.capture());
-        LockerReport saved = reportCaptor.getValue();
-        assertEquals(LockerService.TICKET_TYPE_DRONE_MAINTENANCE, saved.getTicketType());
-        assertEquals("IN_PROGRESS", saved.getStatus());
-        assertEquals(42L, saved.getAssignedToUserId());
-        assertEquals("Bảo trì cảm biến", saved.getDescription());
+        verify(reportRepository, never()).save(any(LockerReport.class));
+    }
+
+    @Test
+    void technicianCreatingDroneMaintenanceSchedulePutsDroneInMaintenanceWithoutIncidentReport() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 42L, DroneStatus.IDLE, 80)));
+        when(userClient.getUser(42L)).thenReturn(ApiResponse.ok(
+                new UserSummary(42L, null, null, "KTV Drone", "ACTIVE", java.util.Set.of("DRONE_TECHNICIAN"))));
+        when(scheduleRepository.save(any(MaintenanceSchedule.class))).thenAnswer(inv -> {
+            MaintenanceSchedule s = inv.getArgument(0);
+            s.setId(99L);
+            return s;
+        });
+        when(scheduleRepository.existsByDroneUnitIdAndActiveTrueAndLastDoneAtIsNull(1L)).thenReturn(true);
+
+        com.huynqb.laundrylocker.locker.dto.MaintenanceScheduleResponse created = service.createSchedule(
+                new com.huynqb.laundrylocker.locker.dto.MaintenanceScheduleRequest(
+                        null, 1L, "Bảo trì Drone DRONE-01", 0, null, "HIGH",
+                        "Kiểm tra cánh quạt & pin", null, null, null, null, true),
+                42L,
+                "DRONE_TECHNICIAN");
+
+        assertEquals(99L, created.id());
+        assertEquals(1L, created.droneUnitId());
+        assertEquals(42L, created.assignedTechnicianId());
+        assertEquals(0, created.intervalDays());
+        assertTrue(Boolean.TRUE.equals(created.due()));
+        verify(reportRepository, never()).save(any(LockerReport.class));
+        ArgumentCaptor<DroneUnit> unitCaptor = ArgumentCaptor.forClass(DroneUnit.class);
+        verify(droneUnitRepository, atLeastOnce()).save(unitCaptor.capture());
+        assertEquals(DroneStatus.MAINTENANCE, unitCaptor.getValue().getStatus());
+    }
+
+    @Test
+    void technicianCannotCreateMaintenanceScheduleForOtherTechniciansDrone() {
+        when(droneUnitRepository.findById(1L)).thenReturn(Optional.of(droneUnit(1L, 99L, DroneStatus.IDLE, 80)));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.createSchedule(
+                new com.huynqb.laundrylocker.locker.dto.MaintenanceScheduleRequest(
+                        null, 1L, "Bảo trì Drone", 0, null, "HIGH", "Mô tả", null, null, null, null, true),
+                42L,
+                "DRONE_TECHNICIAN"));
+
+        assertEquals("DRONE_OWNERSHIP_REQUIRED", ex.getCode());
+        verify(scheduleRepository, never()).save(any(MaintenanceSchedule.class));
     }
 
     @Test

@@ -361,6 +361,92 @@ class LockerServiceInspectionTest {
         verify(scheduleRepository, never()).markDueNotified(eq(5L), any());
     }
 
+    @Test
+    void oneTimeLockerMaintenanceSchedulePutsLockerInMaintenanceAndRestoresOnPass() {
+        LockerUnit locker = lockerRepository.findById(LOCKER_ID).orElseThrow();
+        locker.setAssignedTechnicianId(TECH);
+        when(scheduleRepository.save(any(MaintenanceSchedule.class))).thenAnswer(inv -> {
+            MaintenanceSchedule s = inv.getArgument(0);
+            if (s.getId() == null) {
+                s.setId(77L);
+            }
+            return s;
+        });
+
+        var created = service.createSchedule(
+                new com.huynqb.laundrylocker.locker.dto.MaintenanceScheduleRequest(
+                        LOCKER_ID, null, "Bảo trì tủ A", 0, null, "HIGH",
+                        "Vệ sinh và kiểm tra nguồn", null, null, null, null, true),
+                TECH,
+                "LOCKER_TECHNICIAN");
+
+        assertEquals(77L, created.id());
+        assertEquals(TECH, created.assignedTechnicianId());
+        assertEquals("MAINTENANCE", locker.getStatus());
+        assertEquals("SCHEDULE", locker.getMaintenanceSource());
+        verify(reportRepository, never()).save(any(LockerReport.class));
+
+        MaintenanceSchedule adHoc = new MaintenanceSchedule();
+        adHoc.setId(77L);
+        adHoc.setLockerId(LOCKER_ID);
+        adHoc.setTitle("Bảo trì tủ A");
+        adHoc.setIntervalDays(0);
+        adHoc.setAssignedTechnicianId(TECH);
+        adHoc.setActive(true);
+        when(scheduleRepository.findById(77L)).thenReturn(Optional.of(adHoc));
+
+        var completed = service.completeSchedule(
+                77L,
+                new CompleteScheduleRequest(null, null, "PASSED", "Hoàn tất", null, null, null, null, null, null),
+                TECH,
+                false);
+
+        assertEquals("PASSED", completed.lastResult());
+        assertFalse(Boolean.TRUE.equals(adHoc.getActive()));
+        assertEquals("ACTIVE", locker.getStatus());
+        assertNull(locker.getMaintenanceSource());
+    }
+
+    @Test
+    void oneTimeLockerMaintenanceScheduleOpensBlockingTicketOnFailAndRestoresWhenResolved() {
+        LockerUnit locker = lockerRepository.findById(LOCKER_ID).orElseThrow();
+        locker.setStatus("MAINTENANCE");
+        locker.setMaintenanceSource("SCHEDULE");
+        MaintenanceSchedule adHoc = new MaintenanceSchedule();
+        adHoc.setId(88L);
+        adHoc.setLockerId(LOCKER_ID);
+        adHoc.setTitle("Bảo trì nguồn Kiosk");
+        adHoc.setIntervalDays(0);
+        adHoc.setAssignedTechnicianId(TECH);
+        adHoc.setActive(true);
+        when(scheduleRepository.findById(88L)).thenReturn(Optional.of(adHoc));
+
+        service.completeSchedule(
+                88L,
+                new CompleteScheduleRequest(null, null, "FAILED", "Hỏng bộ nguồn", null, null, null, null, null, null),
+                TECH,
+                false);
+
+        assertEquals(200L, adHoc.getPendingReportId());
+        assertEquals("MAINTENANCE", locker.getStatus());
+        ArgumentCaptor<LockerReport> reportCaptor = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository, atLeastOnce()).save(reportCaptor.capture());
+        LockerReport opened = reportCaptor.getValue();
+        assertTrue(Boolean.TRUE.equals(opened.getBlocksLocker()));
+
+        opened.setStatus("IN_PROGRESS");
+        opened.setAssignedToUserId(TECH);
+        when(reportRepository.findById(200L)).thenReturn(Optional.of(opened));
+        when(scheduleRepository.findByPendingReportId(200L)).thenReturn(List.of(adHoc));
+
+        service.resolveReportAndClearFault(200L, TECH, null, false);
+
+        assertNull(adHoc.getPendingReportId());
+        assertFalse(Boolean.TRUE.equals(adHoc.getActive()));
+        assertEquals("ACTIVE", locker.getStatus());
+        assertNull(locker.getMaintenanceSource());
+    }
+
     private MaintenanceInspectionLog savedLog() {
         ArgumentCaptor<MaintenanceInspectionLog> log = ArgumentCaptor.forClass(MaintenanceInspectionLog.class);
         verify(inspectionLogRepository, atLeastOnce()).save(log.capture());

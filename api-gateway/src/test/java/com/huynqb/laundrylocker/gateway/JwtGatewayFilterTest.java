@@ -353,6 +353,7 @@ class JwtGatewayFilterTest {
         for (String role : new String[] {"LOCKER_TECHNICIAN", "DRONE_TECHNICIAN"}) {
             assertForwarded(MockServerHttpRequest.put("/api/maintenance/schedules/3"), role, false);
             assertForwarded(MockServerHttpRequest.put("/api/maintenance/schedules/3/assign"), role, false);
+            assertForwarded(MockServerHttpRequest.post("/api/maintenance/schedules"), role, true);
             assertForwarded(MockServerHttpRequest.post("/api/maintenance/schedules/3/complete"), role, true);
         }
         assertForwarded(MockServerHttpRequest.put("/api/maintenance/schedules/3/assign"), "ADMIN", true);

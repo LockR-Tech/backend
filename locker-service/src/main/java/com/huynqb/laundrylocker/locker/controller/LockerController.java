@@ -402,6 +402,17 @@ public class LockerController {
         return ApiResponse.ok(lockerService.listSchedules(mine ? userId : null, allowedTarget));
     }
 
+    @PostMapping("/api/maintenance/schedules")
+    public ApiResponse<MaintenanceScheduleResponse> maintenanceCreateSchedule(
+            @Valid @RequestBody MaintenanceScheduleRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) Long actorUserId,
+            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        return ApiResponse.ok(
+                "SCHEDULE_CREATED",
+                "Schedule created",
+                lockerService.createSchedule(request, actorUserId, roles));
+    }
+
     @PostMapping("/api/maintenance/schedules/{id}/complete")
     public ApiResponse<MaintenanceScheduleResponse> maintenanceCompleteSchedule(
             @PathVariable Long id,
