@@ -290,6 +290,9 @@ public class LockerService {
         }
         locker.setAssignedTechnicianId(technicianId);
         LockerUnit saved = lockerRepository.save(locker);
+        // Có / mất KTV phụ trách đổi việc tủ có nhận đơn mới không (F3-G16) ⇒ app và kiosk tải lại danh sách tủ.
+        publishLockerCatalogChanged(lockerId);
+        publishLockerAvailabilityChanged(lockerId);
         List<LockerReport> waiting = reportRepository.findByLockerIdAndStatusAndAssignedToUserIdIsNull(lockerId, "OPEN")
                 .stream()
                 .filter(report -> !ReportCategory.DRONE.equals(report.getCategory()))
@@ -1001,7 +1004,7 @@ public class LockerService {
         List<LockerBox> boxes = boxRepository.findByLockerIdOrderByRowIndexAscColIndexAsc(lockerId);
         Map<Long, IotClient.BoxHardwareStatus> hwByBox = fetchHardwareStatuses(lockerId);
         List<CellResponse> cells = boxes.stream().map(b -> toCell(b, hwByBox.get(b.getId()))).toList();
-        long available = isBookable(locker)
+        long available = acceptsNewOrders(locker)
                 ? boxes.stream()
                         .filter(b -> Boolean.TRUE.equals(b.getActive()) && "AVAILABLE".equalsIgnoreCase(b.getStatus()))
                         .count()
@@ -1021,7 +1024,8 @@ public class LockerService {
         return new LockerLayoutResponse(
                 locker.getId(), locker.getCode(), locker.getName(), locker.getStatus(),
                 locker.getLandingPad(), locker.getLandingMarkerId(), locker.getLandingPadStatus(),
-                cells.size(), available, fault, cells, online);
+                cells.size(), available, fault, cells, online,
+                acceptsNewOrders(locker), orderPauseReason(locker));
     }
 
     @Transactional
@@ -1085,6 +1089,24 @@ public class LockerService {
 
     private boolean isBookable(LockerUnit locker) {
         return locker.getStatus() == null || BOOKABLE_LOCKER_STATUS.equalsIgnoreCase(locker.getStatus());
+    }
+
+    /// Tủ nhận đơn mới: đang hoạt động VÀ có KTV phụ trách (F3-G16) — không có người xử lý sự cố thì không
+    /// mở cho khách đặt. Chỉ chặn đơn mới; đơn đang chạy và việc giữ lại ô của đơn cũ không bị ảnh hưởng.
+    static boolean acceptsNewOrders(LockerUnit locker) {
+        return orderPauseReason(locker) == null;
+    }
+
+    /// Lý do tủ không nhận đơn mới (null = đang nhận): INSTALLING, MAINTENANCE (bảo trì / ngưng), NO_TECHNICIAN.
+    static String orderPauseReason(LockerUnit locker) {
+        String status = locker.getStatus();
+        if (isInstallationStatus(status)) {
+            return "INSTALLING";
+        }
+        if (status != null && !BOOKABLE_LOCKER_STATUS.equalsIgnoreCase(status)) {
+            return "MAINTENANCE";
+        }
+        return locker.getAssignedTechnicianId() == null ? "NO_TECHNICIAN" : null;
     }
 
     static boolean isInstallationStatus(String status) {
@@ -1181,6 +1203,12 @@ public class LockerService {
         return rules == null || !rules.demoLockerHiddenFor(lockerId, userId, roles);
     }
 
+    /// Lý do tủ không nhận đơn mới (null = nhận) — order-service chặn đơn gửi / thuê / drone theo lý do này.
+    @Transactional(readOnly = true)
+    public String orderPauseReasonOf(Long lockerId) {
+        return lockerRepository.findById(lockerId).map(LockerService::orderPauseReason).orElse(null);
+    }
+
     private static List<LockerUnit> customerVisible(List<LockerUnit> lockers) {
         return lockers.stream().filter(locker -> !isInstallationStatus(locker.getStatus())).toList();
     }
@@ -1210,7 +1238,7 @@ public class LockerService {
 
     @Transactional(readOnly = true)
     public List<LockerBoxSummary> listAvailableBoxes(Long lockerId) {
-        boolean bookable = lockerRepository.findById(lockerId).map(this::isBookable).orElse(true);
+        boolean bookable = lockerRepository.findById(lockerId).map(LockerService::acceptsNewOrders).orElse(true);
         if (!bookable) {
             return List.of();
         }
@@ -4098,8 +4126,8 @@ public class LockerService {
 
     private LockerResponse toResponse(LockerUnit locker, Map<Long, String> technicianNames, Boolean online) {
         int totalBoxes = (int) boxRepository.countByLockerId(locker.getId());
-        // Tủ đang bảo trì không nhận đơn ⇒ app không được thấy còn ô trống.
-        int availableBoxes = isBookable(locker)
+        // Tủ đang bảo trì / chưa có KTV phụ trách không nhận đơn ⇒ app không được thấy còn ô trống.
+        int availableBoxes = acceptsNewOrders(locker)
                 ? (int) boxRepository.countByLockerIdAndStatusAndActiveTrue(locker.getId(), "AVAILABLE")
                 : 0;
         Long technicianId = technicianNames == null ? null : locker.getAssignedTechnicianId();
@@ -4110,7 +4138,8 @@ public class LockerService {
                 locker.getAddress(), locker.getLatitude(), locker.getLongitude(),
                 locker.getLandingPad(), locker.getLandingMarkerId(), locker.getLandingPadStatus(),
                 totalBoxes, availableBoxes,
-                technicianId, technicianName, online);
+                technicianId, technicianName, online,
+                acceptsNewOrders(locker), orderPauseReason(locker));
     }
 
     private LockerBoxSummary toSummary(LockerBox box) {

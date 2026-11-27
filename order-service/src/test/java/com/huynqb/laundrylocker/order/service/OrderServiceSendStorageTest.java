@@ -117,6 +117,15 @@ class OrderServiceSendStorageTest {
         assertEquals("LOCKER_NOT_AVAILABLE", ex.getCode());
     }
 
+    /// F3-G16: tủ chưa có KTV phụ trách thì không nhận đơn gửi mới (kiosk và app cùng đi qua createSend).
+    @Test
+    void lockerWithoutTechnicianRejectsNewSendOrder() {
+        when(lockerLookupClient.customerVisible(5L, 44L)).thenReturn(ApiResponse.ok(java.util.Map.of(
+                "lockerId", 5L, "visible", true, "acceptingOrders", false, "orderPauseReason", "NO_TECHNICIAN")));
+        BusinessException ex = assertThrows(BusinessException.class, () -> orderService.createSend(send(null), 44L));
+        assertEquals("LOCKER_NO_TECHNICIAN", ex.getCode());
+    }
+
     @Test
     void appWithoutHoursKeepsTheIncluded48AndFlatFee() {
         OrderResponse response = orderService.createSend(send(null), 44L);

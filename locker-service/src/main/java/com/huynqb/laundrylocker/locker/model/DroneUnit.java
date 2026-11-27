@@ -8,11 +8,11 @@ import java.time.LocalDateTime;
 
 /// Một con drone vật lý gắn với một tủ (locker) làm trạm gốc.
 @Entity
-@EntityListeners(MaintenanceChangeListener.class)
+@EntityListeners({MaintenanceChangeListener.class, ActionAuditListener.class})
 @Table(name = "drone_units")
 @Getter
 @Setter
-public class DroneUnit {
+public class DroneUnit implements AuditTracked {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -71,5 +71,31 @@ public class DroneUnit {
     @PreUpdate
     void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    /// Ảnh các trường lúc nạp từ DB — {@link ActionAuditListener} so để ghi nhật ký thao tác (F3-G16).
+    @Transient
+    private java.util.Map<String, String> auditBaseline;
+
+    @Override
+    public java.util.Map<String, String> auditFields() {
+        java.util.Map<String, String> fields = new java.util.HashMap<>();
+        put(fields,
+                "status", s(status),
+                "assignedTechnicianId", s(assignedTechnicianId),
+                "lockerId", s(lockerId),
+                "active", s(active),
+                "deletedAt", s(deletedAt));
+        return fields;
+    }
+
+    private static String s(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private static void put(java.util.Map<String, String> fields, String... pairs) {
+        for (int i = 0; i + 1 < pairs.length; i += 2) {
+            fields.put(pairs[i], pairs[i + 1]);
+        }
     }
 }

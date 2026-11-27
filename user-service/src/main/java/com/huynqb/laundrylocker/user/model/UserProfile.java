@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @SQLRestriction("deleted_at IS NULL")
-@EntityListeners(AdminDataChangeListener.class)
+@EntityListeners({AdminDataChangeListener.class, UserActionAuditListener.class})
 @Table(name = "user_profiles")
 @Getter
 @Setter
@@ -83,5 +83,22 @@ public class UserProfile {
     @PreUpdate
     void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    /// Trạng thái / vai trò lúc nạp từ DB — {@link UserActionAuditListener} so để ghi nhật ký thao tác (F3-G16).
+    @Transient
+    private String auditStatus;
+
+    @Transient
+    private String auditRoles;
+
+    @Transient
+    private boolean auditLoaded;
+
+    @PostLoad
+    void rememberAudit() {
+        auditStatus = status;
+        auditRoles = roles;
+        auditLoaded = true;
     }
 }

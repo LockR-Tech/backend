@@ -75,7 +75,7 @@ class DroneOrderBookingBenefitsTest {
                 true, "SAFE", "Dự báo tuyến bay an toàn trong 30 phút tới.",
                 java.time.OffsetDateTime.now(), 30, 3, 10, 15, 0, 0));
         // Đơn thường: không được bay quãng ngắn (allowShortRoute = false).
-        when(sourceLockerSelector.select(10.77, 106.70, 5L, null, false)).thenReturn(new DroneSourceLockerSelector.Selection(
+        when(sourceLockerSelector.select(10.77, 106.70, 5L, null, false, true)).thenReturn(new DroneSourceLockerSelector.Selection(
                 OrderBenefitServiceTest.locker(7L, "TU07", "Tủ Thư viện"),
                 OrderBenefitServiceTest.locker(5L, "TU05", "Tủ Ký túc xá"), 300, 2000));
         when(lockerCellClient.findAvailable(5L, null, "DRONE"))

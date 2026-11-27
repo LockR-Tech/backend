@@ -55,6 +55,16 @@ public class DroneSourceLockerSelector {
      */
     public Selection select(double pickupLatitude, double pickupLongitude, Long destinationLockerId,
             Long excludedSourceLockerId, boolean allowShortRoute) {
+        return select(pickupLatitude, pickupLongitude, destinationLockerId, excludedSourceLockerId, allowShortRoute,
+                false);
+    }
+
+    /**
+     * @param newOrder báo giá / đặt đơn mới: tủ nhận và tủ bay phải có KTV phụ trách (F3-G16). Chọn lại tủ cho
+     *                 đơn đang chạy (sau sự cố) thì không xét, để đơn cũ không bị kẹt.
+     */
+    public Selection select(double pickupLatitude, double pickupLongitude, Long destinationLockerId,
+            Long excludedSourceLockerId, boolean allowShortRoute, boolean newOrder) {
         List<LockerInfo> lockers = allLockers();
         LockerInfo destination = lockers.stream()
                 .filter(locker -> Objects.equals(locker.id(), destinationLockerId))
@@ -63,6 +73,10 @@ public class DroneSourceLockerSelector {
                         "DRONE_DESTINATION_NOT_FOUND", "Destination locker was not found"));
         if (!"ACTIVE".equalsIgnoreCase(destination.status())) {
             throw new BusinessException("DRONE_LOCKER_INACTIVE", "Drone destination locker is not active");
+        }
+        if (newOrder && destination.pausedForNoTechnician()) {
+            throw new BusinessException(
+                    "LOCKER_NO_TECHNICIAN", "Tủ này chưa có kỹ thuật viên phụ trách nên tạm ngưng nhận đơn mới");
         }
         if (!Boolean.TRUE.equals(destination.landingPad())) {
             throw new BusinessException("LANDING_PAD_ABSENT", "Drone destination locker has no landing pad");
@@ -95,6 +109,7 @@ public class DroneSourceLockerSelector {
                 .filter(locker -> !Objects.equals(locker.id(), destinationLockerId))
                 .filter(locker -> !Objects.equals(locker.id(), excludedSourceLockerId))
                 .filter(locker -> "ACTIVE".equalsIgnoreCase(locker.status()))
+                .filter(locker -> !newOrder || !locker.pausedForNoTechnician())
                 .filter(locker -> Boolean.TRUE.equals(locker.landingPad()))
                 .filter(locker -> locker.latitude() != null && locker.longitude() != null)
                 .map(locker -> new Candidate(locker, meters(pickup, locker)))
