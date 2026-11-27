@@ -67,22 +67,6 @@ class ReceiverQueriesJpaTest {
     }
 
     @Test
-    void delegatedToMatchesDelegatePhoneOnly() {
-        LockerOrder delegated = order("ORD-G", 10L, "STORING", 7L);
-        delegated.setReceiverPhone("84 901 234 567");
-        delegated.setDelegatePhone("84 901 234 567");
-        delegated.setDelegatedAt(LocalDateTime.now());
-        LockerOrder receiverOnly = order("ORD-H", 11L, "STORING", 7L);
-        receiverOnly.setReceiverPhone("0901234567");
-        em.flush();
-
-        List<LockerOrder> result = orders.findDelegatedTo(
-                PhoneNumbers.variants("+84901234567"), false, List.of("STORING", "RETURNED"), PageRequest.of(0, 50));
-
-        assertEquals(List.of("ORD-G"), codes(result));
-    }
-
-    @Test
     void storeRatingsIncludeOrdersWithoutStoreIdThroughTheirLocker() {
         LockerOrder storeOrder = order("ORD-S", 10L, "COMPLETED", 99L);
         storeOrder.setStoreId(3L);

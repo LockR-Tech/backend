@@ -44,7 +44,6 @@ public class ReceiverOrderQueryService {
 
     private static final List<String> ACTIVE_INCOMING_STATUSES =
             List.of("INITIALIZED", "AWAITING_DISPATCH", "STORING", "RETURNED");
-    private static final List<String> ACTIVE_DELEGATED_STATUSES = List.of("STORING", "RETURNED");
     private static final Set<String> TERMINAL_STATUSES = Set.of("COMPLETED", "CANCELED", "EXPIRED");
     public static final String VIEWER_RECEIVER = "RECEIVER";
     public static final String VIEWER_DELEGATE = "DELEGATE";
@@ -64,27 +63,13 @@ public class ReceiverOrderQueryService {
         Set<String> phones = phoneVariants(phone);
         List<LockerOrder> orders = orderRepository.findIncoming(
                 userId, phones, !activeOnly, ACTIVE_INCOMING_STATUSES, PageRequest.of(0, clamp(limit)));
-        List<LockerOrder> visible = orders.stream()
-                // Đơn tới tay tôi chỉ vì được ủy quyền thì nằm ở danh sách "Được ủy quyền".
-                .filter(order -> isReceiverAccount(order, userId) || !delegatedTo(order, phone))
-                .toList();
-        return build(visible, order -> {
+        // Ủy quyền lấy hộ đã gỡ (F3-G15): đơn đã ủy quyền trước đó nằm luôn ở đây với người lấy hộ (SĐT người
+        // nhận đã đổi sang số của họ lúc ủy quyền) — trước đây ở danh sách "Được ủy quyền" riêng.
+        return build(orders, order -> {
             // Đơn đã ủy quyền cho người khác: mã mới thuộc về người lấy hộ.
             boolean pinVisible = order.getDelegatePhone() == null || delegatedTo(order, phone);
             return new View(pinVisible, false);
         });
-    }
-
-    @Transactional(readOnly = true)
-    public List<ReceiverOrderResponse> delegatedToMe(Long userId, boolean activeOnly, Integer limit) {
-        requireUser(userId);
-        String phone = callerPhone(userId);
-        if (PhoneNumbers.normalize(phone) == null) {
-            return List.of();
-        }
-        List<LockerOrder> orders = orderRepository.findDelegatedTo(
-                phoneVariants(phone), !activeOnly, ACTIVE_DELEGATED_STATUSES, PageRequest.of(0, clamp(limit)));
-        return build(orders, order -> new View(true, true));
     }
 
     /// Chi tiết một đơn cho người nhận hoặc người lấy hộ. Quyền xem khớp đúng hai danh sách:

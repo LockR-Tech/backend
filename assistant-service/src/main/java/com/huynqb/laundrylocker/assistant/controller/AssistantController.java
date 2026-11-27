@@ -3,6 +3,7 @@ package com.huynqb.laundrylocker.assistant.controller;
 import com.huynqb.laundrylocker.assistant.chat.AssistantService;
 import com.huynqb.laundrylocker.assistant.chat.ChatDtos.*;
 import com.huynqb.laundrylocker.common.dto.ApiResponse;
+import com.huynqb.laundrylocker.common.i18n.ServerText;
 import com.huynqb.laundrylocker.common.security.UserRoles;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,9 +29,10 @@ public class AssistantController {
     public ApiResponse<AskResponse> ask(
             @Valid @RequestBody AskRequest request,
             @RequestHeader("X-User-Id") Long userId,
-            @RequestHeader(value = "X-User-Roles", required = false) String roles) {
-        return ApiResponse.ok(
-                "ASSISTANT_ANSWERED", "Answered", assistantService.ask(userId, UserRoles.parse(roles), request));
+            @RequestHeader(value = "X-User-Roles", required = false) String roles,
+            @RequestHeader(value = ServerText.LANGUAGE_HEADER, required = false) String language) {
+        return ApiResponse.ok("ASSISTANT_ANSWERED", "Answered", assistantService.ask(
+                userId, UserRoles.parse(roles), request, ServerText.wantsEnglish(language)));
     }
 
     @GetMapping("/conversations")

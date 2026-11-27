@@ -17,6 +17,13 @@ public interface AnswerGenerator {
     /// có `chunkIndex == chunks.size()`.
     GeneratedAnswer generate(String question, List<RetrievedChunk> chunks, List<ChatTurn> history, ContextDocument extra);
 
+    /// [english] = người hỏi dùng app bằng tiếng Anh ⇒ trả lời bằng tiếng Anh (F3-G15).
+    default GeneratedAnswer generate(
+            String question, List<RetrievedChunk> chunks, List<ChatTurn> history, ContextDocument extra,
+            boolean english) {
+        return generate(question, chunks, history, extra);
+    }
+
     default GeneratedAnswer generate(String question, List<RetrievedChunk> chunks, List<ChatTurn> history) {
         return generate(question, chunks, history, null);
     }

@@ -224,4 +224,23 @@ class ClaudeAnswerGeneratorTest {
         assertFalse(unconfigured.configured());
         assertThrows(ProviderException.class, () -> unconfigured.generate("?", List.of(), List.of()));
     }
+
+    @Test
+    void englishAppAddsTheAnswerInEnglishInstruction() throws IOException {
+        responseBody = """
+                {"id":"msg_2","type":"message","role":"assistant","model":"claude-opus-5",
+                 "content":[{"type":"text","text":"Open Orders › My orders."}],
+                 "stop_reason":"end_turn","stop_sequence":null,
+                 "usage":{"input_tokens":10,"output_tokens":5}}
+                """;
+        List<RetrievedChunk> chunks = List.of(new RetrievedChunk(11, 1, "Hướng dẫn", 0, null, "Mở Đơn hàng.", 0.6));
+
+        generator.generate("Where is my code?", chunks, List.of(), null, true);
+        String english = new ObjectMapper().readTree(requestBody.get()).toString();
+        generator.generate("Mã của tôi ở đâu?", chunks, List.of(), null, false);
+        String vietnamese = new ObjectMapper().readTree(requestBody.get()).toString();
+
+        assertTrue(english.contains("always answer in clear, natural English"));
+        assertFalse(vietnamese.contains("always answer in clear, natural English"));
+    }
 }
