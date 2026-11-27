@@ -49,7 +49,9 @@ class ActionLogServiceTest {
         assertEquals("Bảo Phạm (#7)", record.getToValue());
         assertNull(record.getFromValue());
         assertEquals(5L, record.getLockerId());
-        assertEquals(10, record.getOccurredAt().getHour(), "giờ Việt Nam");
+        assertEquals(3, record.getOccurredAt().getHour(), "lưu giờ UTC như mọi cột thời gian khác");
+        assertEquals(java.time.LocalDateTime.of(2026, 11, 26, 17, 0),
+                ActionLogService.utcStartOf(java.time.LocalDate.of(2026, 11, 27)), "ngày 27/11 giờ VN bắt đầu 17:00 UTC hôm trước");
     }
 
     @Test

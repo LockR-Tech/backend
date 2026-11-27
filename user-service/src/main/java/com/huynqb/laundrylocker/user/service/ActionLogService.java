@@ -19,6 +19,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -70,9 +71,10 @@ public class ActionLogService {
         }
         ActionLogRecord record = new ActionLogRecord();
         record.setEventId(event.eventId());
+        // Giờ không kèm múi giờ của backend là giờ UTC (web đổi sang giờ Việt Nam khi hiển thị).
         record.setOccurredAt(event.occurredAt() == null
-                ? LocalDateTime.now(BUSINESS_ZONE)
-                : LocalDateTime.ofInstant(event.occurredAt(), BUSINESS_ZONE));
+                ? LocalDateTime.now(ZoneOffset.UTC)
+                : LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC));
         record.setSource(event.source());
         record.setAction(action);
         record.setTargetType(text(payload.get("targetType")));
@@ -148,11 +150,12 @@ public class ActionLogService {
                         ? cb.isNotNull(root.get("actorUserId"))
                         : cb.equal(root.get("actorUserId"), actorUserId));
             }
+            // Ngày lọc là ngày theo giờ Việt Nam; cột lưu giờ UTC.
             if (from != null) {
-                predicates.add(cb.greaterThanOrEqualTo(root.get("occurredAt"), from.atStartOfDay()));
+                predicates.add(cb.greaterThanOrEqualTo(root.get("occurredAt"), utcStartOf(from)));
             }
             if (to != null) {
-                predicates.add(cb.lessThan(root.get("occurredAt"), to.plusDays(1).atStartOfDay()));
+                predicates.add(cb.lessThan(root.get("occurredAt"), utcStartOf(to.plusDays(1))));
             }
             if (StringUtils.hasText(q)) {
                 String like = "%" + q.trim().toLowerCase(Locale.ROOT) + "%";
@@ -166,6 +169,10 @@ public class ActionLogService {
             }
             return cb.and(predicates.toArray(Predicate[]::new));
         };
+    }
+
+    static LocalDateTime utcStartOf(LocalDate businessDay) {
+        return LocalDateTime.ofInstant(businessDay.atStartOfDay(BUSINESS_ZONE).toInstant(), ZoneOffset.UTC);
     }
 
     private static ActionLogView view(ActionLogRecord r) {
