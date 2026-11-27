@@ -240,7 +240,7 @@ public class AuthService {
         AuthAccount account = findAccount(stored.getAccountId());
         UserSummary user = userClient.getUser(account.getUserId()).data();
         stored.setRevoked(true);
-        return issue(account, user.roles());
+        return sessionHasAdmin(claims) ? issue(account, user.roles()) : issueSingleFactor(account, user.roles());
     }
 
     @Transactional
@@ -692,16 +692,39 @@ public class AuthService {
                 .orElseThrow(() -> new BusinessException("AUTH_INVALID", "Email/số điện thoại hoặc mật khẩu không đúng"));
     }
 
-    /// Đăng nhập chỉ một lớp (mật khẩu, OTP email/SĐT, Firebase, QR kiosk): tài khoản ADMIN phải qua
+    /// Đăng nhập chỉ một lớp (mật khẩu, OTP email/SĐT, Firebase, QR kiosk): quyền ADMIN chỉ cấp qua
     /// `/api/admin/auth/login` + OTP 2FA, nên mọi đường này không được cấp token mang quyền ADMIN.
+    /// Tài khoản admin kiêm vai trò khác (KTV, khách — F3-G15) vẫn đăng nhập app / kiosk được, phiên chỉ
+    /// mang các vai trò còn lại; tài khoản chỉ có ADMIN thì bị từ chối như trước.
     private AuthResponse issueSingleFactor(AuthAccount account, Set<String> roles) {
-        if (roles != null && roles.contains("ADMIN")) {
+        if (!"ACTIVE".equalsIgnoreCase(account.getStatus())) {
+            throw accountInactive();
+        }
+        return issue(account, withoutAdmin(roles));
+    }
+
+    private static Set<String> withoutAdmin(Set<String> roles) {
+        if (roles == null || !roles.contains("ADMIN")) {
+            return roles;
+        }
+        Set<String> rest = roles.stream()
+                .filter(role -> !"ADMIN".equals(role))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (rest.isEmpty()) {
             throw new BusinessException(
                     "ADMIN_AUTH_2FA_REQUIRED",
                     "Tài khoản quản trị chỉ đăng nhập trên trang quản trị web (có mã OTP)",
                     org.springframework.http.HttpStatus.FORBIDDEN);
         }
-        return issue(account, roles);
+        return rest;
+    }
+
+    /// Làm mới giữ đúng mức quyền của phiên: phiên đăng nhập một lớp (refresh token không mang ADMIN)
+    /// không được nâng lên ADMIN khi làm mới — muốn quyền ADMIN phải đăng nhập lại qua OTP 2FA.
+    private static boolean sessionHasAdmin(Claims refreshClaims) {
+        Object roles = refreshClaims.get("roles");
+        return roles instanceof java.util.Collection<?> list
+                && list.stream().anyMatch(role -> "ADMIN".equals(String.valueOf(role)));
     }
 
     private AuthResponse issue(AuthAccount account, Set<String> roles) {
