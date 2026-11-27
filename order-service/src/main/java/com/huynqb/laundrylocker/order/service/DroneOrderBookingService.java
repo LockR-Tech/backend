@@ -226,7 +226,7 @@ public class DroneOrderBookingService {
             if (receiverUserId != null && !receiverUserId.equals(userId)) {
                 // Người nhận có tài khoản Lock.R (khớp email / SĐT): đơn hiện ngay ở "Hàng chờ nhận" của họ.
                 String senderName = StringUtils.hasText(sender.name()) ? sender.name().trim() : sender.phone();
-                String lockerName = route.destination().name();
+                String lockerName = lockerNameAfterTu(route.destination().name());
                 notifyQuietly(receiverUserId, "Bạn có đơn hàng gửi từ " + senderName,
                         "Đơn drone " + saved.getOrderCode() + " giao tới tủ " + lockerName
                                 + (free ? " đã được tạo." : " đang chờ người gửi thanh toán.")
@@ -339,6 +339,11 @@ public class DroneOrderBookingService {
             throw new BusinessException("DRONE_" + who + "_EMAIL_INVALID", who + " email is not valid");
         }
         return new Contact(cleanName, cleanPhone, cleanEmail.toLowerCase());
+    }
+
+    /// Câu thông báo đã có chữ "tủ" trước tên ⇒ bỏ chữ "Tủ" ở đầu tên tủ để không thành "tủ Tủ demo…".
+    static String lockerNameAfterTu(String name) {
+        return name == null ? "" : name.trim().replaceFirst("(?iu)^tủ\\s+", "");
     }
 
     private String resolveFulfillmentMode(String requestedMode, Long userId) {
