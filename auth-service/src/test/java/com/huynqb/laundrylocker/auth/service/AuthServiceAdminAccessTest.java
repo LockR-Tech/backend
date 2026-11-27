@@ -115,6 +115,65 @@ class AuthServiceAdminAccessTest {
         verify(jwtService, never()).issue(any(), any(), any());
     }
 
+    // ---- Admin kiêm vai trò khác (F3-G15): đăng nhập app / kiosk được, phiên không mang ADMIN ----
+
+    @Test
+    void adminWithOtherRolesGetsAppSessionWithoutAdmin() {
+        asRoles("ADMIN", "DRONE_TECHNICIAN");
+
+        service.login(new LoginRequest(EMAIL, "secret"));
+
+        verify(jwtService).issue(1L, 10L, Set.of("DRONE_TECHNICIAN"));
+    }
+
+    @Test
+    void refreshOfAppSessionNeverRegainsAdmin() {
+        asRoles("ADMIN", "LOCKER_TECHNICIAN", "CUSTOMER");
+        refreshTokenWithRoles(List.of("LOCKER_TECHNICIAN", "CUSTOMER"));
+
+        service.refresh(new RefreshTokenRequest("old-refresh"));
+
+        verify(jwtService).issue(1L, 10L, Set.of("LOCKER_TECHNICIAN", "CUSTOMER"));
+    }
+
+    @Test
+    void refreshOfTwoFactorSessionKeepsAdmin() {
+        asRoles("ADMIN", "DRONE_TECHNICIAN");
+        refreshTokenWithRoles(List.of("ADMIN", "DRONE_TECHNICIAN"));
+
+        service.refresh(new RefreshTokenRequest("old-refresh"));
+
+        verify(jwtService).issue(1L, 10L, Set.of("ADMIN", "DRONE_TECHNICIAN"));
+    }
+
+    /// Phiên app của người sau đó chỉ còn vai trò ADMIN ⇒ không làm mới được, phải đăng nhập web + OTP.
+    @Test
+    void refreshOfAppSessionForAdminOnlyAccountIsRejected() {
+        refreshTokenWithRoles(List.of("CUSTOMER"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.refresh(new RefreshTokenRequest("old-refresh")));
+
+        assertEquals("ADMIN_AUTH_2FA_REQUIRED", ex.getCode());
+        verify(jwtService, never()).issue(any(), any(), any());
+    }
+
+    private void asRoles(String... roles) {
+        when(userClient.getUser(10L)).thenReturn(ApiResponse.ok(
+                new UserSummary(10L, EMAIL, "0909000010", "Admin", "ACTIVE", Set.of(roles))));
+    }
+
+    private void refreshTokenWithRoles(List<String> roles) {
+        Claims claims = org.mockito.Mockito.mock(Claims.class);
+        when(claims.get("tokenUse", String.class)).thenReturn("refresh");
+        when(claims.get("roles")).thenReturn(roles);
+        when(jwtService.parse("old-refresh")).thenReturn(claims);
+        RefreshToken stored = new RefreshToken();
+        stored.setAccountId(1L);
+        stored.setExpiresAt(Instant.now().plusSeconds(3600));
+        when(refreshTokenRepository.findByTokenHashAndRevokedFalse(anyString())).thenReturn(Optional.of(stored));
+    }
+
     @Test
     void adminStillGetsTokenAfterTwoFactor() {
         String tempToken = adminLogin();
