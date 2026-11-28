@@ -201,28 +201,28 @@ public class LockerController {
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         if (mine && userId != null) {
-            return ApiResponse.ok(lockerService.assignedReports(userId));
+            return ApiResponse.ok(lockerService.assignedKioskReports(userId));
         }
         if (routed && userId != null) {
-            return ApiResponse.ok(lockerService.routedReports(userId));
+            return ApiResponse.ok(lockerService.routedKioskReports(userId));
         }
         if (all) {
             return ApiResponse.ok(!UserRoles.isAdmin(roles) && userId != null
                     ? lockerService.visibleKioskReportsForTechnician(userId)
                     : lockerService.allReports());
         }
-        return ApiResponse.ok(lockerService.openReports());
+        return ApiResponse.ok(lockerService.openKioskReports());
     }
 
     @PutMapping("/api/locker-technician/reports/{id}/claim")
     public ApiResponse<LockerReportResponse> maintenanceClaim(
             @PathVariable Long id, @RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok("REPORT_CLAIMED", "Report claimed", lockerService.claimReport(id, userId));
+        return ApiResponse.ok("REPORT_CLAIMED", "Report claimed", lockerService.claimKioskReport(id, userId));
     }
 
     @GetMapping("/api/locker-technician/reports/{id}")
     public ApiResponse<LockerReportResponse> maintenanceReport(@PathVariable Long id) {
-        return ApiResponse.ok(lockerService.getReport(id));
+        return ApiResponse.ok(lockerService.getKioskReport(id));
     }
 
     @PutMapping("/api/locker-technician/reports/{id}/resolve")
@@ -233,7 +233,7 @@ public class LockerController {
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
         return ApiResponse.ok(
                 "REPORT_RESOLVED", "Report resolved and cell cleared",
-                lockerService.resolveReportAndClearFault(id, userId, body, UserRoles.isAdmin(roles)));
+                lockerService.resolveKioskReport(id, userId, body, UserRoles.isAdmin(roles)));
     }
 
     // ---- Ảnh phiếu sự cố (Cloudinary, ADR-0004) ----
@@ -241,6 +241,7 @@ public class LockerController {
     @GetMapping("/api/locker-technician/reports/{id}/attachments")
     public ApiResponse<List<ReportAttachmentResponse>> maintenanceReportAttachments(
             @PathVariable Long id, @RequestParam(required = false) String stage) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(attachmentService.list(id, stage));
     }
 
@@ -250,6 +251,7 @@ public class LockerController {
             @Valid @RequestBody ReportAttachmentsRequest body,
             @RequestHeader("X-User-Id") Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(
                 "REPORT_ATTACHMENTS_ADDED", "Report photos added",
                 attachmentService.addByStaff(
@@ -262,6 +264,7 @@ public class LockerController {
             @PathVariable Long attachmentId,
             @RequestHeader("X-User-Id") Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        lockerService.assertKioskReport(id);
         attachmentService.delete(id, attachmentId, userId, UserRoles.isAdmin(roles));
         return ApiResponse.ok("REPORT_ATTACHMENT_DELETED", "Report photo deleted");
     }
@@ -330,6 +333,7 @@ public class LockerController {
             @Valid @RequestBody BoxIncidentResolutionRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(
                 "BOX_INCIDENT_RESOLVED", "Đã xử lý sự cố ô tủ",
                 lockerService.resolveBoxIncident(id, body, userId, roles));
@@ -342,6 +346,7 @@ public class LockerController {
             @RequestBody RejectReportRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(
                 "REPORT_REJECTED", "Đã từ chối phiếu và phản hồi người báo",
                 lockerService.rejectReport(id, body.feedback(), body.attachments(), userId, roles));
@@ -363,6 +368,7 @@ public class LockerController {
             @PathVariable Long id,
             @Valid @RequestBody ExtendSlaRequest body,
             @RequestHeader("X-User-Id") Long actorUserId) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(
                 "SLA_EXTENDED",
                 "Đã gia hạn SLA",
@@ -376,6 +382,7 @@ public class LockerController {
             @Valid @RequestBody(required = false) ReleaseReportRequest body,
             @RequestHeader("X-User-Id") Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(
                 "REPORT_RELEASED", "Đã trả phiếu về hàng chờ",
                 lockerService.releaseReport(id, userId, body == null ? null : body.reason(), UserRoles.isAdmin(roles)));
@@ -383,6 +390,7 @@ public class LockerController {
 
     @GetMapping("/api/locker-technician/reports/{id}/logs")
     public ApiResponse<List<RepairLogResponse>> maintenanceReportLogs(@PathVariable Long id) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(lockerService.repairLogs(id));
     }
 
@@ -392,6 +400,7 @@ public class LockerController {
             @Valid @RequestBody RepairLogRequest body,
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
             @RequestHeader(value = "X-User-Roles", required = false) String roles) {
+        lockerService.assertKioskReport(id);
         return ApiResponse.ok(
                 "REPAIR_LOG_ADDED", "Repair log added",
                 lockerService.addRepairLog(id, body.note(), userId, body.attachments(), UserRoles.isAdmin(roles)));

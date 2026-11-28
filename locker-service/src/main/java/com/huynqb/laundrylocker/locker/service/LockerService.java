@@ -1514,6 +1514,71 @@ public class LockerService {
         return toReports(reportRepository.findByStatusInOrderByCreatedAtDesc(OPEN_REPORT_STATUSES));
     }
 
+    /** Phiếu mở chỉ thuộc mảng tủ/Kiosk; loại bỏ phiếu sự cố Drone (WF04-041 / BUG-WF04-02). */
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> openKioskReports() {
+        List<LockerReport> reports = reportRepository.findByStatusInOrderByCreatedAtDesc(OPEN_REPORT_STATUSES).stream()
+                .filter(report -> !isDroneReport(report))
+                .toList();
+        return toReports(reports);
+    }
+
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> assignedKioskReports(Long userId) {
+        List<LockerReport> reports = reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
+                .filter(report -> !isDroneReport(report))
+                .sorted(Comparator.comparing(
+                        (LockerReport r) -> r.getAssignedAt() != null ? r.getAssignedAt() : r.getCreatedAt(),
+                        Comparator.nullsLast(Comparator.reverseOrder())
+                ).thenComparing(LockerReport::getId, Comparator.reverseOrder()))
+                .toList();
+        return toReports(reports);
+    }
+
+    @Transactional(readOnly = true)
+    public List<LockerReportResponse> routedKioskReports(Long userId) {
+        if (userId != null && !onDuty(userId)) {
+            return List.of();
+        }
+        List<LockerReport> reports = reportRepository.findByRoutedToUserIdAndStatusOrderByCreatedAtDesc(userId, "OPEN")
+                .stream()
+                .filter(report -> !isDroneReport(report))
+                .toList();
+        return toReports(reports);
+    }
+
+    /** Guard dùng chung cho mọi endpoint /api/locker-technician/reports/{id}* — chặn KTV tủ thao tác phiếu Drone. */
+    @Transactional(readOnly = true)
+    public void assertKioskReport(Long reportId) {
+        LockerReport report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new NotFoundException("LockerReport", reportId));
+        if (isDroneReport(report)) {
+            throw new BusinessException(
+                    "LOCKER_REPORT_REQUIRED",
+                    "Phiếu này thuộc đội kỹ thuật Drone — KTV tủ không thể thao tác",
+                    HttpStatus.FORBIDDEN);
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public LockerReportResponse getKioskReport(Long reportId) {
+        assertKioskReport(reportId);
+        return getReport(reportId);
+    }
+
+    @Transactional
+    public LockerReportResponse claimKioskReport(Long reportId, Long userId) {
+        assertKioskReport(reportId);
+        return claimReport(reportId, userId);
+    }
+
+    @Transactional
+    public LockerReportResponse resolveKioskReport(
+            Long reportId, Long userId, ResolveReportRequest request, boolean admin) {
+        assertKioskReport(reportId);
+        return resolveReportAndClearFault(reportId, userId, request, admin);
+    }
+
     @Transactional(readOnly = true)
     public List<LockerReportResponse> assignedReports(Long userId) {
         return reportRepository.findByAssignedToUserIdOrderByCreatedAtDesc(userId).stream()
@@ -1877,10 +1942,14 @@ public class LockerService {
     private void appendSlaExtensionLog(
             LockerReport report, Long actorUserId, String header, LocalDateTime newDue, String reason) {
         java.time.format.DateTimeFormatter dtf = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
+        LocalDateTime displayDue = newDue
+                .atZone(java.time.ZoneId.systemDefault())
+                .withZoneSameInstant(java.time.ZoneId.of("Asia/Ho_Chi_Minh"))
+                .toLocalDateTime();
         RepairLog entry = new RepairLog();
         entry.setReportId(report.getId());
         entry.setActorUserId(actorUserId);
-        entry.setNote(header + "\n- Hạn hoàn tất mới: " + newDue.format(dtf)
+        entry.setNote(header + "\n- Hạn hoàn tất mới: " + displayDue.format(dtf)
                 + (reason != null ? "\n- Lý do: " + reason : ""));
         repairLogRepository.save(entry);
     }
@@ -2042,6 +2111,18 @@ public class LockerService {
     /// thái trước khi hỏng, bãi đáp về OK, tủ do phiếu chặn về ACTIVE, lịch kiểm tra đang chờ
     /// phiếu này thì dời hạn.
     private void restoreAssetsAfterClose(LockerReport report) {
+        // Giải phóng lịch bảo trì đang chờ phiếu này trước khi đồng bộ trạng thái drone/tủ
+        // (lịch 1 lần chuyển active=false để drone quay về IDLE đúng).
+        for (MaintenanceSchedule schedule : scheduleRepository.findByPendingReportId(report.getId())) {
+            schedule.setPendingReportId(null);
+            if (isOneTimeSchedule(schedule)) {
+                schedule.setActive(false);
+            } else {
+                schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+                schedule.setLastDueNotifiedAt(null);
+            }
+            scheduleRepository.save(schedule);
+        }
         if (report.getDroneUnitId() != null
                 && !reportRepository.existsByDroneUnitIdAndStatusInAndIdNot(
                         report.getDroneUnitId(), OPEN_REPORT_STATUSES, report.getId())) {
@@ -2082,17 +2163,6 @@ public class LockerService {
                         publishLockerAvailabilityChanged(locker.getId());
                         publishLockerCatalogChanged(locker.getId());
                     });
-        }
-        // Tra theo lịch (không theo report.scheduleId): kiểm tra KHÔNG ĐẠT có thể gộp vào phiếu ô đã mở sẵn.
-        for (MaintenanceSchedule schedule : scheduleRepository.findByPendingReportId(report.getId())) {
-            schedule.setPendingReportId(null);
-            if (isOneTimeSchedule(schedule)) {
-                schedule.setActive(false);
-            } else {
-                schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
-                schedule.setLastDueNotifiedAt(null);
-            }
-            scheduleRepository.save(schedule);
         }
     }
 
@@ -2395,8 +2465,10 @@ public class LockerService {
                     HttpStatus.CONFLICT);
         }
         InspectionOutcome outcome = evaluateInspection(schedule, req);
-        // Lịch drone là việc của KTV drone (drone FAULT tự mở phiếu) ⇒ vẫn dời hạn như cũ.
-        boolean opensReport = outcome.failed() && schedule.getLockerId() != null;
+        // Cả lịch tủ và lịch drone khi KHÔNG ĐẠT đều mở phiếu sự cố, gắn pendingReportId và giữ nguyên hạn
+        // kế tiếp cho tới khi phiếu được nghiệm thu xong (WF04-026, WF04-027 / BUG-WF04-01).
+        boolean opensReport = outcome.failed()
+                && (schedule.getLockerId() != null || schedule.getDroneUnitId() != null);
 
         LocalDateTime now = LocalDateTime.now();
         schedule.setLastDoneAt(now);
@@ -2438,22 +2510,29 @@ public class LockerService {
         }
         inspectionLog.setChecklistResults(outcome.checklistResults());
 
+        LockerReport createdReport = null;
         if (opensReport) {
-            LockerReport report = openInspectionReport(schedule, req, outcome, techId, inspectorId);
-            schedule.setPendingReportId(report.getId());
-            inspectionLog.setCreatedReportId(report.getId());
+            if (schedule.getLockerId() != null) {
+                createdReport = openInspectionReport(schedule, req, outcome, techId, inspectorId);
+            } else if (schedule.getDroneUnitId() != null) {
+                createdReport = markDroneMaintenanceFailure(
+                        schedule.getDroneUnitId(), schedule.getId(), req, outcome, techId, inspectorId, schedule.getTitle());
+            }
+            if (createdReport != null) {
+                schedule.setPendingReportId(createdReport.getId());
+                inspectionLog.setCreatedReportId(createdReport.getId());
+                if (req != null && req.photoUrls() != null && !req.photoUrls().isEmpty()) {
+                    attachmentService.attachFromInspectionUrls(createdReport, req.photoUrls(), techId);
+                }
+            }
         }
         MaintenanceSchedule saved = scheduleRepository.save(schedule);
         inspectionLogRepository.save(inspectionLog);
         if (saved.getLockerId() != null && !outcome.failed()) {
             restoreLockerFromScheduleIfEligible(saved.getLockerId());
         }
-        if (saved.getDroneUnitId() != null) {
-            if (outcome.failed()) {
-                markDroneMaintenanceFailure(saved.getDroneUnitId(), req, outcome, techId, saved.getTitle());
-            } else {
-                synchronizeDroneOperationalStatus(saved.getDroneUnitId(), techId);
-            }
+        if (saved.getDroneUnitId() != null && !outcome.failed()) {
+            synchronizeDroneOperationalStatus(saved.getDroneUnitId(), techId);
         }
         return toSchedule(saved);
     }
@@ -2935,6 +3014,9 @@ public class LockerService {
         String previous = unit.getStatus();
         unit.setStatus(targetStatus);
         unit.setFaultReason(reason);
+        if (DroneStatus.CHARGING.equals(previous) && !DroneStatus.CHARGING.equals(targetStatus)) {
+            unit.setLastChargedAt(LocalDateTime.now());
+        }
         DroneUnit saved = droneUnitRepository.save(unit);
         appendDroneLog(saved.getId(), "Đồng bộ trạng thái " + previous + " → " + targetStatus, actorUserId);
     }
@@ -2946,9 +3028,9 @@ public class LockerService {
         appendDroneLog(unit.getId(), "Chờ nghiệm thu bảo trì: " + scheduleTitle, actorUserId);
     }
 
-    private void markDroneMaintenanceFailure(
-            Long droneUnitId, CompleteScheduleRequest request, InspectionOutcome outcome,
-            Long actorUserId, String scheduleTitle) {
+    private LockerReport markDroneMaintenanceFailure(
+            Long droneUnitId, Long scheduleId, CompleteScheduleRequest request, InspectionOutcome outcome,
+            Long actorUserId, Long assigneeId, String scheduleTitle) {
         DroneUnit unit = findDroneUnit(droneUnitId);
         String reason = request != null && StringUtils.hasText(request.faultReason())
                 ? request.faultReason().trim()
@@ -2958,9 +3040,13 @@ public class LockerService {
         String previous = unit.getStatus();
         unit.setStatus(DroneStatus.FAULT);
         unit.setFaultReason(reason);
+        if (DroneStatus.CHARGING.equals(previous)) {
+            unit.setLastChargedAt(LocalDateTime.now());
+        }
         DroneUnit saved = droneUnitRepository.save(unit);
         appendDroneLog(saved.getId(), "Bảo trì không đạt, chuyển " + previous + " → FAULT: " + reason, actorUserId);
-        openDroneFaultReport(saved, reason, actorUserId);
+        return openDroneReport(
+                saved, DroneStatus.FAULT, reason, actorUserId, assigneeId != null, assigneeId, scheduleId);
     }
 
     @Transactional
@@ -3519,26 +3605,38 @@ public class LockerService {
         appendDroneLog(id, "Xóa drone: " + deleteReason, actorUserId);
     }
 
-    private void openDroneFaultReport(DroneUnit unit, String reason, Long actorUserId) {
-        openDroneReport(unit, DroneStatus.FAULT, reason, actorUserId, false);
+    private LockerReport openDroneFaultReport(DroneUnit unit, String reason, Long actorUserId) {
+        return openDroneReport(unit, DroneStatus.FAULT, reason, actorUserId, false, null, null);
+    }
+
+    private LockerReport openDroneReport(
+            DroneUnit unit, String targetStatus, String reason, Long actorUserId, boolean selfAssign) {
+        return openDroneReport(unit, targetStatus, reason, actorUserId, selfAssign, actorUserId, null);
     }
 
     /// #2 Mo 1 phieu gan voi drone (box_id NULL) de no vao chung hang doi
-    /// SLA/qua han nhu phieu o tu. `selfAssign`: true khi KTV phụ trách tự báo trên app.
-    private void openDroneReport(
-            DroneUnit unit, String targetStatus, String reason, Long actorUserId, boolean selfAssign) {
-        boolean alreadyOpen =
-                reportRepository
-                        .findFirstByDroneUnitIdAndStatusInOrderByCreatedAtDesc(unit.getId(), OPEN_REPORT_STATUSES)
-                        .isPresent();
-        if (alreadyOpen) {
-            return;
+    /// SLA/qua han nhu phieu o tu. `selfAssign`: true khi KTV phụ trách tự báo trên app hoặc kiểm tra định kỳ FAIL.
+    private LockerReport openDroneReport(
+            DroneUnit unit, String targetStatus, String reason, Long actorUserId,
+            boolean selfAssign, Long assigneeId, Long scheduleId) {
+        Optional<LockerReport> existing =
+                reportRepository.findFirstByDroneUnitIdAndStatusInOrderByCreatedAtDesc(unit.getId(), OPEN_REPORT_STATUSES);
+        if (existing.isPresent()) {
+            LockerReport existingReport = existing.get();
+            if (scheduleId != null && existingReport.getScheduleId() == null) {
+                existingReport.setScheduleId(scheduleId);
+                existingReport = reportRepository.save(existingReport);
+            }
+            return existingReport;
         }
         boolean maintenance = DroneStatus.MAINTENANCE.equals(targetStatus);
         LockerReport report = new LockerReport();
         report.setLockerId(unit.getLockerId());
         report.setDroneUnitId(unit.getId());
         report.setCategory(ReportCategory.DRONE);
+        if (scheduleId != null) {
+            report.setScheduleId(scheduleId);
+        }
         if (maintenance) {
             report.setTicketType(TICKET_TYPE_DRONE_MAINTENANCE);
         }
@@ -3547,8 +3645,9 @@ public class LockerService {
         report.setDescription(StringUtils.hasText(reason)
                 ? reason
                 : (maintenance ? "Đưa drone vào bảo trì" : "Drone reported faulty"));
-        if (selfAssign && actorUserId != null) {
-            report.setAssignedToUserId(actorUserId);
+        Long effectiveAssignee = selfAssign ? (assigneeId != null ? assigneeId : actorUserId) : null;
+        if (effectiveAssignee != null) {
+            report.setAssignedToUserId(effectiveAssignee);
             report.setAssignedAt(LocalDateTime.now());
             report.setStatus("IN_PROGRESS");
         } else {
@@ -3558,7 +3657,9 @@ public class LockerService {
             }
             report.setRoutedToUserId(routedTechId);
         }
-        notifyDroneRouted(reportRepository.save(report), actorUserId);
+        LockerReport saved = reportRepository.save(report);
+        notifyDroneRouted(saved, actorUserId);
+        return saved;
     }
 
     private static String technicianLabel(Long technicianId) {
@@ -4897,9 +4998,14 @@ public class LockerService {
         if (report.getUserId() == null || report.getUserId() == 0L) {
             return;
         }
-        LockerUnit locker = lockerRepository.findById(report.getLockerId()).orElse(null);
-        String lockerLabel = locker == null ? ("#" + report.getLockerId()) : locker.getName();
-        String message = "Báo cáo lỗi tủ " + lockerLabel + " của bạn " + messageSuffix + ".";
+        String message;
+        if (isDroneReport(report)) {
+            message = "Báo cáo sự cố drone " + droneLabel(report.getDroneUnitId()) + " của bạn " + messageSuffix + ".";
+        } else {
+            LockerUnit locker = lockerRepository.findById(report.getLockerId()).orElse(null);
+            String lockerLabel = locker == null ? ("#" + report.getLockerId()) : locker.getName();
+            message = "Báo cáo lỗi tủ " + lockerLabel + " của bạn " + messageSuffix + ".";
+        }
         try {
             rabbitTemplate.convertAndSend(
                     DomainEventNames.EXCHANGE,

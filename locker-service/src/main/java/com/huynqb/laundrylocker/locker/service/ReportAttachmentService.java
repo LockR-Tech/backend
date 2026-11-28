@@ -104,6 +104,99 @@ public class ReportAttachmentService {
         return attachmentRepository.saveAll(entities).stream().map(this::toResponse).toList();
     }
 
+    /// Sao chép ảnh minh chứng chụp trong ca kiểm tra định kỳ (đã upload lên Cloudinary)
+    /// sang danh sách ảnh hiện trường (stage REPORT) của phiếu sự cố vừa tự động tạo.
+    List<ReportAttachmentResponse> attachFromInspectionUrls(
+            LockerReport report, List<String> photoUrls, Long actorUserId) {
+        if (report == null || report.getId() == null || photoUrls == null || photoUrls.isEmpty()) {
+            return List.of();
+        }
+        int maxTotal = rules.reportPhotosTotal();
+        int maxReporter = rules.reportPhotosReporterTotal();
+        long currentTotal = attachmentRepository.countByReportId(report.getId());
+        long currentReporter = attachmentRepository.countByReportIdAndStage(report.getId(), AttachmentStage.REPORT);
+        long remaining = Math.min(maxTotal - currentTotal, maxReporter - currentReporter);
+        if (remaining <= 0) {
+            return List.of();
+        }
+        Set<String> seen = new HashSet<>();
+        List<ReportAttachment> entities = new ArrayList<>();
+        int index = 0;
+        for (String rawUrl : photoUrls) {
+            if (entities.size() >= remaining) {
+                break;
+            }
+            if (!StringUtils.hasText(rawUrl)) {
+                continue;
+            }
+            String url = rawUrl.trim();
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                continue;
+            }
+            String publicId = deriveInspectionPublicId(report.getId(), url, index++);
+            if (!seen.add(publicId) || attachmentRepository.existsByPublicId(publicId)) {
+                continue;
+            }
+            ReportAttachment attachment = new ReportAttachment();
+            attachment.setReportId(report.getId());
+            attachment.setStage(AttachmentStage.REPORT);
+            attachment.setPublicId(publicId);
+            attachment.setSecureUrl(url);
+            attachment.setFormat(extractUrlExtension(url));
+            attachment.setCaption("Ảnh minh chứng kiểm tra định kỳ");
+            attachment.setUploadedByUserId(actorUserId != null ? actorUserId : 0L);
+            entities.add(attachment);
+        }
+        if (entities.isEmpty()) {
+            return List.of();
+        }
+        return attachmentRepository.saveAll(entities).stream().map(this::toResponse).toList();
+    }
+
+    private static String deriveInspectionPublicId(Long reportId, String url, int index) {
+        String clean = url;
+        int queryIdx = clean.indexOf('?');
+        if (queryIdx > 0) {
+            clean = clean.substring(0, queryIdx);
+        }
+        int uploadIdx = clean.indexOf("/upload/");
+        if (uploadIdx > 0) {
+            String path = clean.substring(uploadIdx + "/upload/".length());
+            if (path.matches("^v\\d+/.*")) {
+                int slash = path.indexOf('/');
+                if (slash > 0) {
+                    path = path.substring(slash + 1);
+                }
+            }
+            int dot = path.lastIndexOf('.');
+            if (dot > 0) {
+                path = path.substring(0, dot);
+            }
+            if (StringUtils.hasText(path) && path.length() <= 255) {
+                return path;
+            }
+        }
+        String fallback = "inspection/rpt-" + reportId + "/" + index + "-" + Integer.toHexString(url.hashCode());
+        return fallback.length() <= 255 ? fallback : fallback.substring(0, 255);
+    }
+
+    private static String extractUrlExtension(String url) {
+        String clean = url;
+        int queryIdx = clean.indexOf('?');
+        if (queryIdx > 0) {
+            clean = clean.substring(0, queryIdx);
+        }
+        int dot = clean.lastIndexOf('.');
+        int slash = clean.lastIndexOf('/');
+        if (dot > slash && dot > 0 && dot < clean.length() - 1) {
+            String ext = clean.substring(dot + 1).toLowerCase(Locale.ROOT);
+            if (ext.length() <= 10 && ext.matches("[a-z0-9]+")) {
+                return ext;
+            }
+        }
+        return null;
+    }
+
     /// KTV chỉ gắn ảnh vào phiếu mình đang xử lý; ADMIN gắn được mọi lúc.
     void assertCanAttachAsStaff(LockerReport report, Long actorUserId, boolean admin) {
         if (admin) {

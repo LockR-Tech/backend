@@ -300,28 +300,133 @@ class LockerServiceInspectionTest {
                         () -> service.completeSchedule(SCHEDULE_ID, invalid, TECH, false)).getCode());
     }
 
-    // Lịch drone là việc của KTV drone ⇒ mở phiếu drone, không mở phiếu tủ, vẫn dời hạn như cũ.
+    // BUG-WF04-01 (WF04-026, WF04-027): lịch drone FAIL mở phiếu drone gắn scheduleId,
+    // giữ nguyên hạn, set pendingReportId & createdReportId, chặn hoàn tất lại cho tới khi đóng phiếu.
     @Test
-    void droneScheduleFailureDoesNotOpenALockerTicket() {
+    void droneScheduleFailureLinksPendingReportKeepsDueDateAndBlocksReinspection() {
         schedule.setLockerId(null);
         schedule.setDroneUnitId(8L);
         DroneUnit drone = new DroneUnit();
         drone.setId(8L);
         drone.setLockerId(LOCKER_ID);
         drone.setCode("DRONE-08");
+        drone.setStatus(DroneStatus.CHARGING);
         when(droneUnitRepository.findById(8L)).thenReturn(Optional.of(drone));
         when(droneUnitRepository.save(any(DroneUnit.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.completeSchedule(SCHEDULE_ID, items("PASS", "FAIL", "PASS"), TECH, false);
+        CompleteScheduleRequest failWithPhoto = new CompleteScheduleRequest(
+                null, null, null, null,
+                List.of("https://res.cloudinary.com/demo/image/upload/v1795849714/lockr/reports/u42/propeller.jpg"),
+                null, null, null, "Cánh quạt lệch",
+                List.of(
+                        new InspectionItemResult("Khoá điện", "PASS", null),
+                        new InspectionItemResult("Cảm biến cửa", "FAIL", "Cánh quạt lệch"),
+                        new InspectionItemResult("Màn hình", "PASS", null)));
+
+        service.completeSchedule(SCHEDULE_ID, failWithPhoto, TECH, false);
 
         assertEquals("FAILED", schedule.getLastResult());
+        assertEquals(originalDue, schedule.getNextDueAt());
+        assertEquals(200L, schedule.getPendingReportId());
+        assertEquals(DroneStatus.FAULT, drone.getStatus());
+        assertNotNull(drone.getLastChargedAt());
+        assertEquals(200L, savedLog().getCreatedReportId());
+
+        ArgumentCaptor<LockerReport> reportCaptor = ArgumentCaptor.forClass(LockerReport.class);
+        verify(reportRepository, atLeastOnce()).save(reportCaptor.capture());
+        LockerReport opened = reportCaptor.getValue();
+        assertEquals(ReportCategory.DRONE, opened.getCategory());
+        assertEquals(8L, opened.getDroneUnitId());
+        assertEquals(SCHEDULE_ID, opened.getScheduleId());
+        assertEquals(TECH, opened.getAssignedToUserId());
+        assertEquals("IN_PROGRESS", opened.getStatus());
+        assertNull(opened.getBoxId());
+        verify(attachmentService).attachFromInspectionUrls(
+                eq(opened), eq(failWithPhoto.photoUrls()), eq(TECH));
+
+        // Hoàn tất lại khi RPT-200 còn mở phải bị chặn 409 SCHEDULE_PENDING_REPORT
+        when(reportRepository.findById(200L)).thenReturn(Optional.of(opened));
+        BusinessException pendingEx = assertThrows(BusinessException.class,
+                () -> service.completeSchedule(SCHEDULE_ID, items("PASS", "PASS", "PASS"), TECH, false));
+        assertEquals("SCHEDULE_PENDING_REPORT", pendingEx.getCode());
+
+        // Đóng phiếu RPT-200 -> dời hạn kế tiếp, xóa pendingReportId, đưa drone về IDLE và gửi thông báo đúng tên drone
+        when(scheduleRepository.findByPendingReportId(200L)).thenReturn(List.of(schedule));
+        service.resolveReportAndClearFault(200L, TECH, null, false);
+
         assertNull(schedule.getPendingReportId());
         assertTrue(schedule.getNextDueAt().isAfter(LocalDateTime.now().plusDays(29)));
-        ArgumentCaptor<LockerReport> reportCaptor = ArgumentCaptor.forClass(LockerReport.class);
-        verify(reportRepository).save(reportCaptor.capture());
-        assertEquals(ReportCategory.DRONE, reportCaptor.getValue().getCategory());
-        assertEquals(8L, reportCaptor.getValue().getDroneUnitId());
-        assertNull(reportCaptor.getValue().getBoxId());
+        assertEquals(DroneStatus.IDLE, drone.getStatus());
+
+        ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+        verify(rabbitTemplate, atLeastOnce()).convertAndSend(
+                eq(DomainEventNames.EXCHANGE), eq(DomainEventNames.LOCKER_REPORT_RESOLVED), events.capture());
+        String resolvedMsg = String.valueOf(((DomainEvent) events.getValue()).payload().get("message"));
+        assertTrue(resolvedMsg.contains("Báo cáo sự cố drone DRONE-08"), "Expected drone wording, got: " + resolvedMsg);
+        assertFalse(resolvedMsg.contains("Báo cáo lỗi tủ"), "Must not mention locker wording for drone report");
+    }
+
+    // BUG-WF04-02 (WF04-041): KTV tủ không được thấy hay thao tác (claim/get/resolve) phiếu sự cố Drone.
+    @Test
+    void kioskReportEndpointsExcludeAndForbidDroneReports() {
+        LockerReport kioskOpen = new LockerReport();
+        kioskOpen.setId(301L);
+        kioskOpen.setLockerId(LOCKER_ID);
+        kioskOpen.setCategory(ReportCategory.BOX);
+        kioskOpen.setStatus("OPEN");
+        kioskOpen.setTitle("Ô hỏng");
+
+        LockerReport droneOpen = new LockerReport();
+        droneOpen.setId(302L);
+        droneOpen.setLockerId(LOCKER_ID);
+        droneOpen.setDroneUnitId(8L);
+        droneOpen.setCategory(ReportCategory.DRONE);
+        droneOpen.setStatus("OPEN");
+        droneOpen.setTitle("Drone lỗi");
+
+        when(reportRepository.findByStatusInOrderByCreatedAtDesc(anyList()))
+                .thenReturn(List.of(kioskOpen, droneOpen));
+        when(reportRepository.findById(302L)).thenReturn(Optional.of(droneOpen));
+
+        List<Long> visibleIds = service.openKioskReports().stream().map(r -> r.id()).toList();
+        assertEquals(List.of(301L), visibleIds);
+
+        BusinessException claimEx = assertThrows(BusinessException.class,
+                () -> service.claimKioskReport(302L, TECH));
+        assertEquals("LOCKER_REPORT_REQUIRED", claimEx.getCode());
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, claimEx.getStatus());
+
+        BusinessException getEx = assertThrows(BusinessException.class,
+                () -> service.getKioskReport(302L));
+        assertEquals("LOCKER_REPORT_REQUIRED", getEx.getCode());
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, getEx.getStatus());
+    }
+
+    // BUG-WF04-04 (WF04-040): Nhật ký gia hạn SLA hiển thị theo giờ Việt Nam (Asia/Ho_Chi_Minh).
+    @Test
+    void slaExtensionLogFormatsDueTimeInVietnamTimezone() {
+        LockerReport rpt = new LockerReport();
+        rpt.setId(401L);
+        rpt.setLockerId(LOCKER_ID);
+        rpt.setStatus("IN_PROGRESS");
+        rpt.setAssignedToUserId(TECH);
+        LocalDateTime baseDue = LocalDateTime.now().plusHours(2);
+        rpt.setSlaDueAt(baseDue);
+        when(reportRepository.findById(401L)).thenReturn(Optional.of(rpt));
+        when(repairLogRepository.save(any(RepairLog.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.extendSlaAsTechnician(401L, 2, "Chờ linh kiện", TECH);
+
+        ArgumentCaptor<RepairLog> logCaptor = ArgumentCaptor.forClass(RepairLog.class);
+        verify(repairLogRepository).save(logCaptor.capture());
+        LocalDateTime expectedVn = baseDue.plusHours(2)
+                .atZone(java.time.ZoneId.systemDefault())
+                .withZoneSameInstant(java.time.ZoneId.of("Asia/Ho_Chi_Minh"))
+                .toLocalDateTime();
+        String expectedFormatted = expectedVn.format(
+                java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy"));
+        assertTrue(logCaptor.getValue().getNote().contains(expectedFormatted),
+                "Expected VN due time " + expectedFormatted + " in note: " + logCaptor.getValue().getNote());
     }
 
     @Test

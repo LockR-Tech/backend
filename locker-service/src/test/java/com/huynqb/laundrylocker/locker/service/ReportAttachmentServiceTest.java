@@ -240,6 +240,22 @@ class ReportAttachmentServiceTest {
         assertThrows(BusinessException.class, () -> ReportAttachmentService.parseCapturedAt("15/09/2026"));
     }
 
+    @Test
+    void attachFromInspectionUrlsLinksReportPhotosAndSkipsDuplicates() {
+        LockerReport rpt = report(70L, "IN_PROGRESS", 17L, 17L);
+        String url1 = "https://res.cloudinary.com/bdst6d8u/image/upload/v1795849714/lockr/reports/u17/abc123.jpg";
+        String url2 = "https://res.cloudinary.com/bdst6d8u/image/upload/v1795849714/lockr/reports/u17/abc123.jpg";
+        when(attachmentRepository.existsByPublicId("lockr/reports/u17/abc123")).thenReturn(false);
+
+        List<ReportAttachmentResponse> saved = service.attachFromInspectionUrls(rpt, List.of(url1, url2), 17L);
+
+        assertEquals(1, saved.size());
+        assertEquals(AttachmentStage.REPORT.name(), saved.get(0).stage());
+        assertEquals("lockr/reports/u17/abc123", saved.get(0).publicId());
+        assertEquals(url1, saved.get(0).url());
+        assertEquals("jpg", saved.get(0).format());
+    }
+
     private static LockerReport report(Long id, String status, Long reporterId, Long assigneeId) {
         LockerReport report = new LockerReport();
         report.setId(id);
